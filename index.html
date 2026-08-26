@@ -7,9 +7,17 @@
     <style>
         body { margin: 0; }
         canvas { display: block; }
+
+        #epub-viewer {
+            width: 600px;
+            height: 800px;
+            border: 1px solid black;
+        }
     </style>
 </head>
 <body>
+    <input id="epub-file" type="file" accept=".epub"/>
+    <div id="epub-viewer"></div>
     <script type="module" src="/src/main.js"></script>
 </body>
 </html>

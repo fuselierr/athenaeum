@@ -32,11 +32,15 @@ export class BookGeometry {
   constructor({
     width = 0.15,
     height = 0.22,
-    coverThickness = 0.004,
+    coverThickness = 0.005,
     spineWidth = 0.03,
     coverMaterial,
     spineMaterial,
-    maxOpenAngleDeg = 178,
+    maxOpenAngleDeg = 90,
+    pageStackThickness = 0.02,
+    pageColor = '#f2ead9',
+    pageInset = 0.006,
+    pageSplit = 0.5,
   } = {}) {
     this.width = width;
     this.height = height;
@@ -49,6 +53,22 @@ export class BookGeometry {
     // z-fighting/clipping with the spine geometry at the exact flat pose —
     // push it to 180 yourself if your spine geometry doesn't overlap there.
     this.maxOpenAngleDeg = maxOpenAngleDeg;
+
+    // Page stack config — see _buildPageStacks(). Pages are trimmed
+    // slightly smaller than the covers (pageInset) on width and height,
+    // which is what real books look like and also hides any z-fighting
+    // at the outer edge.
+    this.pageStackThickness = pageStackThickness;
+    this.pageInset = pageInset;
+    this.pageSplit = THREE.MathUtils.clamp(pageSplit, 0, 1);
+
+    this.pageMaterial =
+      pageColor instanceof THREE.Material
+        ? pageColor
+        : new THREE.MeshStandardMaterial({
+            color: pageColor,
+            roughness: 0.9,
+          });
 
     this.coverMaterial =
       coverMaterial instanceof THREE.Material
@@ -80,11 +100,27 @@ export class BookGeometry {
     this.backCoverPivot = new THREE.Group();
     this.backCoverPivot.name = 'backCoverPivot';
 
+    // Page stack pivots — same hinge-at-spine trick as the covers, but
+    // these hold the "already read" (left) and "not yet read" (right)
+    // paper blocks instead of a rigid cover board.
+    this.leftPagePivot = new THREE.Group();
+    this.leftPagePivot.name = 'leftPagePivot';
+
+    this.rightPagePivot = new THREE.Group();
+    this.rightPagePivot.name = 'rightPagePivot';
+
     this._buildSpine();
     this._buildCover(this.frontCoverPivot, +1, 'frontCover');
     this._buildCover(this.backCoverPivot, -1, 'backCover');
+    this._buildPageStacks();
 
-    this.root.add(this.spineMesh, this.frontCoverPivot, this.backCoverPivot);
+    this.root.add(
+      this.spineMesh,
+      this.frontCoverPivot,
+      this.backCoverPivot,
+      this.leftPagePivot,
+      this.rightPagePivot
+    );
 
     // Start closed: both covers flat against the spine, facing +Z / -Z.
     // openAmount below drives this — 0 = fully closed, 1 = fully open flat.
@@ -114,7 +150,7 @@ export class BookGeometry {
     shape.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
 
     const extrudeSettings = {
-      depth: this.coverThickness * 2 + 0.01, // spine slightly proud of cover thickness
+      depth: this.coverThickness * 1.1,
       bevelEnabled: false,
       curveSegments: 8,
     };
@@ -165,6 +201,114 @@ export class BookGeometry {
   }
 
   /**
+   * Build (or rebuild) the two page-stack blocks: leftStack (pages already
+   * turned) and rightStack (pages not yet turned). Together their combined
+   * thickness always equals pageStackThickness — only the split changes.
+   *
+   * This is the "many pages for free" trick: instead of geometry per page,
+   * it's two boxes whose thickness ratio shifts as pageSplit changes. Only
+   * the single page currently mid-turn (built elsewhere, e.g. PageMesh)
+   * needs to be real deformable geometry.
+   */
+  _buildPageStacks() {
+    // Dispose any previous stack geometry before rebuilding (safe to call
+    // from setPageSplit() too, not just the constructor).
+    this._disposePageStacks();
+
+    const pageWidth = this.width - this.pageInset;
+    const pageHeight = this.height - this.pageInset;
+
+    const leftThickness = Math.max(
+      this.pageStackThickness * this.pageSplit,
+      0.0005 // avoid zero-thickness geometry when split hits an extreme
+    );
+    const rightThickness = Math.max(
+      this.pageStackThickness * (1 - this.pageSplit),
+      0.0005
+    );
+
+    this.leftPageMesh = this._buildPageBoard(
+      this.leftPagePivot,
+      +1,
+      'leftPageStack',
+      pageWidth,
+      pageHeight,
+      leftThickness
+    );
+
+    this.rightPageMesh = this._buildPageBoard(
+      this.rightPagePivot,
+      -1,
+      'rightPageStack',
+      pageWidth,
+      pageHeight,
+      rightThickness
+    );
+  }
+
+  /**
+   * Shared builder for a flat rectangular "board" hinged at the spine —
+   * used for both page stacks here. (Covers use their own near-identical
+   * _buildCover since their thickness never changes at runtime; pages
+   * rebuild constantly as pageSplit shifts, so keeping this separate
+   * avoids adding rebuild logic to the cover path.)
+   *
+   * Critical detail: the box is translated so its INNER face (the one
+   * touching the spine) sits at local Z=0, not its center. The pivot's
+   * own position is then a small FIXED gap from the spine center —
+   * independent of boardThickness. This is what keeps the stack anchored
+   * to the spine as pageSplit changes; anchoring at the box's center
+   * instead (the earlier version of this method) made the whole block
+   * drift outward every time thickness changed, since the center moves
+   * but the spine attachment point shouldn't.
+   */
+  _buildPageBoard(pivot, side, name, boardWidth, boardHeight, boardThickness) {
+    const geometry = new THREE.BoxGeometry(boardWidth, boardHeight, boardThickness);
+    // X: hinge edge at X=0, same as covers.
+    // Z: shift so the inner (spine-facing) face sits at local Z=0 — the
+    // box now extends from 0 to side*boardThickness instead of being
+    // centered on its own origin.
+    geometry.translate(boardWidth / 2, 0, (side * boardThickness) / 2);
+
+    const mesh = new THREE.Mesh(geometry, this.pageMaterial);
+    mesh.name = name;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+
+    // Fixed gap from spine center — does NOT depend on boardThickness,
+    // so the hinge point never moves as pages shift between stacks.
+    const spineGap = 0.001;
+    pivot.position.set(0, 0, side * spineGap);
+
+    pivot.add(mesh);
+    return mesh;
+  }
+
+  _disposePageStacks() {
+    if (this.leftPageMesh) {
+      this.leftPagePivot.remove(this.leftPageMesh);
+      this.leftPageMesh.geometry.dispose();
+      this.leftPageMesh = null;
+    }
+    if (this.rightPageMesh) {
+      this.rightPagePivot.remove(this.rightPageMesh);
+      this.rightPageMesh.geometry.dispose();
+      this.rightPageMesh = null;
+    }
+  }
+
+  /**
+   * Update how the page stack is split between "already read" (left)
+   * and "not yet read" (right), e.g. as the user turns pages.
+   * @param {number} ratio - 0 = all pages still on the right (start of book),
+   *                         1 = all pages moved to the left (end of book)
+   */
+  setPageSplit(ratio) {
+    this.pageSplit = THREE.MathUtils.clamp(ratio, 0, 1);
+    this._buildPageStacks();
+  }
+
+  /**
    * Set how open the book is.
    * @param {number} amount - 0 = fully closed (covers flat together),
    *                          1 = fully open (covers flat outward, ~180°
@@ -184,13 +328,23 @@ export class BookGeometry {
 
     this.frontCoverPivot.rotation.y = -angle;
     this.backCoverPivot.rotation.y = angle;
+
+    // Page stacks swing slightly less than the covers (90% of the angle)
+    // so they sit visually nested inside the covers rather than poking
+    // past their edges at the open pose — real page blocks don't swing
+    // quite as wide as the stiffer cover boards.
+    const pageAngle = angle * 0.9;
+    this.leftPagePivot.rotation.y = -pageAngle;
+    this.rightPagePivot.rotation.y = pageAngle;
   }
 
   dispose() {
     this.spineMesh.geometry.dispose();
     this.frontCoverPivot.children.forEach((m) => m.geometry.dispose());
     this.backCoverPivot.children.forEach((m) => m.geometry.dispose());
-    // Materials are shared across covers by default — only dispose if
-    // you're sure nothing else references coverMaterial/spineMaterial.
+    this._disposePageStacks();
+    // Materials are shared across covers/pages by default — only dispose
+    // if you're sure nothing else references coverMaterial/spineMaterial/
+    // pageMaterial.
   }
 }
