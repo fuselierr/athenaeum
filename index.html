@@ -5,19 +5,48 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Athenaeum</title>
     <style>
-        body { margin: 0; }
+        html, body { margin: 0; height: 100%; background: #11141a; overflow: hidden; }
         canvas { display: block; }
 
+        #hud {
+            position: fixed; top: 12px; left: 12px; max-width: 340px;
+            color: #cfd6e4; font: 13px/1.5 system-ui, sans-serif;
+            background: rgba(20, 24, 32, 0.6); padding: 10px 14px; border-radius: 8px;
+        }
+        #hud b { color: #fff; }
+        #hud button {
+            margin-top: 8px; padding: 6px 12px; font: 13px/1.4 system-ui, sans-serif; color: #fff;
+            background: #3a4258; border: 1px solid #4d5872; border-radius: 6px; cursor: pointer;
+        }
+        #hud button:hover { background: #4a5470; }
+
+        /* Source render foliate-js paginates for page capture — kept on-page
+           but tucked out of the way of the 3D view. */
+        #epub-panel {
+            position: fixed; bottom: 12px; right: 12px; z-index: 2;
+            color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
+        }
         #epub-viewer {
-            width: 600px;
-            height: 800px;
-            border: 1px solid black;
+            width: 300px; height: 400px; margin-top: 6px;
+            border: 1px solid #2a3040; background: #fff; overflow: hidden;
         }
     </style>
 </head>
 <body>
-    <input id="epub-file" type="file" accept=".epub"/>
-    <div id="epub-viewer"></div>
+    <div id="hud">
+        <div><b>Two physics-driven page-spreads chained along the spine.</b></div>
+        <div>Each spread hinges and fills its own gap with its own air-cushion easing; the two
+        inner pages meet at a hard stop and curl to settle parallel with their cover.</div>
+        <div>Press <b>R</b> to reset the drop, <b>F</b> to flip the book over. Drag to orbit, scroll to zoom.</div>
+        <button id="flipBtn" type="button">Flip book over</button>
+        <button id="resetBtn" type="button">Reset</button>
+    </div>
+
+    <div id="epub-panel">
+        <input id="epub-file" type="file" accept=".epub"/>
+        <div id="epub-viewer"></div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
 </body>
 </html>
