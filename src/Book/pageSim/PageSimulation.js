@@ -51,24 +51,64 @@ export class PageSimulation {
     this.flipped = false;
     this._lastStep = 0; // timestamp of the previous step(), ms; 0 = not yet stepped
 
-    // Flush layout: front's far anchor and back's near anchor land on the
-    // exact same point (Z = 0), so the two inner pages hinge from the same
-    // spot and pageblock AB sits flush against pageblock CD. Three distinct
-    // anchor positions total: A at +SPINE_GAP, B=C at 0, D at -SPINE_GAP.
+    // Z of the shared inner-leaf (B/C) hinge along the spine. 0 = centred
+    // between the covers (the flush layout the prototype had); slide it
+    // toward a cover to simulate flipping through the book — see
+    // setBCPosition / setProgress.
+    this._bcZ = 0;
+
+    // Covers stay put: A pinned at +SPINE_GAP (front of the block), D at
+    // -SPINE_GAP (back). Only the inner leaves' shared hinge (B's far
+    // anchor, C's near anchor) moves, between the two.
     this.spreadFront = createSpread(this.world, this.root, {
-      centerZ: SPINE_GAP / 2, openLimit: OPEN_LIMIT,
+      anchorNearZ: SPINE_GAP, anchorFarZ: this._bcZ, openLimit: OPEN_LIMIT,
       colorNear: 0x5b7fff, colorFar: 0xff6f6f, wedgeColor: 0xf2d98a,
       dampingNear: 0.32, dampingFar: 0.5,
       curlPage: 'far', // B molds itself to curve from its hinge to match A
     });
     this.spreadBack = createSpread(this.world, this.root, {
-      centerZ: -SPINE_GAP / 2, openLimit: OPEN_LIMIT,
+      anchorNearZ: this._bcZ, anchorFarZ: -SPINE_GAP, openLimit: OPEN_LIMIT,
       colorNear: 0x4fd1c5, colorFar: 0xffa94d, wedgeColor: 0xd9c48a,
       dampingNear: 0.5, dampingFar: 0.32,
       curlPage: 'near', // C molds itself to curve from its hinge to match D
     });
 
     this.reset();
+  }
+
+  // How far the shared B/C hinge may travel from centre before the curl and
+  // wedge on the tighter side would collapse. +BC_RANGE = against cover A,
+  // -BC_RANGE = against cover D.
+  static get BC_RANGE() {
+    return SPINE_GAP * 0.92;
+  }
+
+  get bcZ() {
+    return this._bcZ;
+  }
+
+  /**
+   * Slide the shared B/C hinge along the spine, clamped to
+   * [-BC_RANGE, +BC_RANGE]. Covers A and D don't move. Cheap enough to call
+   * every frame — drive it from an easing curve to animate a page flip.
+   */
+  setBCPosition(z) {
+    const lim = PageSimulation.BC_RANGE;
+    z = Math.max(-lim, Math.min(lim, z));
+    if (z === this._bcZ) return;
+    this._bcZ = z;
+    this.spreadFront.moveAnchor('far', z);
+    this.spreadBack.moveAnchor('near', z);
+  }
+
+  /** Normalized flip-through position: 0 = at cover A, 1 = at cover D. */
+  setProgress(t) {
+    t = Math.max(0, Math.min(1, t));
+    this.setBCPosition(PageSimulation.BC_RANGE * (1 - 2 * t));
+  }
+
+  get progress() {
+    return (1 - this._bcZ / PageSimulation.BC_RANGE) / 2;
   }
 
   /**
@@ -78,6 +118,9 @@ export class PageSimulation {
    * extreme would send them through each other at t = 0.
    */
   reset() {
+    this._bcZ = 0;
+    this.spreadFront.moveAnchor('far', 0);
+    this.spreadBack.moveAnchor('near', 0);
     this.spreadFront.drop(COVER_START_NEAR, BC_MEET_ANGLE - BC_START_GAP / 2);
     this.spreadBack.drop(BC_MEET_ANGLE + BC_START_GAP / 2, COVER_START_FAR);
     this.setFlipped(false);

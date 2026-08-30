@@ -59,6 +59,9 @@ resetBtn?.addEventListener('click', () => { pages.reset(); refreshFlipLabel(); }
 window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') { pages.reset(); refreshFlipLabel(); }
   if (e.key === 'f' || e.key === 'F') { pages.toggleFlip(); refreshFlipLabel(); }
+  // [ and ] nudge the shared B/C hinge through the book (flip-through demo).
+  if (e.key === '[') pages.setProgress(pages.progress - 0.05);
+  if (e.key === ']') pages.setProgress(pages.progress + 0.05);
 });
 refreshFlipLabel();
 

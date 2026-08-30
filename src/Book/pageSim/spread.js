@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
-  HINGE_LEN, PANEL_REACH, SPINE_GAP, COLLIDER_THICK, PIVOT_TO_NEAR_EDGE,
+  HINGE_LEN, PANEL_REACH, COLLIDER_THICK, PIVOT_TO_NEAR_EDGE,
   NO_SELF_COLLIDE, AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE,
 } from './config.js';
 import {
@@ -17,9 +17,10 @@ import { WEDGE_ROWS, WEDGE_INDEX, fillWedgeSide } from './wedgeGeometry.js';
  * One "spread" is the original 2-page + wedge mechanism: two
  * independently-hinged flat pages (near = reaches toward +Z when open, far =
  * toward -Z) sharing a mutual "never swing past parallel" rule and a curved
- * wedge filling the gap between them. `centerZ` places the pair's two
- * anchors at centerZ +/- SPINE_GAP/2; the two spreads sit flush against
- * each other so the inner pages hinge from the same spot.
+ * wedge filling the gap between them. `anchorNearZ` / `anchorFarZ` are the
+ * two hinges' positions along the spine; either one can be moved at runtime
+ * via `moveAnchor` (PageSimulation slides the shared inner hinge to
+ * simulate flipping through the book).
  *
  * @param {RAPIER.World} world
  * @param {THREE.Object3D} parent  meshes are added here (already carries the
@@ -27,10 +28,13 @@ import { WEDGE_ROWS, WEDGE_INDEX, fillWedgeSide } from './wedgeGeometry.js';
  * @param {Object} opts
  */
 export function createSpread(world, parent, opts) {
-  const { centerZ, openLimit, colorNear, colorFar, wedgeColor, dampingNear, dampingFar, curlPage } = opts;
+  const {
+    anchorNearZ, anchorFarZ, openLimit,
+    colorNear, colorFar, wedgeColor, dampingNear, dampingFar, curlPage,
+  } = opts;
 
-  const anchorNear = { y: 0, z: centerZ + SPINE_GAP / 2 };
-  const anchorFar = { y: 0, z: centerZ - SPINE_GAP / 2 };
+  const anchorNear = { y: 0, z: anchorNearZ };
+  const anchorFar = { y: 0, z: anchorFarZ };
   const anchorBodyNear = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, anchorNear.y, anchorNear.z));
   const anchorBodyFar = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, anchorFar.y, anchorFar.z));
 
@@ -38,6 +42,13 @@ export function createSpread(world, parent, opts) {
   const anchorFarVec = new THREE.Vector3(0, anchorFar.y, anchorFar.z);
   const halfWidth = HINGE_LEN / 2;
   const curlAnchorVec = curlPage === 'near' ? anchorNearVec : anchorFarVec;
+
+  // Live spacing between this spread's two hinges. It used to be the
+  // constant SPINE_GAP; now the inner leaf's anchor slides along the spine
+  // (see moveAnchor), so the curl radius and the no-crossing threshold both
+  // read the current separation instead. Floored so a leaf parked right
+  // against its cover doesn't collapse the curl/wedge to zero width.
+  const pairGap = () => Math.max(Math.abs(anchorFar.z - anchorNear.z), 1e-3);
 
   function makePage(anchor, startAngle, damping) {
     const t = pageTransform(anchor, startAngle);
@@ -142,7 +153,7 @@ export function createSpread(world, parent, opts) {
     const refBody = curlPage === 'near' ? bodyFar : bodyNear;
     buildCurlStrip(
       curlPositions, curlAnchorVec, pageAngle(curlBody), pageAngle(refBody),
-      SPINE_GAP, PANEL_REACH, halfWidth,
+      pairGap(), PANEL_REACH, halfWidth,
     );
     curlGeo.attributes.position.needsUpdate = true;
     curlGeo.computeVertexNormals();
@@ -188,6 +199,28 @@ export function createSpread(world, parent, opts) {
     makeJoint(anchorBodyFar, bodyFar);
   }
 
+  // Slide one of this spread's two hinges to a new position along the spine
+  // (Z). The anchor's fixed body, its cached vector, and — so there's no
+  // one-frame lag while the joint solver catches up — the hinged page
+  // itself are all moved together; the page keeps its current swing angle
+  // and angular velocity. `pairGap()` picks up the new separation on the
+  // next curl/wedge rebuild.
+  function moveAnchor(which, z) {
+    const isNear = which === 'near';
+    const anchor = isNear ? anchorNear : anchorFar;
+    const vec = isNear ? anchorNearVec : anchorFarVec;
+    const anchorBody = isNear ? anchorBodyNear : anchorBodyFar;
+    const body = isNear ? bodyNear : bodyFar;
+
+    anchor.z = z;
+    vec.z = z;
+    anchorBody.setTranslation({ x: 0, y: anchor.y, z }, true);
+    if (body) {
+      const t = pageTransform(anchor, pageAngle(body));
+      body.setTranslation(t.pos, true);
+    }
+  }
+
   function applyAirCushion() {
     const angleNear = pageAngle(bodyNear);
     const angleFar = pageAngle(bodyFar);
@@ -207,9 +240,9 @@ export function createSpread(world, parent, opts) {
 
   // Geometric no-crossing: measure how close the curling page's tip has
   // actually gotten to the flat reference page's surface (closest point on
-  // its finite rectangle), and require that distance stay at least
-  // SPINE_GAP. Only the curling page is ever moved here — the reference
-  // page is read, never touched.
+  // its finite rectangle), and require that distance stay at least the
+  // current hinge separation. Only the curling page is ever moved here —
+  // the reference page is read, never touched.
   const _noCrossTip = new THREE.Vector3();
   function enforceNoCrossing() {
     const curlIsNear = curlPage === 'near';
@@ -220,10 +253,11 @@ export function createSpread(world, parent, opts) {
 
     const curlAngle = pageAngle(curlBody);
     const refAngle = pageAngle(refBody);
+    const gap = pairGap();
 
-    curlTipPoint(curlAnchorV, curlAngle, refAngle, SPINE_GAP, PANEL_REACH, _noCrossTip);
+    curlTipPoint(curlAnchorV, curlAngle, refAngle, gap, PANEL_REACH, _noCrossTip);
     const d = closestDistanceToPage(_noCrossTip, refAnchorV, refAngle, HINGE_LEN, PANEL_REACH, COLLIDER_THICK);
-    if (d >= SPINE_GAP) return;
+    if (d >= gap) return;
 
     // "Away from the reference page" is fixed by this spread's layout, not
     // re-derived from the current angle order (which may already have
@@ -233,9 +267,9 @@ export function createSpread(world, parent, opts) {
     let hi = pushUp ? openLimit : 0;
     for (let iter = 0; iter < 24; iter++) {
       const mid = (lo + hi) / 2;
-      curlTipPoint(curlAnchorV, mid, refAngle, SPINE_GAP, PANEL_REACH, _noCrossTip);
+      curlTipPoint(curlAnchorV, mid, refAngle, gap, PANEL_REACH, _noCrossTip);
       const dm = closestDistanceToPage(_noCrossTip, refAnchorV, refAngle, HINGE_LEN, PANEL_REACH, COLLIDER_THICK);
-      if (dm < SPINE_GAP) lo = mid; else hi = mid;
+      if (dm < gap) lo = mid; else hi = mid;
     }
 
     const t = pageTransform(curlIsNear ? anchorNear : anchorFar, hi);
@@ -274,7 +308,7 @@ export function createSpread(world, parent, opts) {
   }
 
   return {
-    drop, stepPhysics, sync, dispose,
+    drop, moveAnchor, stepPhysics, sync, dispose,
     get bodyNear() { return bodyNear; },
     get bodyFar() { return bodyFar; },
     anchorNear, anchorFar,
