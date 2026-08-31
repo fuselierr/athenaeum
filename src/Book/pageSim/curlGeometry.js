@@ -61,12 +61,27 @@ export function createCurlUV() {
 // PlaneGeometry UV has v=0 at the TIP and v=1 at the pivot/hinge -- the
 // opposite convention. Matching that here is what keeps a page's texture
 // right-side-up on the curl mesh instead of appearing upside-down.
-export function writeCurlUV(uv, curlRowFrac) {
+//
+// `flipU` swaps which column (left/right) gets u=0 vs u=1. This is for a
+// DIFFERENT problem than the v-convention above: B showed up with genuinely
+// MIRRORED (left-right reversed) text, not upside-down -- and a mirror on a
+// DoubleSide mesh is a vantage-point thing, not a UV-value thing: the same
+// vertices/UVs read backwards to a viewer standing on the surface's "back"
+// side. B (curlPage 'far') and C (curlPage 'near') curl in mirror-opposite
+// directions off their shared hinge, so it's plausible one of them ends up
+// naturally facing the camera "normally" while the other's natural front
+// faces away -- explaining why only B showed this and not C. Flipping U
+// only for the affected curlPage (spread.js passes curlPage === 'far', i.e.
+// only B) compensates for that vantage mismatch without touching C's
+// already-correct convention.
+export function writeCurlUV(uv, curlRowFrac, flipU) {
+  const uLeft = flipU ? 1 : 0;
+  const uRight = flipU ? 0 : 1;
   for (let i = 0; i < CURL_ROWS; i++) {
     const v = 1 - curlRowFrac[i];
     const li = i * 2, ri = (CURL_ROWS + i) * 2;
-    uv[li] = 0; uv[li + 1] = v;
-    uv[ri] = 1; uv[ri + 1] = v;
+    uv[li] = uLeft; uv[li + 1] = v;
+    uv[ri] = uRight; uv[ri + 1] = v;
   }
 }
 

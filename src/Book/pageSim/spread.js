@@ -90,19 +90,10 @@ export function createSpread(world, parent, opts) {
   // frame.
   const panelGeo = new THREE.PlaneGeometry(HINGE_LEN, PANEL_REACH);
   panelGeo.rotateX(-Math.PI / 2);
-  // Four rounds of flipping polygonOffset sign/magnitude produced results
-  // that don't fit a simple signed-offset model (flicker -> both gone ->
-  // swap flips which pair is gone -> unifying the sign made BOTH pairs
-  // gone) -- polygonOffset isn't a mechanism we can reliably reason about
-  // blind here, whether that's driver-specific behavior or something else
-  // going on. Switching to a mechanism that doesn't depend on offset
-  // sign/magnitude at all: renderOrder. With the default depth function
-  // (LessEqualDepth), a fragment at an EQUAL depth to what's already in
-  // the depth buffer still passes and overwrites it -- so for genuinely
-  // coincident/near-coincident geometry, whichever mesh is drawn SECOND
-  // deterministically wins ties, regardless of any offset. Pages (this
-  // mesh and the curl mesh) get a higher renderOrder than the wedge, so
-  // they always draw after it and always win at the seam.
+  // Seam handling uses renderOrder rather than polygonOffset (which behaved
+  // unpredictably here): with LessEqualDepth, the mesh drawn second wins
+  // ties on coincident geometry. Pages get renderOrder 1, the wedge 0, so
+  // the pages always win at the seam.
   const pageMat = new THREE.MeshStandardMaterial({
     roughness: 0.5, metalness: 0.05, side: THREE.DoubleSide,
   });
@@ -206,7 +197,13 @@ export function createSpread(world, parent, opts) {
     // loft above, not raw row index -- see the comment on writeCurlUV in
     // curlGeometry.js for why (row-index v badly over-magnified the arc
     // and left the straight run looking blank).
-    writeCurlUV(curlUV, curlRowFrac);
+    //
+    // C uses the plain, unflipped convention (matches the flat pages'
+    // default PlaneGeometry UV). B needs both flipU and flipV together --
+    // a full 180° UV rotation -- to appear right side up: flipU alone
+    // un-mirrored it but left it upside-down, so this replaces that
+    // C-specific v-flip attempt with a B-specific full rotation instead.
+    writeCurlUV(curlUV, curlRowFrac, curlPage === 'far', curlPage === 'far');
     curlGeo.attributes.uv.needsUpdate = true;
   }
 
@@ -319,26 +316,14 @@ export function createSpread(world, parent, opts) {
     }
   }
 
-  // Where this spread's curling page's far end actually is right now, for
-  // the cross-spread B/C tip check in PageSimulation -- comparing actual
-  // endpoint positions instead of just the hinge-tangent angle, since two
-  // spreads with very different anchor separations (once the B/C hinge is
-  // off-center) can have very differently-shaped curls that reach past
-  // each other even while their base angles never technically cross.
+  // Where this spread's curling page's tip lands for a candidate own-angle
+  // (curlTipAt) or a candidate reference angle (curlTipAtRef), without
+  // touching any body -- for the cross-spread tip checks in PageSimulation.
   const _tipOut = new THREE.Vector3();
   function curlTipAt(candidateAngle, out = _tipOut) {
     const refBody = curlPage === 'near' ? bodyFar : bodyNear;
     return curlTipPoint(curlAnchorVec, candidateAngle, pageAngle(refBody), pairGap(), PANEL_REACH, out);
   }
-  function curlTip(out = _tipOut) {
-    const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
-    return curlTipAt(pageAngle(curlBody), out);
-  }
-
-  // Same idea as curlTipAt, but varies the REFERENCE angle instead of the
-  // curling page's own angle -- used by PageSimulation._enforceNoCrossingTips
-  // to find where this curl's tip would land for some candidate ref angle
-  // (e.g. scaled back from A's/D's real angle) without touching any body.
   function curlTipAtRef(candidateRefAngle, out = _tipOut) {
     const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
     return curlTipPoint(curlAnchorVec, pageAngle(curlBody), candidateRefAngle, pairGap(), PANEL_REACH, out);
@@ -382,13 +367,12 @@ export function createSpread(world, parent, opts) {
 
   return {
     drop, moveAnchor, stepPhysics, sync, dispose,
-    curlTip, curlTipAt, curlTipAtRef, straightAngle, setRefAngleClamp,
+    curlTipAt, curlTipAtRef, straightAngle, setRefAngleClamp,
     get bodyNear() { return bodyNear; },
     get bodyFar() { return bodyFar; },
     anchorNear, anchorFar,
-    // Exposed so page textures can be assigned from outside (see
-    // PageSimulation.setPageTexture). flatMesh is the reference/cover page
-    // for this spread; curlMesh is the page that bends.
+    // flatMesh = cover page, curlMesh = the page that bends; exposed for
+    // texture assignment (PageSimulation.setPageTexture).
     flatMesh, curlMesh,
   };
 }

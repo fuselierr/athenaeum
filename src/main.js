@@ -5,19 +5,13 @@ import { setPageDimensions, PANEL_REACH as INITIAL_PANEL_REACH } from './Book/pa
 import { updateLocalCorners } from './Book/pageSim/math.js';
 import { initBookLoader } from './bookLoader.js';
 
-// Baseline width scale (spine-to-edge reach) everything else -- camera
-// distance, SPINE_GAP, fog, the default 1.4 PANEL_REACH -- was already
-// tuned around. A loaded PDF's aspect ratio is applied by keeping this
-// fixed and deriving HINGE_LEN (the spine-length/page-height dimension)
-// from it, rather than changing overall scale, so the book doesn't also
-// shrink/balloon relative to the camera and lighting just because a page
-// happens to be tall or short.
+// Fixed spine-to-edge reach that camera, lighting, fog and SPINE_GAP are
+// tuned around. A loaded PDF's aspect ratio is applied by deriving HINGE_LEN
+// from this rather than rescaling the whole book.
 const BASE_PANEL_REACH = INITIAL_PANEL_REACH;
 
-// NOTE: BookGeometry (src/Book/bookGeometry.js) is the static spine/cover
-// backbone and is not wired in here yet — the physics page simulation below
-// currently models pages only, at its own (larger) scale. Reconciling the
-// two is the next step.
+// BookGeometry (src/Book/bookGeometry.js), the static spine/cover backbone,
+// is not wired in yet — this models pages only, at its own scale.
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x11141a);
@@ -60,19 +54,11 @@ scene.add(grid);
 let pages = await PageSimulation.create(scene);
 
 /**
- * Resize the book to match a loaded PDF's actual page proportions, and
- * apply it. HINGE_LEN/PANEL_REACH are baked into physics bodies, collider
- * half-extents, and panelGeo at PageSimulation construction time (see
- * spread.js's createSpread) -- so picking up a new size means disposing
- * the whole simulation and building a fresh one with the new config
- * values already in effect, not mutating the running one in place.
- *
- * pageWidthPts/pageHeightPts are the PDF's raw (unscaled) page size, in
- * reading-normal orientation -- width is the page's short/reading-
- * horizontal axis, height the long/top-to-bottom axis. Physically, that
- * maps to HINGE_LEN (X, spine length) ~ page height and PANEL_REACH (Z,
- * spine-to-edge) ~ page width (see the UV-orientation comment in
- * bookLoader.js's renderPdfToCanvases for the same mapping).
+ * Rebuild the simulation sized to a loaded PDF's page proportions.
+ * HINGE_LEN/PANEL_REACH are baked in at construction time, so this disposes
+ * the running simulation and builds a fresh one. pageWidthPts/pageHeightPts
+ * are the PDF's raw page size; width maps to PANEL_REACH (spine-to-edge),
+ * height to HINGE_LEN (spine length).
  */
 async function applyPdfDimensions(pageWidthPts, pageHeightPts) {
   const panelReach = BASE_PANEL_REACH;
@@ -86,11 +72,8 @@ async function applyPdfDimensions(pageWidthPts, pageHeightPts) {
   refreshFlipLabel();
 }
 
-// Page-turn state: B always shows pageCanvases[leafStart], C always shows
-// pageCanvases[leafStart + 1] -- "page 1 on B, page 2 on C" at leafStart=0,
-// "page 3 on B, page 4 on C" after one ArrowRight (leafStart=2), etc. A/D
-// aren't wired into this yet (their z-fight/occlusion issues are still
-// being sorted out separately) -- this only drives B/C.
+// Page-turn state: B/C show pageCanvases[leafStart] and [leafStart + 1],
+// advancing two at a time on ArrowLeft/Right. A/D aren't wired in yet.
 let pageCanvases = [];
 const pageTextures = []; // built lazily, one CanvasTexture per page, reused across flips
 let leafStart = 0;
@@ -113,13 +96,8 @@ function showLeaf(start) {
     : 0;
   leafStart = Math.max(0, Math.min(start, maxStart));
 
-  // Swapped from the naive B=leafStart/C=leafStart+1 assignment: page 1 was
-  // showing up on the panel identified as C, page 2 on B -- the reverse of
-  // what was wired. Likely cause is PageSimulation.root's permanent 180°
-  // book-flip (see PageSimulation constructor) also inverting Z, which
-  // swaps which spread (front/B vs back/C) ends up reading as "first" on
-  // screen -- but rather than guess at that without being able to see the
-  // render, just matching what was observed is the reliable fix here.
+  // B/C are swapped from the naive leafStart/leafStart+1 assignment to match
+  // what actually renders (PageSimulation.root's 180° flip inverts Z).
   const b = textureForPage(leafStart + 1);
   const c = textureForPage(leafStart);
   if (b) pages.setPageTexture('B', b);
@@ -133,7 +111,6 @@ initBookLoader({
     await applyPdfDimensions(pageWidthPts, pageHeightPts);
   },
   onPagesReady: (canvases) => {
-    console.log(`Book ready: ${canvases.length} page canvases rendered.`, canvases);
     pageCanvases = canvases;
     pageTextures.length = 0;
     showLeaf(0);
@@ -159,22 +136,8 @@ window.addEventListener('keydown', (e) => {
 });
 refreshFlipLabel();
 
-const bcCrossWarning = document.getElementById('bc-cross-warning');
-const bcDebug = document.getElementById('bc-debug');
-
 renderer.setAnimationLoop(() => {
   pages.step();
-  if (bcCrossWarning) bcCrossWarning.hidden = !pages.isCrossingBC;
-  if (bcDebug) {
-    const d = pages.debugBC;
-    bcDebug.textContent =
-      `angleB = ${d.angleB.toFixed(3)}\n`
-      + `angleC = ${d.angleC.toFixed(3)}\n`
-      + `angleB > angleC : ${d.angleCrossing}\n`
-      + `tipB.z = ${d.tipBz.toFixed(3)}\n`
-      + `tipC.z = ${d.tipCz.toFixed(3)}\n`
-      + `tipB.z < tipC.z : ${d.tipCrossing}`;
-  }
   controls.update();
   renderer.render(scene, camera);
 });
