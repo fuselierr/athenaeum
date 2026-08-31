@@ -79,50 +79,57 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
   const canvases = [];
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale });
-
-    if (pageNum === 1 && onDimensions) {
-      // Unscaled page size, in PDF points -- the actual page aspect ratio,
-      // independent of DEFAULT_RENDER_SCALE. Reported once, from the first
-      // page, before rendering proceeds any further, so the caller can
-      // resize the book's geometry (HINGE_LEN/PANEL_REACH, see config.js)
-      // to match the real page proportions before any page mesh or
-      // physics body gets built from the old default dimensions. Awaited:
-      // if the caller's handler resizes/recreates the whole simulation,
-      // rendering the rest of the pages (and firing onPage/the eventual
-      // onPagesReady) needs to wait for that to actually finish first.
-      const rawViewport = page.getViewport({ scale: 1 });
-      await onDimensions(rawViewport.width, rawViewport.height);
-    }
 
     // The page meshes' UVs (the flat pages' default PlaneGeometry UVs, and
     // CURL_UV in curlGeometry.js) both put u along HINGE_LEN -- the X axis,
     // which is physically the page's HEIGHT, since it runs the length of
     // the spine -- and v along PANEL_REACH -- physically the page's WIDTH,
-    // spine to outer edge. A PDF page renders reading-normal: viewport.width
-    // is its (short) reading-horizontal axis, viewport.height its (long)
-    // top-to-bottom axis. Rendered straight into a same-orientation canvas,
-    // that's a 90° mismatch against the mesh UVs -- the short axis lands on
-    // the mesh's long axis and vice versa, which is what shows up as text
-    // running horizontally instead of vertically. Bake a rotation in here,
-    // once, so every mesh UV can stay untouched and unrotated.
+    // spine to outer edge. A PDF page renders reading-normal: an unrotated
+    // viewport's width is its (short) reading-horizontal axis, its height
+    // the (long) top-to-bottom axis -- a 90° mismatch against the mesh UVs
+    // (the short axis would land on the mesh's long axis and vice versa,
+    // which is what showed up as text running horizontally instead of
+    // vertically). `rotation: 270` (270° clockwise, == 90° counter-
+    // clockwise) bakes in both that axis swap AND the extra 180° needed to
+    // counter PageSimulation.root's permanent 180° render flip (see the
+    // PageSimulation constructor) -- same net rotation the old hand-rolled
+    // ctx.translate()+ctx.rotate(-Math.PI/2) pre-transform was going for.
     //
-    // Rotated -90° (CCW), not +90° (CW): CW fixed the horizontal/vertical
-    // axis swap but left every page upside-down -- the mesh UVs (CURL_UV
-    // and the flat pages' default PlaneGeometry UV) are self-consistent
-    // with each other, but PageSimulation.root's permanent 180° render
-    // flip (see PageSimulation constructor) sits on top of all of that and
-    // wasn't accounted for. Swapping the rotation direction adds exactly
-    // that missing 180° (CW and CCW 90° rotations of the same source are
-    // 180° apart from each other) while keeping the same axis swap, and
-    // does it once here for every page uniformly instead of touching the
-    // per-mesh UV convention again.
+    // Doing it via pdf.js's OWN rotation support instead of that manual
+    // context transform is the actual fix here, not just a rewrite: the
+    // pre-transform left an unpainted band along one edge of every
+    // canvas -- confirmed by rendering a raw page canvas directly, with no
+    // 3D mesh involved at all -- almost certainly because page.render()'s
+    // own internal bounds/clipping math doesn't expect the context handed
+    // to it to already carry a rotation. Letting pdf.js compute the
+    // rotated viewport itself (swapped width/height AND the matching pixel
+    // transform, both baked in together) means page.render() always paints
+    // into a plain, un-pre-transformed context sized to exactly match --
+    // nothing left for a transform-composition edge case to leave blank.
+    const viewport = page.getViewport({ scale, rotation: 270 });
+
+    if (pageNum === 1 && onDimensions) {
+      // Unscaled, UN-rotated page size, in PDF points -- the actual page
+      // aspect ratio, independent of DEFAULT_RENDER_SCALE. Rotation only
+      // ever swaps width/height at some multiple of 90°, it never changes
+      // the page's own real proportions, so this must stay unrotated
+      // (rotation defaults to 0) for onDimensions's meaning -- the PDF's
+      // real reading-normal aspect ratio -- to stay correct. Reported once,
+      // from the first page, before rendering proceeds any further, so the
+      // caller can resize the book's geometry (HINGE_LEN/PANEL_REACH, see
+      // config.js) to match before any page mesh or physics body gets
+      // built from the old default dimensions. Awaited: if the caller's
+      // handler resizes/recreates the whole simulation, rendering the rest
+      // of the pages (and firing onPage/the eventual onPagesReady) needs to
+      // wait for that to actually finish first.
+      const rawViewport = page.getViewport({ scale: 1 });
+      await onDimensions(rawViewport.width, rawViewport.height);
+    }
+
     const canvas = document.createElement('canvas');
-    canvas.width = viewport.height;
-    canvas.height = viewport.width;
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
     const ctx = canvas.getContext('2d');
-    ctx.translate(0, canvas.height);
-    ctx.rotate(-Math.PI / 2);
     await page.render({ canvasContext: ctx, viewport }).promise;
     canvases.push(canvas);
     onPage?.(canvases.length, pdf.numPages);
