@@ -74,7 +74,7 @@ renderer.setAnimationLoop(() => {
 
 if (import.meta.env.DEV) {
   // Dev-only handle for poking at the scene from the console.
-  window.__athenaeum = { scene, camera, controls, pages };
+  window.__athenaeum = { scene, camera, controls, renderer, pages };
 }
 
 // ---------- resize ----------

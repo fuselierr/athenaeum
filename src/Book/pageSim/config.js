@@ -8,8 +8,8 @@
  * along Z.
  */
 
-export const HINGE_LEN = 1.6;
-export const PANEL_REACH = 2.2;
+export const HINGE_LEN = 2.0;
+export const PANEL_REACH = 1.4;
 
 // Anchor spacing, both within a spread and between the two spreads. Half of
 // the original study value (0.7).
@@ -40,7 +40,7 @@ export const NO_SELF_COLLIDE = (1 << 16) | 0xfffe;
 // remaining gap, so the closing rate can never outrun the gap itself: a
 // clean exponential ease-out instead of a constant-speed slap shut. Applied
 // only within a spread's own pair, never between the two inner pages (which
-// get a hard stop with no easing — see PageSimulation.enforceNoCrossingBC).
+// get a hard stop with no easing — see PageSimulation._enforceNoCrossingBC).
 export const AIR_CUSHION_RANGE = 0.9; // radians of gap where squeezed air starts pushing back
 export const AIR_CUSHION_MAX_RATE = 2.2; // closing rate (rad/s) allowed at the edge of that range
 
