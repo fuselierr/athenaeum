@@ -284,6 +284,22 @@ export function createSpread(world, parent, opts) {
     }
   }
 
+  // Where this spread's curling page's far end actually is right now, for
+  // the cross-spread B/C tip check in PageSimulation -- comparing actual
+  // endpoint positions instead of just the hinge-tangent angle, since two
+  // spreads with very different anchor separations (once the B/C hinge is
+  // off-center) can have very differently-shaped curls that reach past
+  // each other even while their base angles never technically cross.
+  const _tipOut = new THREE.Vector3();
+  function curlTipAt(candidateAngle, out = _tipOut) {
+    const refBody = curlPage === 'near' ? bodyFar : bodyNear;
+    return curlTipPoint(curlAnchorVec, candidateAngle, pageAngle(refBody), pairGap(), PANEL_REACH, out);
+  }
+  function curlTip(out = _tipOut) {
+    const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
+    return curlTipAt(pageAngle(curlBody), out);
+  }
+
   // Split so the cross-spread inner-page correction can run after BOTH
   // spreads' own physics corrections but before EITHER syncs its meshes.
   function stepPhysics() {
@@ -310,6 +326,7 @@ export function createSpread(world, parent, opts) {
 
   return {
     drop, moveAnchor, stepPhysics, sync, dispose,
+    curlTip, curlTipAt,
     get bodyNear() { return bodyNear; },
     get bodyFar() { return bodyFar; },
     anchorNear, anchorFar,

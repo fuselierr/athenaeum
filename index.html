@@ -33,9 +33,22 @@
         #upload-status {
             margin-top: 6px; min-height: 1.4em;
         }
+
+        /* Debug warning: shown whenever PageSimulation.isCrossingBC is
+           true, i.e. B's hinge angle currently exceeds C's. Purely a
+           visual signal for inspecting the no-crossing correction --
+           doesn't affect the simulation itself. */
+        #bc-cross-warning {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 3;
+            padding: 8px 14px; text-align: center;
+            font: 700 13px/1.4 system-ui, sans-serif; color: #fff;
+            background: #b3261e;
+        }
     </style>
 </head>
 <body>
+    <div id="bc-cross-warning" hidden>&#9888; B/C crossing detected (angleB &gt; angleC)</div>
+
     <div id="hud">
         <div><b>Two physics-driven page-spreads chained along the spine.</b></div>
         <div>Each spread hinges and fills its own gap with its own air-cushion easing; the two

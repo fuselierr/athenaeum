@@ -42,6 +42,10 @@ export class PageSimulation {
     this.root.name = 'PageSimulation';
     this.root.rotation.x = Math.PI;
     parent.add(this.root);
+
+    // Scratch vectors reused every frame by isCrossingBC (diagnostic only).
+    this._tipB = new THREE.Vector3();
+    this._tipC = new THREE.Vector3();
  
     // Placeholder gravity — setFlipped(false) in reset() picks the sign
     // that actually renders as "down" once the render-only flip above is
@@ -85,6 +89,22 @@ export class PageSimulation {
  
   get bcZ() {
     return this._bcZ;
+  }
+
+  /**
+   * True whenever B and C's actual curled surfaces have visually crossed --
+   * their tip positions along the spine are in the wrong order -- NOT just
+   * whenever their hinge angles cross. Once the B/C hinge is off-center the
+   * two spreads curl at different radii, so the base angle check
+   * (angleB > angleC, what _enforceNoCrossingBC itself uses) can miss real
+   * crossings the curved surfaces further out.
+   *
+   * Purely diagnostic: reading this never corrects or moves anything.
+   */
+  get isCrossingBC() {
+    const tipB = this.spreadFront.curlTip(this._tipB);
+    const tipC = this.spreadBack.curlTip(this._tipC);
+    return tipB.z < tipC.z;
   }
  
   /**
