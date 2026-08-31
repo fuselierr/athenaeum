@@ -137,11 +137,19 @@ export class PageSimulation {
     };
   }
 
+  // Multiplies every loaded page texture -- pure white (0xffffff) let the
+  // PDF canvas's own white page background show through completely flat,
+  // which read as harsh/off against the wedge's warm tan (0xf2d98a front /
+  // 0xd9c48a back). A shade lighter than the wedge tans, blended toward
+  // white, gives loaded pages a warmer "paper" tint instead of stark white
+  // without meaningfully darkening the rendered text.
+  static PAGE_TINT = 0xf5ecd2;
+
   /**
    * Put a rendered page texture (e.g. a THREE.CanvasTexture from PDF.js)
    * onto one of the four visible surfaces ('A' | 'B' | 'C' | 'D', see
-   * pageMeshes). Clears the placeholder tint color so the texture shows
-   * at its own colors instead of being multiplied by it.
+   * pageMeshes). Sets the placeholder material color to PAGE_TINT so the
+   * texture reads as warm paper instead of being multiplied by pure white.
    */
   setPageTexture(slot, texture) {
     const mesh = this.pageMeshes[slot];
@@ -164,7 +172,7 @@ export class PageSimulation {
     texture.rotation = slot === 'B' ? Math.PI : 0;
 
     mesh.material.map = texture;
-    mesh.material.color.set(0xffffff);
+    mesh.material.color.set(PageSimulation.PAGE_TINT);
     mesh.material.needsUpdate = true;
   }
 
