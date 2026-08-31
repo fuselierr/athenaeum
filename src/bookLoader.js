@@ -49,7 +49,11 @@ async function uploadEpub(file) {
 }
 
 async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPage } = {}) {
-  const loadingTask = pdfjsLib.getDocument(pdfUrl);
+  // Pass the config object explicitly rather than a bare string -- relying
+  // on pdf.js to auto-wrap a string into { url } has proven flaky across
+  // pdfjs-dist versions/bundlers, and throws exactly the
+  // "expected either data, range, or url parameter" error when it doesn't.
+  const loadingTask = pdfjsLib.getDocument({ url: pdfUrl });
   const pdf = await loadingTask.promise;
   const canvases = [];
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
