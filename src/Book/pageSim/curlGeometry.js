@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { AXIS_X, clampNum } from './math.js';
- 
+
 /**
  * Page-curl geometry.
  *
@@ -14,10 +14,10 @@ import { AXIS_X, clampNum } from './math.js';
  * never stretches or shrinks — more curl just eats more of that fixed
  * length into the arc.
  */
- 
+
 export const CURL_SEGS = 20;
 export const CURL_ROWS = CURL_SEGS + 2; // arc rows (CURL_SEGS + 1) plus one straight-tip row
- 
+
 export const CURL_INDEX = (() => {
   const idx = [];
   const left = (i) => i;
@@ -28,29 +28,54 @@ export const CURL_INDEX = (() => {
   }
   return idx;
 })();
- 
-// Static UV layout for the curl strip: u=0/1 for the left/right column, v
-// by ROW INDEX (not by the bent arc-length curlRowFrac computes elsewhere)
-// so the texture doesn't stretch or slide around as the page bends -- a
-// given row always samples the same horizontal band of the page texture
-// regardless of how much of PANEL_REACH is currently in the curved part.
-export const CURL_UV = (() => {
-  const uv = new Float32Array(2 * CURL_ROWS * 2);
+
+// UV layout for the curl strip: u=0/1 for the left/right column (static --
+// HINGE_LEN doesn't change row to row). v used to be assigned by ROW INDEX
+// (i/(CURL_ROWS-1)) on the reasoning that arc-length-based v would make the
+// texture "stretch or slide" as the page bends. In practice that made the
+// texture badly non-uniform instead: CURL_SEGS (20) of the CURL_ROWS (22)
+// rows are always inside the ARC, regardless of how much of PANEL_REACH the
+// arc actually currently occupies -- so whenever the arc is a small
+// fraction of the page's length (the common case away from the spine), a
+// texture's full height gets crammed into that small arc while the much
+// longer straight run gets stretched from only the 1-2 rows outside it,
+// which is what showed up as "the text is only on the curve, the extended
+// (straight) part is blank" -- that blank look is really the source image
+// stretched so thin across that huge a run that it reads as a flat color.
+//
+// v is now written PER-FRAME from curlRowFrac -- the actual cumulative
+// arc-length fraction spread.js's updateCurlMesh already computes for the
+// wedge loft -- via writeCurlUV below, so the texture is evenly spread
+// across the page's real current length (arc + straight together) instead
+// of by row count. The tradeoff the row-index approach was trying to avoid
+// (texture appearing to slide as curl amount changes) is the lesser
+// problem -- a page's rendered content shifting slightly as it curls reads
+// far better than most of it being invisible.
+export function createCurlUV() {
+  return new Float32Array(2 * CURL_ROWS * 2);
+}
+
+// v = 1 - curlRowFrac[i], NOT curlRowFrac[i]: curlRowFrac[0] = 0 at the
+// hinge/spine end and 1 at the tip end (same direction buildCurlStrip's row
+// 0 starts from, right at the anchor). The flat pages' default
+// PlaneGeometry UV has v=0 at the TIP and v=1 at the pivot/hinge -- the
+// opposite convention. Matching that here is what keeps a page's texture
+// right-side-up on the curl mesh instead of appearing upside-down.
+export function writeCurlUV(uv, curlRowFrac) {
   for (let i = 0; i < CURL_ROWS; i++) {
-    const v = i / (CURL_ROWS - 1);
+    const v = 1 - curlRowFrac[i];
     const li = i * 2, ri = (CURL_ROWS + i) * 2;
     uv[li] = 0; uv[li + 1] = v;
     uv[ri] = 1; uv[ri + 1] = v;
   }
-  return uv;
-})();
- 
+}
+
 const _curl = {
   dirStart: new THREE.Vector3(), dirEnd: new THREE.Vector3(), axis: new THREE.Vector3(),
   radialStart: new THREE.Vector3(), radial: new THREE.Vector3(), pos: new THREE.Vector3(),
   tip: new THREE.Vector3(),
 };
- 
+
 /**
  * Writes CURL_ROWS pairs of (left, right) vertices into `positions`, tracing
  * the curling page from `anchorPoint` — tangent = `curlAngle`'s direction —
@@ -72,13 +97,13 @@ export function buildCurlStrip(positions, anchorPoint, curlAngle, refAngle, radi
   // tangent at theta = 0 exactly dirStart, and at theta = sweep exactly
   // dirEnd.
   const radialStart = _curl.radialStart.crossVectors(dirStart, axis);
- 
+
   const writeRow = (row, center) => {
     const li = row * 3, ri = (CURL_ROWS + row) * 3;
     positions[li] = center.x - halfWidth; positions[li + 1] = center.y; positions[li + 2] = center.z;
     positions[ri] = center.x + halfWidth; positions[ri + 1] = center.y; positions[ri + 2] = center.z;
   };
- 
+
   let curveEnd = null;
   for (let i = 0; i <= CURL_SEGS; i++) {
     const theta = (i / CURL_SEGS) * sweep;
@@ -91,7 +116,7 @@ export function buildCurlStrip(positions, anchorPoint, curlAngle, refAngle, radi
   writeRow(CURL_SEGS + 1, tip);
   return tip;
 }
- 
+
 // Same closed-form endpoint buildCurlStrip's last row computes, without
 // writing the whole ribbon — for the bisection search in enforceNoCrossing,
 // which only needs the tip.
@@ -114,7 +139,7 @@ export function curlTipPoint(anchorPoint, curlAngle, refAngle, radius, totalLeng
   s.tmp.copy(s.dirEnd).multiplyScalar(straightLen);
   return out.add(s.tmp);
 }
- 
+
 /**
  * Closest distance from a world point to a page treated as a finite oriented
  * box: hinged at `anchor`, currently at `angle`, spanning [0, panelReach]

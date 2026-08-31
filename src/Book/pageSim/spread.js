@@ -9,7 +9,7 @@ import {
   LOCAL_PIVOT_L, LOCAL_PIVOT_R, LOCAL_TIP_L, LOCAL_TIP_R,
 } from './math.js';
 import {
-  CURL_ROWS, CURL_INDEX, CURL_UV, buildCurlStrip, curlTipPoint, closestDistanceToPage,
+  CURL_ROWS, CURL_INDEX, createCurlUV, writeCurlUV, buildCurlStrip, curlTipPoint, closestDistanceToPage,
 } from './curlGeometry.js';
 import { WEDGE_ROWS, WEDGE_INDEX, fillWedgeSide } from './wedgeGeometry.js';
 
@@ -119,9 +119,10 @@ export function createSpread(world, parent, opts) {
   flatMesh.renderOrder = 1;
 
   const curlPositions = new Float32Array(2 * CURL_ROWS * 3);
+  const curlUV = createCurlUV(); // filled per-frame in updateCurlMesh, from the same curlRowFrac the wedge loft uses
   const curlGeo = new THREE.BufferGeometry();
   curlGeo.setAttribute('position', new THREE.BufferAttribute(curlPositions, 3));
-  curlGeo.setAttribute('uv', new THREE.BufferAttribute(CURL_UV, 2));
+  curlGeo.setAttribute('uv', new THREE.BufferAttribute(curlUV, 2));
   curlGeo.setIndex(CURL_INDEX);
   const curlMesh = new THREE.Mesh(curlGeo, curlMat);
   curlMesh.castShadow = true;
@@ -200,6 +201,13 @@ export function createSpread(world, parent, opts) {
     }
     const total = curlRowFrac[CURL_ROWS - 1] || 1;
     for (let i = 0; i < CURL_ROWS; i++) curlRowFrac[i] /= total;
+
+    // Texture v follows the same real arc-length fraction as the wedge
+    // loft above, not raw row index -- see the comment on writeCurlUV in
+    // curlGeometry.js for why (row-index v badly over-magnified the arc
+    // and left the straight run looking blank).
+    writeCurlUV(curlUV, curlRowFrac);
+    curlGeo.attributes.uv.needsUpdate = true;
   }
 
   function updateWedge() {

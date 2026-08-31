@@ -104,14 +104,25 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
     // top-to-bottom axis. Rendered straight into a same-orientation canvas,
     // that's a 90° mismatch against the mesh UVs -- the short axis lands on
     // the mesh's long axis and vice versa, which is what shows up as text
-    // running horizontally instead of vertically. Bake a 90° rotation in
-    // here, once, so every mesh UV can stay untouched and unrotated.
+    // running horizontally instead of vertically. Bake a rotation in here,
+    // once, so every mesh UV can stay untouched and unrotated.
+    //
+    // Rotated -90° (CCW), not +90° (CW): CW fixed the horizontal/vertical
+    // axis swap but left every page upside-down -- the mesh UVs (CURL_UV
+    // and the flat pages' default PlaneGeometry UV) are self-consistent
+    // with each other, but PageSimulation.root's permanent 180° render
+    // flip (see PageSimulation constructor) sits on top of all of that and
+    // wasn't accounted for. Swapping the rotation direction adds exactly
+    // that missing 180° (CW and CCW 90° rotations of the same source are
+    // 180° apart from each other) while keeping the same axis swap, and
+    // does it once here for every page uniformly instead of touching the
+    // per-mesh UV convention again.
     const canvas = document.createElement('canvas');
     canvas.width = viewport.height;
     canvas.height = viewport.width;
     const ctx = canvas.getContext('2d');
-    ctx.translate(canvas.width, 0);
-    ctx.rotate(Math.PI / 2);
+    ctx.translate(0, canvas.height);
+    ctx.rotate(-Math.PI / 2);
     await page.render({ canvasContext: ctx, viewport }).promise;
     canvases.push(canvas);
     onPage?.(canvases.length, pdf.numPages);
