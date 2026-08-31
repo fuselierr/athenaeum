@@ -2,43 +2,43 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { PageSimulation } from './Book/pageSim/PageSimulation.js';
 import { initBookLoader } from './bookLoader.js';
- 
+
 // NOTE: BookGeometry (src/Book/bookGeometry.js) is the static spine/cover
 // backbone and is not wired in here yet — the physics page simulation below
 // currently models pages only, at its own (larger) scale. Reconciling the
 // two is the next step.
- 
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x11141a);
 scene.fog = new THREE.Fog(0x11141a, 8, 20);
- 
+
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.05, 100);
 camera.position.set(3.2, 2.4, 3.6);
- 
+
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
- 
+
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.0, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
- 
+
 scene.add(new THREE.HemisphereLight(0xaabbff, 0x1a1a1a, 0.6));
 const sun = new THREE.DirectionalLight(0xffffff, 2.0);
 sun.position.set(3, 5, 2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
 scene.add(sun);
- 
+
 const grid = new THREE.GridHelper(20, 20, 0x2a3040, 0x1c202a);
 grid.position.y = -1.6;
 scene.add(grid);
- 
+
 const pages = await PageSimulation.create(scene);
- 
+
 // Uploads an epub, converts it server-side (Playwright), and rasterizes the
 // resulting PDF's pages to canvas via PDF.js. Turning those canvases into
 // page textures on the curl/flat meshes is not implemented yet -- for now
@@ -59,14 +59,14 @@ initBookLoader({
     });
   },
 });
- 
+
 const flipBtn = document.getElementById('flipBtn');
 const resetBtn = document.getElementById('resetBtn');
- 
+
 function refreshFlipLabel() {
   if (flipBtn) flipBtn.textContent = pages.flipped ? 'Flip book back' : 'Flip book over';
 }
- 
+
 flipBtn?.addEventListener('click', () => { pages.toggleFlip(); refreshFlipLabel(); });
 resetBtn?.addEventListener('click', () => { pages.reset(); refreshFlipLabel(); });
 window.addEventListener('keydown', (e) => {
@@ -76,20 +76,31 @@ window.addEventListener('keydown', (e) => {
   if (e.key === ']') pages.setProgress(pages.progress + 0.05);
 });
 refreshFlipLabel();
- 
+
 const bcCrossWarning = document.getElementById('bc-cross-warning');
- 
+const bcDebug = document.getElementById('bc-debug');
+
 renderer.setAnimationLoop(() => {
   pages.step();
   if (bcCrossWarning) bcCrossWarning.hidden = !pages.isCrossingBC;
+  if (bcDebug) {
+    const d = pages.debugBC;
+    bcDebug.textContent =
+      `angleB = ${d.angleB.toFixed(3)}\n`
+      + `angleC = ${d.angleC.toFixed(3)}\n`
+      + `angleB > angleC : ${d.angleCrossing}\n`
+      + `tipB.z = ${d.tipBz.toFixed(3)}\n`
+      + `tipC.z = ${d.tipCz.toFixed(3)}\n`
+      + `tipB.z < tipC.z : ${d.tipCrossing}`;
+  }
   controls.update();
   renderer.render(scene, camera);
 });
- 
+
 if (import.meta.env.DEV) {
   window.__athenaeum = { scene, camera, controls, renderer, pages };
 }
- 
+
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();

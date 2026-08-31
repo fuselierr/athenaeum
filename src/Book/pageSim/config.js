@@ -52,6 +52,12 @@ export const AIR_CUSHION_MAX_RATE = 2.2; // closing rate (rad/s) allowed at the 
 export const BC_MEET_ANGLE = Math.PI / 2;
 export const BC_START_GAP = 0.15; // radians between the two inner pages at t = 0
 
+// B's and C's own hinge-tangent angle, held fixed for the entire lifetime
+// of the book -- see PageSimulation._enforceNoCrossingBC. Only their curl
+// SHAPE (driven by A's/D's own, still-dynamic angles via straightAngle())
+// ever changes; the tangent right at the shared hinge never does.
+export const BC_FIXED_ANGLE = BC_MEET_ANGLE;
+
 // Fractions of OPEN_LIMIT the outer cover pages splay to at t = 0.
 export const COVER_START_NEAR = OPEN_LIMIT * 0.05;
 export const COVER_START_FAR = OPEN_LIMIT * 0.95;

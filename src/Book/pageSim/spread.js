@@ -300,6 +300,17 @@ export function createSpread(world, parent, opts) {
     return curlTipAt(pageAngle(curlBody), out);
   }
 
+  // The angle of this spread's curling page's STRAIGHT part, i.e. dirEnd in
+  // buildCurlStrip -- always exactly the reference (flat/cover) page's own
+  // current angle, since that's the whole point of the arc: it bends until
+  // its tangent matches dirEnd, then continues straight in that exact
+  // direction. Distinct from the curling page's own base/hinge angle,
+  // which is what pageAngle(curlBody) reads.
+  function straightAngle() {
+    const refBody = curlPage === 'near' ? bodyFar : bodyNear;
+    return pageAngle(refBody);
+  }
+
   // Split so the cross-spread inner-page correction can run after BOTH
   // spreads' own physics corrections but before EITHER syncs its meshes.
   function stepPhysics() {
@@ -326,7 +337,7 @@ export function createSpread(world, parent, opts) {
 
   return {
     drop, moveAnchor, stepPhysics, sync, dispose,
-    curlTip, curlTipAt,
+    curlTip, curlTipAt, straightAngle,
     get bodyNear() { return bodyNear; },
     get bodyFar() { return bodyFar; },
     anchorNear, anchorFar,

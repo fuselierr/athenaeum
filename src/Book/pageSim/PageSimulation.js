@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
   SPINE_GAP, GRAVITY_MAG, OPEN_LIMIT,
-  BC_MEET_ANGLE, BC_START_GAP, COVER_START_NEAR, COVER_START_FAR,
+  BC_MEET_ANGLE, BC_START_GAP, COVER_START_NEAR, COVER_START_FAR, BC_FIXED_ANGLE,
 } from './config.js';
 import { pageAngle, pageTransform } from './math.js';
 import { createSpread } from './spread.js';
@@ -105,6 +105,21 @@ export class PageSimulation {
     const tipB = this.spreadFront.curlTip(this._tipB);
     const tipC = this.spreadBack.curlTip(this._tipC);
     return tipB.z < tipC.z;
+  }
+
+  /**
+   * Raw numbers behind isCrossingBC / _enforceNoCrossingBC, for a
+   * permanent on-screen debug readout. Purely diagnostic.
+   */
+  get debugBC() {
+    const angleB = pageAngle(this.spreadFront.bodyFar);
+    const angleC = pageAngle(this.spreadBack.bodyNear);
+    const tipB = this.spreadFront.curlTip(this._tipB);
+    const tipC = this.spreadBack.curlTip(this._tipC);
+    return {
+      angleB, angleC, angleCrossing: angleB > angleC,
+      tipBz: tipB.z, tipCz: tipC.z, tipCrossing: tipB.z < tipC.z,
+    };
   }
  
   /**
@@ -222,30 +237,32 @@ export class PageSimulation {
  
   /**
    * B (front's far page) and C (back's near page) hinge from the same point
-   * in space. Unlike the intra-spread correction there's no air cushion —
-   * they aren't sealed together the way a spread's own two pages are — so
-   * this is a pure hard "cannot pass through": snap both to the angle where
-   * they meet and match angular velocities so they don't immediately
-   * re-cross.
+   * in space, and their own hinge-tangent angle is now a fixed constant
+   * (BC_FIXED_ANGLE, config.js) for the entire lifetime of the book -- not
+   * something gravity, the joint solver, or any correction ever changes.
+   * That's what keeps their curl strips tangent-continuous with each other
+   * at the shared hinge: same fixed starting tangent, always. What DOES
+   * still change is their curl SHAPE further out, since buildCurlStrip's
+   * refAngle comes from straightAngle() (A's/D's own, still-dynamic
+   * angle) -- only the tangent right at the hinge is frozen, not the bend.
+   *
+   * Runs every frame, unconditionally, re-asserting the fixed angle and
+   * zeroing angular velocity so nothing (gravity, joints, the intra-spread
+   * correction in spread.js) can drift it away from BC_FIXED_ANGLE even
+   * for one frame.
    */
   _enforceNoCrossingBC() {
     const bodyB = this.spreadFront.bodyFar;
     const bodyC = this.spreadBack.bodyNear;
-    const angleB = pageAngle(bodyB);
-    const angleC = pageAngle(bodyC);
-    if (angleB <= angleC) return;
- 
-    const meet = (angleB + angleC) / 2;
-    const sharedAngVel = (bodyB.angvel().x + bodyC.angvel().x) / 2;
     const pairs = [
       [bodyB, this.spreadFront.anchorFar],
       [bodyC, this.spreadBack.anchorNear],
     ];
     for (const [body, anchor] of pairs) {
-      const t = pageTransform(anchor, meet);
+      const t = pageTransform(anchor, BC_FIXED_ANGLE);
       body.setTranslation(t.pos, true);
       body.setRotation(t.rot, true);
-      body.setAngvel({ x: sharedAngVel, y: 0, z: 0 }, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
   }
  

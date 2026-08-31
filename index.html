@@ -44,10 +44,20 @@
             font: 700 13px/1.4 system-ui, sans-serif; color: #fff;
             background: #b3261e;
         }
+
+        /* Permanent debug readout: raw angleB/angleC and tipB.z/tipC.z
+           every frame, from PageSimulation.debugBC. */
+        #bc-debug {
+            position: fixed; top: 12px; right: 12px; z-index: 2;
+            color: #9fe6a0; font: 12px/1.5 ui-monospace, monospace;
+            background: rgba(20, 24, 32, 0.75); padding: 8px 12px; border-radius: 8px;
+            white-space: pre;
+        }
     </style>
 </head>
 <body>
     <div id="bc-cross-warning" hidden>&#9888; B/C crossing detected (angleB &gt; angleC)</div>
+    <div id="bc-debug"></div>
 
     <div id="hud">
         <div><b>Two physics-driven page-spreads chained along the spine.</b></div>
