@@ -39,9 +39,18 @@ controls.dampingFactor = 0.08;
 
 scene.add(new THREE.HemisphereLight(0xaabbff, 0x1a1a1a, 0.6));
 const sun = new THREE.DirectionalLight(0xffffff, 2.0);
-sun.position.set(3, 5, 2);
+sun.position.set(3, 17, 7);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -3;
+sun.shadow.camera.right = 3;
+sun.shadow.camera.top = 3;
+sun.shadow.camera.bottom = -3;
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 12;
+sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias = -0.0015;
+sun.shadow.normalBias = 0.02;
 scene.add(sun);
 
 const grid = new THREE.GridHelper(20, 20, 0x2a3040, 0x1c202a);
