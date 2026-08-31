@@ -1,7 +1,18 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { PageSimulation } from './Book/pageSim/PageSimulation.js';
+import { setPageDimensions, PANEL_REACH as INITIAL_PANEL_REACH } from './Book/pageSim/config.js';
+import { updateLocalCorners } from './Book/pageSim/math.js';
 import { initBookLoader } from './bookLoader.js';
+
+// Baseline width scale (spine-to-edge reach) everything else -- camera
+// distance, SPINE_GAP, fog, the default 1.4 PANEL_REACH -- was already
+// tuned around. A loaded PDF's aspect ratio is applied by keeping this
+// fixed and deriving HINGE_LEN (the spine-length/page-height dimension)
+// from it, rather than changing overall scale, so the book doesn't also
+// shrink/balloon relative to the camera and lighting just because a page
+// happens to be tall or short.
+const BASE_PANEL_REACH = INITIAL_PANEL_REACH;
 
 // NOTE: BookGeometry (src/Book/bookGeometry.js) is the static spine/cover
 // backbone and is not wired in here yet — the physics page simulation below
@@ -37,26 +48,86 @@ const grid = new THREE.GridHelper(20, 20, 0x2a3040, 0x1c202a);
 grid.position.y = -1.6;
 scene.add(grid);
 
-const pages = await PageSimulation.create(scene);
+let pages = await PageSimulation.create(scene);
+
+/**
+ * Resize the book to match a loaded PDF's actual page proportions, and
+ * apply it. HINGE_LEN/PANEL_REACH are baked into physics bodies, collider
+ * half-extents, and panelGeo at PageSimulation construction time (see
+ * spread.js's createSpread) -- so picking up a new size means disposing
+ * the whole simulation and building a fresh one with the new config
+ * values already in effect, not mutating the running one in place.
+ *
+ * pageWidthPts/pageHeightPts are the PDF's raw (unscaled) page size, in
+ * reading-normal orientation -- width is the page's short/reading-
+ * horizontal axis, height the long/top-to-bottom axis. Physically, that
+ * maps to HINGE_LEN (X, spine length) ~ page height and PANEL_REACH (Z,
+ * spine-to-edge) ~ page width (see the UV-orientation comment in
+ * bookLoader.js's renderPdfToCanvases for the same mapping).
+ */
+async function applyPdfDimensions(pageWidthPts, pageHeightPts) {
+  const panelReach = BASE_PANEL_REACH;
+  const hingeLen = panelReach * (pageHeightPts / pageWidthPts);
+
+  setPageDimensions(hingeLen, panelReach);
+  updateLocalCorners();
+
+  pages.dispose();
+  pages = await PageSimulation.create(scene);
+  refreshFlipLabel();
+}
+
+// Page-turn state: B always shows pageCanvases[leafStart], C always shows
+// pageCanvases[leafStart + 1] -- "page 1 on B, page 2 on C" at leafStart=0,
+// "page 3 on B, page 4 on C" after one ArrowRight (leafStart=2), etc. A/D
+// aren't wired into this yet (their z-fight/occlusion issues are still
+// being sorted out separately) -- this only drives B/C.
+let pageCanvases = [];
+const pageTextures = []; // built lazily, one CanvasTexture per page, reused across flips
+let leafStart = 0;
+
+function textureForPage(index) {
+  if (!pageCanvases[index]) return null;
+  if (!pageTextures[index]) {
+    pageTextures[index] = new THREE.CanvasTexture(pageCanvases[index]);
+  }
+  return pageTextures[index];
+}
+
+function showLeaf(start) {
+  if (pageCanvases.length === 0) return;
+  // Clamp to an even index so B always lands on an odd-numbered page
+  // (0-indexed even) and C on the following even one, and so the last
+  // full leaf is shown rather than running past the end of the book.
+  const maxStart = pageCanvases.length >= 2
+    ? (pageCanvases.length - (pageCanvases.length % 2 === 0 ? 2 : 1))
+    : 0;
+  leafStart = Math.max(0, Math.min(start, maxStart));
+
+  // Swapped from the naive B=leafStart/C=leafStart+1 assignment: page 1 was
+  // showing up on the panel identified as C, page 2 on B -- the reverse of
+  // what was wired. Likely cause is PageSimulation.root's permanent 180°
+  // book-flip (see PageSimulation constructor) also inverting Z, which
+  // swaps which spread (front/B vs back/C) ends up reading as "first" on
+  // screen -- but rather than guess at that without being able to see the
+  // render, just matching what was observed is the reliable fix here.
+  const b = textureForPage(leafStart + 1);
+  const c = textureForPage(leafStart);
+  if (b) pages.setPageTexture('B', b);
+  if (c) pages.setPageTexture('C', c);
+}
 
 // Uploads an epub, converts it server-side (Playwright), and rasterizes the
-// resulting PDF's pages to canvas via PDF.js. Turning those canvases into
-// page textures on the curl/flat meshes is not implemented yet -- for now
-// they're just logged so the pipeline is visibly working end to end.
+// resulting PDF's pages to canvas via PDF.js.
 initBookLoader({
+  onDimensions: async (pageWidthPts, pageHeightPts) => {
+    await applyPdfDimensions(pageWidthPts, pageHeightPts);
+  },
   onPagesReady: (canvases) => {
     console.log(`Book ready: ${canvases.length} page canvases rendered.`, canvases);
-    // First working cut: just paint the book's first four pages onto the
-    // four surfaces currently visible (A/B/C/D). This does NOT yet update
-    // as you flip through with [ / ] -- swapping in the right textures as
-    // the B/C hinge slides is the next piece (a sliding window keyed off
-    // pages.progress), not built yet.
-    const slots = ['A', 'B', 'C', 'D'];
-    slots.forEach((slot, i) => {
-      if (!canvases[i]) return;
-      const texture = new THREE.CanvasTexture(canvases[i]);
-      pages.setPageTexture(slot, texture);
-    });
+    pageCanvases = canvases;
+    pageTextures.length = 0;
+    showLeaf(0);
   },
 });
 
@@ -74,6 +145,8 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'f' || e.key === 'F') { pages.toggleFlip(); refreshFlipLabel(); }
   if (e.key === '[') pages.setProgress(pages.progress - 0.05);
   if (e.key === ']') pages.setProgress(pages.progress + 0.05);
+  if (e.key === 'ArrowRight') showLeaf(leafStart + 2);
+  if (e.key === 'ArrowLeft') showLeaf(leafStart - 2);
 });
 refreshFlipLabel();
 
@@ -98,7 +171,13 @@ renderer.setAnimationLoop(() => {
 });
 
 if (import.meta.env.DEV) {
-  window.__athenaeum = { scene, camera, controls, renderer, pages };
+  // `pages` is reassigned on a resize (applyPdfDimensions), so expose it as
+  // a getter instead of a snapshot -- otherwise this object would keep
+  // pointing at a disposed PageSimulation after the first PDF loads.
+  window.__athenaeum = {
+    scene, camera, controls, renderer,
+    get pages() { return pages; },
+  };
 }
 
 window.addEventListener('resize', () => {

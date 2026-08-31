@@ -8,8 +8,19 @@
  * along Z.
  */
 
-export const HINGE_LEN = 2.0;
-export const PANEL_REACH = 1.4;
+// `let`, not `const` -- setPageDimensions() below can resize the book to
+// match a loaded PDF's actual page aspect ratio (see bookLoader.js's
+// onDimensions and main.js's applyPdfDimensions). Every other module
+// imports these as live ES module bindings and either reads them fresh
+// inside a function body each time (spread.js) or holds a stable object
+// whose contents setPageDimensions/updateLocalCorners (math.js) mutate in
+// place -- so nothing here needs to change for that to work, EXCEPT that
+// anything which bakes these into physics bodies or BufferGeometry sizes
+// at construction time (panelGeo, colliders) only picks up a change on the
+// NEXT PageSimulation.create(), not live -- main.js handles that by
+// disposing and recreating the whole simulation when dimensions change.
+export let HINGE_LEN = 2.0;
+export let PANEL_REACH = 1.4;
 
 // Anchor spacing, both within a spread and between the two spreads. Half of
 // the original study value (0.7).
@@ -18,7 +29,22 @@ export const SPINE_GAP = 0.35;
 // Physics-only half-thickness, just for a sane inertia tensor.
 export const COLLIDER_THICK = 0.02;
 
-export const PIVOT_TO_NEAR_EDGE = PANEL_REACH / 2;
+export let PIVOT_TO_NEAR_EDGE = PANEL_REACH / 2;
+
+/**
+ * Resize the book to a new HINGE_LEN (spine length, i.e. a page's height)
+ * / PANEL_REACH (spine-to-edge reach, i.e. a page's width). Only updates
+ * these plain values (and the PIVOT_TO_NEAR_EDGE derived from them) --
+ * callers also need math.js's updateLocalCorners() (for the wedge-loft
+ * corner vectors, which are precomputed objects, not read fresh each
+ * frame) and to recreate PageSimulation (for panelGeo/collider sizes,
+ * which are baked in at construction time).
+ */
+export function setPageDimensions(hingeLen, panelReach) {
+  HINGE_LEN = hingeLen;
+  PANEL_REACH = panelReach;
+  PIVOT_TO_NEAR_EDGE = PANEL_REACH / 2;
+}
 
 export const GRAVITY_MAG = 9.81;
 

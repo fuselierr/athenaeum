@@ -90,20 +90,33 @@ export function createSpread(world, parent, opts) {
   // frame.
   const panelGeo = new THREE.PlaneGeometry(HINGE_LEN, PANEL_REACH);
   panelGeo.rotateX(-Math.PI / 2);
-  const matNear = new THREE.MeshStandardMaterial({
-    color: colorNear, roughness: 0.5, metalness: 0.05, side: THREE.DoubleSide,
-    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+  // Four rounds of flipping polygonOffset sign/magnitude produced results
+  // that don't fit a simple signed-offset model (flicker -> both gone ->
+  // swap flips which pair is gone -> unifying the sign made BOTH pairs
+  // gone) -- polygonOffset isn't a mechanism we can reliably reason about
+  // blind here, whether that's driver-specific behavior or something else
+  // going on. Switching to a mechanism that doesn't depend on offset
+  // sign/magnitude at all: renderOrder. With the default depth function
+  // (LessEqualDepth), a fragment at an EQUAL depth to what's already in
+  // the depth buffer still passes and overwrites it -- so for genuinely
+  // coincident/near-coincident geometry, whichever mesh is drawn SECOND
+  // deterministically wins ties, regardless of any offset. Pages (this
+  // mesh and the curl mesh) get a higher renderOrder than the wedge, so
+  // they always draw after it and always win at the seam.
+  const pageMat = new THREE.MeshStandardMaterial({
+    roughness: 0.5, metalness: 0.05, side: THREE.DoubleSide,
   });
-  const matFar = new THREE.MeshStandardMaterial({
-    color: colorFar, roughness: 0.5, metalness: 0.05, side: THREE.DoubleSide,
-    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
-  });
+  const matNear = pageMat.clone();
+  matNear.color.set(colorNear);
+  const matFar = pageMat.clone();
+  matFar.color.set(colorFar);
   const curlMat = curlPage === 'near' ? matNear : matFar;
   const flatMat = curlPage === 'near' ? matFar : matNear;
 
   const flatMesh = new THREE.Mesh(panelGeo, flatMat);
   flatMesh.castShadow = true;
   flatMesh.receiveShadow = true;
+  flatMesh.renderOrder = 1;
 
   const curlPositions = new Float32Array(2 * CURL_ROWS * 3);
   const curlGeo = new THREE.BufferGeometry();
@@ -113,13 +126,15 @@ export function createSpread(world, parent, opts) {
   const curlMesh = new THREE.Mesh(curlGeo, curlMat);
   curlMesh.castShadow = true;
   curlMesh.receiveShadow = true;
+  curlMesh.renderOrder = 1;
 
   parent.add(flatMesh, curlMesh);
 
-  // wedge
+  // wedge -- renderOrder 0 (the default, spelled out for clarity): drawn
+  // BEFORE the pages, so it always loses ties at the seam to whichever
+  // page it's touching.
   const wedgeMat = new THREE.MeshStandardMaterial({
     color: wedgeColor, roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide,
-    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
   });
   const wedgeGeo = new THREE.BufferGeometry();
   const wedgePositions = new Float32Array(WEDGE_ROWS * 4 * 3);
@@ -128,6 +143,7 @@ export function createSpread(world, parent, opts) {
   const wedgeMesh = new THREE.Mesh(wedgeGeo, wedgeMat);
   wedgeMesh.castShadow = true;
   wedgeMesh.receiveShadow = true;
+  wedgeMesh.renderOrder = 0;
   parent.add(wedgeMesh);
 
   // Flat-side corners are read off the flat plane's LOCAL matrix (relative
@@ -149,11 +165,22 @@ export function createSpread(world, parent, opts) {
     mesh.updateMatrixWorld(true);
   }
 
+  // Ref-angle override for the CURL SHAPE only (buildCurlStrip's target
+  // tangent), separate from the reference body's own real physics angle.
+  // Set every frame by PageSimulation._enforceNoCrossingTips before sync()
+  // runs, so B's/C's curl never sweeps out past where the other one's curl
+  // currently ends — without ever touching A's/D's or B's/C's actual rigid
+  // bodies. null means "use the reference body's real angle", i.e. no clamp
+  // in effect.
+  let _refAngleOverride = null;
+  function setRefAngleClamp(angle) { _refAngleOverride = angle; }
+
   function updateCurlMesh() {
     const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
     const refBody = curlPage === 'near' ? bodyFar : bodyNear;
+    const refAngle = _refAngleOverride ?? pageAngle(refBody);
     buildCurlStrip(
-      curlPositions, curlAnchorVec, pageAngle(curlBody), pageAngle(refBody),
+      curlPositions, curlAnchorVec, pageAngle(curlBody), refAngle,
       pairGap(), PANEL_REACH, halfWidth,
     );
     curlGeo.attributes.position.needsUpdate = true;
@@ -300,12 +327,22 @@ export function createSpread(world, parent, opts) {
     return curlTipAt(pageAngle(curlBody), out);
   }
 
+  // Same idea as curlTipAt, but varies the REFERENCE angle instead of the
+  // curling page's own angle -- used by PageSimulation._enforceNoCrossingTips
+  // to find where this curl's tip would land for some candidate ref angle
+  // (e.g. scaled back from A's/D's real angle) without touching any body.
+  function curlTipAtRef(candidateRefAngle, out = _tipOut) {
+    const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
+    return curlTipPoint(curlAnchorVec, pageAngle(curlBody), candidateRefAngle, pairGap(), PANEL_REACH, out);
+  }
+
   // The angle of this spread's curling page's STRAIGHT part, i.e. dirEnd in
   // buildCurlStrip -- always exactly the reference (flat/cover) page's own
   // current angle, since that's the whole point of the arc: it bends until
   // its tangent matches dirEnd, then continues straight in that exact
   // direction. Distinct from the curling page's own base/hinge angle,
-  // which is what pageAngle(curlBody) reads.
+  // which is what pageAngle(curlBody) reads. This is the reference body's
+  // REAL angle, unaffected by any setRefAngleClamp override in effect.
   function straightAngle() {
     const refBody = curlPage === 'near' ? bodyFar : bodyNear;
     return pageAngle(refBody);
@@ -337,7 +374,7 @@ export function createSpread(world, parent, opts) {
 
   return {
     drop, moveAnchor, stepPhysics, sync, dispose,
-    curlTip, curlTipAt, straightAngle,
+    curlTip, curlTipAt, curlTipAtRef, straightAngle, setRefAngleClamp,
     get bodyNear() { return bodyNear; },
     get bodyFar() { return bodyFar; },
     anchorNear, anchorFar,

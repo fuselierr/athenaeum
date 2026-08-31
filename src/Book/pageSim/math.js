@@ -43,7 +43,21 @@ export function pageTransform(anchor, angle) {
 
 // Local-space corners of a flat page relative to its own mesh origin —
 // used to loft the wedge onto the flat reference page's straight edge.
-export const LOCAL_PIVOT_L = new THREE.Vector3(-HINGE_LEN / 2, 0, -PIVOT_TO_NEAR_EDGE);
-export const LOCAL_PIVOT_R = new THREE.Vector3(HINGE_LEN / 2, 0, -PIVOT_TO_NEAR_EDGE);
-export const LOCAL_TIP_L = new THREE.Vector3(-HINGE_LEN / 2, 0, PIVOT_TO_NEAR_EDGE);
-export const LOCAL_TIP_R = new THREE.Vector3(HINGE_LEN / 2, 0, PIVOT_TO_NEAR_EDGE);
+//
+// Pre-allocated, mutable, shared instances (not recreated) -- spread.js
+// holds onto these same objects and reads their CURRENT contents each
+// frame via .copy(), so updateLocalCorners() below can resize the book
+// (see config.js's setPageDimensions) just by mutating them in place;
+// nothing needs to re-import or reassign anything.
+export const LOCAL_PIVOT_L = new THREE.Vector3();
+export const LOCAL_PIVOT_R = new THREE.Vector3();
+export const LOCAL_TIP_L = new THREE.Vector3();
+export const LOCAL_TIP_R = new THREE.Vector3();
+
+export function updateLocalCorners() {
+  LOCAL_PIVOT_L.set(-HINGE_LEN / 2, 0, -PIVOT_TO_NEAR_EDGE);
+  LOCAL_PIVOT_R.set(HINGE_LEN / 2, 0, -PIVOT_TO_NEAR_EDGE);
+  LOCAL_TIP_L.set(-HINGE_LEN / 2, 0, PIVOT_TO_NEAR_EDGE);
+  LOCAL_TIP_R.set(HINGE_LEN / 2, 0, PIVOT_TO_NEAR_EDGE);
+}
+updateLocalCorners(); // initialize with config.js's starting HINGE_LEN/PIVOT_TO_NEAR_EDGE

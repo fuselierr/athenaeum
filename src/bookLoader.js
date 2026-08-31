@@ -11,7 +11,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
  * ----------
  * Replaces the old foliate-js-based epub.js viewer. This module:
  *   1. Uploads a chosen .epub to the upload-server.ts backend
- *      (POST /api/books), which runs the Playwright epub->PDF conversion.
+ *      (POST /api/books), which runs the Playwright epub->PDF conversion --
+ *      OR, on startup, for quick local testing, checks whether a .pdf has
+ *      just been dropped straight into src/books/ and loads that instead,
+ *      no server/upload round-trip needed.
  *   2. Fetches the resulting PDF and rasterizes each page to a canvas via
  *      PDF.js.
  *   3. Hands the rendered page canvases back through `onPagesReady` so the
@@ -29,6 +32,24 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
  */
 
 const DEFAULT_RENDER_SCALE = 1.5; // px-per-pdf-unit; raise for sharper page textures
+
+// Vite-only, build-time glob: resolves every .pdf under src/books/ to its
+// served URL (no fetch/network round-trip -- Vite just hands back the
+// asset URL string directly, same mechanism as the `?url` worker import
+// above). This is a TESTING convenience: drop a PDF straight into
+// src/books/ to skip the epub-upload/conversion pipeline entirely and
+// exercise the page-texture/curl code against it immediately on reload.
+// `eager: true` means this list is resolved once at module load, not
+// lazily -- fine here since it's just filenames, not the PDF contents.
+const LOCAL_BOOK_URLS = import.meta.glob('/src/books/*.pdf', {
+  eager: true, import: 'default', query: '?url',
+});
+
+function findLocalBookUrl() {
+  const paths = Object.keys(LOCAL_BOOK_URLS).sort();
+  if (paths.length === 0) return null;
+  return LOCAL_BOOK_URLS[paths[0]];
+}
 
 async function uploadEpub(file) {
   const formData = new FormData();
@@ -48,7 +69,7 @@ async function uploadEpub(file) {
   return body; // { id, pdfUrl }
 }
 
-async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPage } = {}) {
+async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPage, onDimensions } = {}) {
   // Pass the config object explicitly rather than a bare string -- relying
   // on pdf.js to auto-wrap a string into { url } has proven flaky across
   // pdfjs-dist versions/bundlers, and throws exactly the
@@ -59,10 +80,38 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale });
+
+    if (pageNum === 1 && onDimensions) {
+      // Unscaled page size, in PDF points -- the actual page aspect ratio,
+      // independent of DEFAULT_RENDER_SCALE. Reported once, from the first
+      // page, before rendering proceeds any further, so the caller can
+      // resize the book's geometry (HINGE_LEN/PANEL_REACH, see config.js)
+      // to match the real page proportions before any page mesh or
+      // physics body gets built from the old default dimensions. Awaited:
+      // if the caller's handler resizes/recreates the whole simulation,
+      // rendering the rest of the pages (and firing onPage/the eventual
+      // onPagesReady) needs to wait for that to actually finish first.
+      const rawViewport = page.getViewport({ scale: 1 });
+      await onDimensions(rawViewport.width, rawViewport.height);
+    }
+
+    // The page meshes' UVs (the flat pages' default PlaneGeometry UVs, and
+    // CURL_UV in curlGeometry.js) both put u along HINGE_LEN -- the X axis,
+    // which is physically the page's HEIGHT, since it runs the length of
+    // the spine -- and v along PANEL_REACH -- physically the page's WIDTH,
+    // spine to outer edge. A PDF page renders reading-normal: viewport.width
+    // is its (short) reading-horizontal axis, viewport.height its (long)
+    // top-to-bottom axis. Rendered straight into a same-orientation canvas,
+    // that's a 90° mismatch against the mesh UVs -- the short axis lands on
+    // the mesh's long axis and vice versa, which is what shows up as text
+    // running horizontally instead of vertically. Bake a 90° rotation in
+    // here, once, so every mesh UV can stay untouched and unrotated.
     const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+    canvas.width = viewport.height;
+    canvas.height = viewport.width;
     const ctx = canvas.getContext('2d');
+    ctx.translate(canvas.width, 0);
+    ctx.rotate(Math.PI / 2);
     await page.render({ canvasContext: ctx, viewport }).promise;
     canvases.push(canvas);
     onPage?.(canvases.length, pdf.numPages);
@@ -75,16 +124,33 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
  * in index.html. Call once from main.js.
  *
  * @param {Object} [opts]
+ * @param {(pageWidthPts: number, pageHeightPts: number) => void|Promise<void>} [opts.onDimensions]
+ *   Called once, as soon as the first page's raw (unscaled) size is known
+ *   -- before any canvas is rendered -- so the book's geometry can be
+ *   sized to the PDF's actual page aspect ratio. If it returns a promise,
+ *   rendering waits for it before continuing (so a caller that disposes
+ *   and recreates the whole page simulation here won't race with
+ *   onPagesReady firing on the old one).
  * @param {(canvases: HTMLCanvasElement[]) => void} [opts.onPagesReady]
  *   Called once all pages of a successfully-converted book have been
  *   rendered to canvas. Wire this up to build page textures once that
  *   part of the pipeline exists.
  */
-export function initBookLoader({ onPagesReady } = {}) {
+export function initBookLoader({ onDimensions, onPagesReady } = {}) {
   const input = document.getElementById('epub-file');
   const status = document.getElementById('upload-status');
 
   const setStatus = (text) => { if (status) status.textContent = text; };
+
+  async function loadAndRenderPdf(pdfUrl) {
+    setStatus('Rendering pages…');
+    const canvases = await renderPdfToCanvases(pdfUrl, {
+      onDimensions,
+      onPage: (done, total) => setStatus(`Rendering pages… ${done}/${total}`),
+    });
+    setStatus(`Ready: ${canvases.length} page(s) rendered.`);
+    onPagesReady?.(canvases);
+  }
 
   input?.addEventListener('change', async () => {
     const file = input.files?.[0];
@@ -94,14 +160,7 @@ export function initBookLoader({ onPagesReady } = {}) {
     try {
       setStatus('Uploading and converting…');
       const { pdfUrl } = await uploadEpub(file);
-
-      setStatus('Rendering pages…');
-      const canvases = await renderPdfToCanvases(pdfUrl, {
-        onPage: (done, total) => setStatus(`Rendering pages… ${done}/${total}`),
-      });
-
-      setStatus(`Ready: ${canvases.length} page(s) rendered.`);
-      onPagesReady?.(canvases);
+      await loadAndRenderPdf(pdfUrl);
     } catch (err) {
       console.error('Book upload/conversion failed:', err);
       setStatus(`Error: ${err.message}`);
@@ -109,4 +168,23 @@ export function initBookLoader({ onPagesReady } = {}) {
       input.disabled = false;
     }
   });
+
+  // Testing shortcut: if a .pdf is already sitting in src/books/, render it
+  // immediately on startup -- no upload needed. Purely local/build-time
+  // (see LOCAL_BOOK_URLS above), so this doesn't touch the upload server at
+  // all. If nothing's there, this is a no-op and the upload panel just sits
+  // in its normal idle state.
+  const localUrl = findLocalBookUrl();
+  if (localUrl) {
+    if (input) input.disabled = true;
+    setStatus('Loading local test book…');
+    loadAndRenderPdf(localUrl)
+      .catch((err) => {
+        console.error('Failed to load local test book:', err);
+        setStatus(`Error: ${err.message}`);
+      })
+      .finally(() => {
+        if (input) input.disabled = false;
+      });
+  }
 }
