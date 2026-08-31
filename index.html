@@ -20,15 +20,18 @@
         }
         #hud button:hover { background: #4a5470; }
 
-        /* Source render foliate-js paginates for page capture — kept on-page
-           but tucked out of the way of the 3D view. */
-        #epub-panel {
-            position: fixed; bottom: 12px; right: 12px; z-index: 2;
+        /* Upload panel: sends the epub to the Playwright/PDF.js conversion
+           pipeline (POST /api/books) and reports status. No client-side
+           rendering happens here -- the server converts to PDF, and PDF.js
+           will rasterize pages into page textures once that part is wired
+           up (see src/bookLoader.js). */
+        #upload-panel {
+            position: fixed; bottom: 12px; right: 12px; z-index: 2; max-width: 260px;
             color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
+            background: rgba(20, 24, 32, 0.6); padding: 10px 14px; border-radius: 8px;
         }
-        #epub-viewer {
-            width: 300px; height: 400px; margin-top: 6px;
-            border: 1px solid #2a3040; background: #fff; overflow: hidden;
+        #upload-status {
+            margin-top: 6px; min-height: 1.4em;
         }
     </style>
 </head>
@@ -43,9 +46,10 @@
         <button id="resetBtn" type="button">Reset</button>
     </div>
 
-    <div id="epub-panel">
+    <div id="upload-panel">
+        <div>Upload an epub to convert it to page textures.</div>
         <input id="epub-file" type="file" accept=".epub"/>
-        <div id="epub-viewer"></div>
+        <div id="upload-status"></div>
     </div>
 
     <script type="module" src="/src/main.js"></script>
