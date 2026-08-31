@@ -9,7 +9,7 @@ import {
   LOCAL_PIVOT_L, LOCAL_PIVOT_R, LOCAL_TIP_L, LOCAL_TIP_R,
 } from './math.js';
 import {
-  CURL_ROWS, CURL_INDEX, buildCurlStrip, curlTipPoint, closestDistanceToPage,
+  CURL_ROWS, CURL_INDEX, CURL_UV, buildCurlStrip, curlTipPoint, closestDistanceToPage,
 } from './curlGeometry.js';
 import { WEDGE_ROWS, WEDGE_INDEX, fillWedgeSide } from './wedgeGeometry.js';
 
@@ -108,6 +108,7 @@ export function createSpread(world, parent, opts) {
   const curlPositions = new Float32Array(2 * CURL_ROWS * 3);
   const curlGeo = new THREE.BufferGeometry();
   curlGeo.setAttribute('position', new THREE.BufferAttribute(curlPositions, 3));
+  curlGeo.setAttribute('uv', new THREE.BufferAttribute(CURL_UV, 2));
   curlGeo.setIndex(CURL_INDEX);
   const curlMesh = new THREE.Mesh(curlGeo, curlMat);
   curlMesh.castShadow = true;
@@ -312,5 +313,9 @@ export function createSpread(world, parent, opts) {
     get bodyNear() { return bodyNear; },
     get bodyFar() { return bodyFar; },
     anchorNear, anchorFar,
+    // Exposed so page textures can be assigned from outside (see
+    // PageSimulation.setPageTexture). flatMesh is the reference/cover page
+    // for this spread; curlMesh is the page that bends.
+    flatMesh, curlMesh,
   };
 }

@@ -46,8 +46,17 @@ const pages = await PageSimulation.create(scene);
 initBookLoader({
   onPagesReady: (canvases) => {
     console.log(`Book ready: ${canvases.length} page canvases rendered.`, canvases);
-    // TODO: map these onto pages via THREE.CanvasTexture + index-based UVs
-    // once the sliding-window texture management is built.
+    // First working cut: just paint the book's first four pages onto the
+    // four surfaces currently visible (A/B/C/D). This does NOT yet update
+    // as you flip through with [ / ] -- swapping in the right textures as
+    // the B/C hinge slides is the next piece (a sliding window keyed off
+    // pages.progress), not built yet.
+    const slots = ['A', 'B', 'C', 'D'];
+    slots.forEach((slot, i) => {
+      if (!canvases[i]) return;
+      const texture = new THREE.CanvasTexture(canvases[i]);
+      pages.setPageTexture(slot, texture);
+    });
   },
 });
 

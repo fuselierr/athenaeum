@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { AXIS_X, clampNum } from './math.js';
-
+ 
 /**
  * Page-curl geometry.
  *
@@ -14,10 +14,10 @@ import { AXIS_X, clampNum } from './math.js';
  * never stretches or shrinks — more curl just eats more of that fixed
  * length into the arc.
  */
-
+ 
 export const CURL_SEGS = 20;
 export const CURL_ROWS = CURL_SEGS + 2; // arc rows (CURL_SEGS + 1) plus one straight-tip row
-
+ 
 export const CURL_INDEX = (() => {
   const idx = [];
   const left = (i) => i;
@@ -28,13 +28,29 @@ export const CURL_INDEX = (() => {
   }
   return idx;
 })();
-
+ 
+// Static UV layout for the curl strip: u=0/1 for the left/right column, v
+// by ROW INDEX (not by the bent arc-length curlRowFrac computes elsewhere)
+// so the texture doesn't stretch or slide around as the page bends -- a
+// given row always samples the same horizontal band of the page texture
+// regardless of how much of PANEL_REACH is currently in the curved part.
+export const CURL_UV = (() => {
+  const uv = new Float32Array(2 * CURL_ROWS * 2);
+  for (let i = 0; i < CURL_ROWS; i++) {
+    const v = i / (CURL_ROWS - 1);
+    const li = i * 2, ri = (CURL_ROWS + i) * 2;
+    uv[li] = 0; uv[li + 1] = v;
+    uv[ri] = 1; uv[ri + 1] = v;
+  }
+  return uv;
+})();
+ 
 const _curl = {
   dirStart: new THREE.Vector3(), dirEnd: new THREE.Vector3(), axis: new THREE.Vector3(),
   radialStart: new THREE.Vector3(), radial: new THREE.Vector3(), pos: new THREE.Vector3(),
   tip: new THREE.Vector3(),
 };
-
+ 
 /**
  * Writes CURL_ROWS pairs of (left, right) vertices into `positions`, tracing
  * the curling page from `anchorPoint` — tangent = `curlAngle`'s direction —
@@ -56,13 +72,13 @@ export function buildCurlStrip(positions, anchorPoint, curlAngle, refAngle, radi
   // tangent at theta = 0 exactly dirStart, and at theta = sweep exactly
   // dirEnd.
   const radialStart = _curl.radialStart.crossVectors(dirStart, axis);
-
+ 
   const writeRow = (row, center) => {
     const li = row * 3, ri = (CURL_ROWS + row) * 3;
     positions[li] = center.x - halfWidth; positions[li + 1] = center.y; positions[li + 2] = center.z;
     positions[ri] = center.x + halfWidth; positions[ri + 1] = center.y; positions[ri + 2] = center.z;
   };
-
+ 
   let curveEnd = null;
   for (let i = 0; i <= CURL_SEGS; i++) {
     const theta = (i / CURL_SEGS) * sweep;
@@ -75,7 +91,7 @@ export function buildCurlStrip(positions, anchorPoint, curlAngle, refAngle, radi
   writeRow(CURL_SEGS + 1, tip);
   return tip;
 }
-
+ 
 // Same closed-form endpoint buildCurlStrip's last row computes, without
 // writing the whole ribbon — for the bisection search in enforceNoCrossing,
 // which only needs the tip.
@@ -98,7 +114,7 @@ export function curlTipPoint(anchorPoint, curlAngle, refAngle, radius, totalLeng
   s.tmp.copy(s.dirEnd).multiplyScalar(straightLen);
   return out.add(s.tmp);
 }
-
+ 
 /**
  * Closest distance from a world point to a page treated as a finite oriented
  * box: hinged at `anchor`, currently at `angle`, spanning [0, panelReach]

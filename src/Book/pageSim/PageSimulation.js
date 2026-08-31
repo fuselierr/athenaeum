@@ -6,7 +6,7 @@ import {
 } from './config.js';
 import { pageAngle, pageTransform } from './math.js';
 import { createSpread } from './spread.js';
-
+ 
 /**
  * PageSimulation
  * --------------
@@ -32,7 +32,7 @@ export class PageSimulation {
     await RAPIER.init();
     return new PageSimulation(parent);
   }
-
+ 
   constructor(parent) {
     // Everything is parented under this group so the whole book can be
     // turned over visually (rotation.x = PI) without touching the physics —
@@ -42,21 +42,21 @@ export class PageSimulation {
     this.root.name = 'PageSimulation';
     this.root.rotation.x = Math.PI;
     parent.add(this.root);
-
+ 
     // Placeholder gravity — setFlipped(false) in reset() picks the sign
     // that actually renders as "down" once the render-only flip above is
     // factored in.
     this.world = new RAPIER.World({ x: 0, y: GRAVITY_MAG, z: 0 });
-
+ 
     this.flipped = false;
     this._lastStep = 0; // timestamp of the previous step(), ms; 0 = not yet stepped
-
+ 
     // Z of the shared inner-leaf (B/C) hinge along the spine. 0 = centred
     // between the covers (the flush layout the prototype had); slide it
     // toward a cover to simulate flipping through the book — see
     // setBCPosition / setProgress.
     this._bcZ = 0;
-
+ 
     // Covers stay put: A pinned at +SPINE_GAP (front of the block), D at
     // -SPINE_GAP (back). Only the inner leaves' shared hinge (B's far
     // anchor, C's near anchor) moves, between the two.
@@ -72,21 +72,51 @@ export class PageSimulation {
       dampingNear: 0.5, dampingFar: 0.32,
       curlPage: 'near', // C molds itself to curve from its hinge to match D
     });
-
+ 
     this.reset();
   }
-
+ 
   // How far the shared B/C hinge may travel from centre before the curl and
   // wedge on the tighter side would collapse. +BC_RANGE = against cover A,
   // -BC_RANGE = against cover D.
   static get BC_RANGE() {
     return SPINE_GAP * 0.92;
   }
-
+ 
   get bcZ() {
     return this._bcZ;
   }
-
+ 
+  /**
+   * The four page-shaped surfaces currently in the scene, front-to-back
+   * along the spine: A (front cover, flat), B (front spread's curling
+   * inner leaf), C (back spread's curling inner leaf), D (back cover,
+   * flat). Meshes, not bodies -- for assigning page textures.
+   */
+  get pageMeshes() {
+    return {
+      A: this.spreadFront.flatMesh,
+      B: this.spreadFront.curlMesh,
+      C: this.spreadBack.curlMesh,
+      D: this.spreadBack.flatMesh,
+    };
+  }
+ 
+  /**
+   * Put a rendered page texture (e.g. a THREE.CanvasTexture from PDF.js)
+   * onto one of the four visible surfaces ('A' | 'B' | 'C' | 'D', see
+   * pageMeshes). Clears the placeholder tint color so the texture shows
+   * at its own colors instead of being multiplied by it.
+   */
+  setPageTexture(slot, texture) {
+    const mesh = this.pageMeshes[slot];
+    if (!mesh) return;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    mesh.material.map = texture;
+    mesh.material.color.set(0xffffff);
+    mesh.material.needsUpdate = true;
+  }
+ 
   /**
    * Slide the shared B/C hinge along the spine, clamped to
    * [-BC_RANGE, +BC_RANGE]. Covers A and D don't move. Cheap enough to call
@@ -100,17 +130,17 @@ export class PageSimulation {
     this.spreadFront.moveAnchor('far', z);
     this.spreadBack.moveAnchor('near', z);
   }
-
+ 
   /** Normalized flip-through position: 0 = at cover A, 1 = at cover D. */
   setProgress(t) {
     t = Math.max(0, Math.min(1, t));
     this.setBCPosition(PageSimulation.BC_RANGE * (1 - 2 * t));
   }
-
+ 
   get progress() {
     return (1 - this._bcZ / PageSimulation.BC_RANGE) / 2;
   }
-
+ 
   /**
    * Re-drop both spreads. Covers (A, D) start splayed a few degrees inside
    * their [0, OPEN_LIMIT] range; the inner pages (B, C) start near
@@ -126,7 +156,7 @@ export class PageSimulation {
     this.setFlipped(false);
     this._lastStep = 0; // next step() re-bases its delta instead of jumping
   }
-
+ 
   /**
    * Turn the whole book over. Every anchor sits at y = 0 and the hinge axis
    * is world X, so rotating the book 180° about the spine leaves every
@@ -140,11 +170,11 @@ export class PageSimulation {
     this.flipped = v;
     this.world.gravity = { x: 0, y: v ? -GRAVITY_MAG : GRAVITY_MAG, z: 0 };
   }
-
+ 
   toggleFlip() {
     this.setFlipped(!this.flipped);
   }
-
+ 
   /**
    * Advance the simulation. Pass an explicit delta (seconds), or omit it to
    * use wall-clock time since the previous step (capped at 1/30 s so a
@@ -158,18 +188,18 @@ export class PageSimulation {
     }
     this.world.timestep = Math.min(dt, 1 / 30);
     this.world.step();
-
+ 
     // Both spreads' own corrections, then the cross-spread inner-page stop,
     // all before either spread syncs its meshes — otherwise whichever
     // synced first would render a frame stale after the cross-correction.
     this.spreadFront.stepPhysics();
     this.spreadBack.stepPhysics();
     this._enforceNoCrossingBC();
-
+ 
     this.spreadFront.sync();
     this.spreadBack.sync();
   }
-
+ 
   /**
    * B (front's far page) and C (back's near page) hinge from the same point
    * in space. Unlike the intra-spread correction there's no air cushion —
@@ -184,7 +214,7 @@ export class PageSimulation {
     const angleB = pageAngle(bodyB);
     const angleC = pageAngle(bodyC);
     if (angleB <= angleC) return;
-
+ 
     const meet = (angleB + angleC) / 2;
     const sharedAngVel = (bodyB.angvel().x + bodyC.angvel().x) / 2;
     const pairs = [
@@ -198,7 +228,7 @@ export class PageSimulation {
       body.setAngvel({ x: sharedAngVel, y: 0, z: 0 }, true);
     }
   }
-
+ 
   dispose() {
     this.spreadFront.dispose();
     this.spreadBack.dispose();
