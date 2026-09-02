@@ -18,6 +18,29 @@ export async function loadLamp(scene, options = {}) {
     const {
         position = new THREE.Vector3(0.9, 0.05, 1.5),
         rotationY = -Math.PI / 4,
+        // Tilts the WHOLE lamp (base included) forward/back around its own
+        // local X axis, applied AFTER rotationY. Leave at 0 if you only want
+        // the shade to tilt (see shadeTiltX below) -- this rotates the base
+        // too, which usually isn't what you want for a lamp sitting flush on
+        // a desk.
+        tiltX = 0,
+        // Tilts just the shade + arm/holder, leaving the base sitting flat.
+        // Since this lamp.glb is a single fused mesh (no separate base/arm/
+        // shade nodes to rotate individually like a normal scene-graph
+        // tilt), this bends the mesh's own vertices: everything at or above
+        // shadePivotFraction up the model's height rotates around a
+        // horizontal hinge line by shadeTiltX radians, everything below stays
+        // put. It's a hard hinge, not a smooth curve -- fine for a lamp with
+        // a real joint there, but if the model's arm is itself curved/smooth
+        // through that height a crease may show; lower shadeTiltX or nudge
+        // shadePivotFraction to land closer to an actual seam in the model.
+        shadeTiltX = 0,
+        // Height fraction (0 = base, 1 = top) above which vertices get bent
+        // by shadeTiltX. 0.35 is a guess at roughly where this lamp's arm
+        // starts above its base -- adjust to taste; if the light (see
+        // bulbHeightFraction below) is above this line it tilts along with
+        // the shade, which is what you want.
+        shadePivotFraction = 0.35,
         scale = 1.75,
         // Multiplies whatever emissive intensity the model already carries
         // (either baked in via KHR_materials_emissive_strength, or three.js's
@@ -53,6 +76,40 @@ export async function loadLamp(scene, options = {}) {
     const box = new THREE.Box3().setFromObject(model);
     const center = box.getCenter(new THREE.Vector3());
     const rawHeight = box.max.y - box.min.y;
+    const pivotY = box.min.y + rawHeight * shadePivotFraction;
+
+    // Rotates a raw-space point (dy, dz) around the pivot hinge by
+    // shadeTiltX -- same rotation direction three.js's own object.rotateX
+    // uses, so shadeTiltX's sign behaves the same way tiltX's does.
+    function bendPoint(x, y, z) {
+        if (shadeTiltX === 0 || y < pivotY) return [x, y, z];
+        const dy = y - pivotY;
+        const dz = z - center.z;
+        const cos = Math.cos(shadeTiltX);
+        const sin = Math.sin(shadeTiltX);
+        return [x, pivotY + (dy * cos - dz * sin), center.z + (dy * sin + dz * cos)];
+    }
+
+    if (shadeTiltX !== 0) {
+        // NOTE: assumes each mesh's own local space matches the model's raw
+        // (un-recentered) space -- true for this lamp.glb, which is one mesh
+        // with no intermediate node transforms. If a future model swap adds
+        // per-node offsets/rotations above the mesh, this would need to walk
+        // through obj.matrix first.
+        model.traverse((obj) => {
+            if (!obj.isMesh) return;
+            const posAttr = obj.geometry.attributes.position;
+            for (let i = 0; i < posAttr.count; i++) {
+                const [bx, by, bz] = bendPoint(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
+                posAttr.setXYZ(i, bx, by, bz);
+            }
+            posAttr.needsUpdate = true;
+            obj.geometry.computeVertexNormals();
+            obj.geometry.computeBoundingBox();
+            obj.geometry.computeBoundingSphere();
+        });
+    }
+
     model.position.set(-center.x, -box.min.y, -center.z);
 
     let hasGlow = false;
@@ -89,7 +146,15 @@ export async function loadLamp(scene, options = {}) {
     const lamp = new THREE.Group();
     lamp.add(normalized);
     lamp.position.copy(position);
-    lamp.rotation.y = rotationY;
+    // Order matters: THREE.Euler applies in XYZ order by default, so setting
+    // .y then .x below would apply the X tilt BEFORE the Y rotation instead
+    // of after it. Using rotateY/rotateX (which post-multiply, each around
+    // the object's own current local axes) instead guarantees rotationY
+    // happens first and tiltX tilts relative to the already-yawed lamp, not
+    // relative to world space.
+    lamp.rotation.set(0, 0, 0);
+    lamp.rotateY(rotationY);
+    lamp.rotateX(tiltX);
     lamp.scale.setScalar(scale);
     scene.add(lamp);
 
@@ -99,7 +164,12 @@ export async function loadLamp(scene, options = {}) {
     const bulbLight = new THREE.PointLight(lightColor, lightIntensity, lightDistance, lightDecay);
     bulbLight.castShadow = true;
     bulbLight.shadow.mapSize.set(512, 512);
-    bulbLight.position.set(0, REFERENCE_HEIGHT * bulbHeightFraction, 0);
+    // Run the bulb's raw-space position through the same bend the mesh got,
+    // so the light stays with the shade instead of floating away from it
+    // when shadeTiltX is set.
+    const [bx, by, bz] = bendPoint(center.x, box.min.y + rawHeight * bulbHeightFraction, center.z);
+    const normScale = REFERENCE_HEIGHT / rawHeight;
+    bulbLight.position.set((bx - center.x) * normScale, (by - box.min.y) * normScale, (bz - center.z) * normScale);
     lamp.add(bulbLight);
 
     if (!hasGlow) {
