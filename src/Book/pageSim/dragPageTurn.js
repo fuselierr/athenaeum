@@ -64,7 +64,7 @@ export function createDragPageTurn({
   // page's plane keeps them from ever being coincident in the first
   // place, which is a cheap, purely cosmetic fix for what's already a
   // cosmetic layer.
-  const TEMP_TURN_LIFT = -0.015;
+  const TEMP_TURN_LIFT = -0.001;
 
   let state = 'idle'; // 'idle' | 'dragging' | 'settling'
   let grabbedPanel = null; // 'B' | 'C'

@@ -4,6 +4,7 @@ import { PageSimulation } from './Book/pageSim/PageSimulation.js';
 import { setPageDimensions, PANEL_REACH as INITIAL_PANEL_REACH } from './Book/pageSim/config.js';
 import { updateLocalCorners } from './Book/pageSim/math.js';
 import { createDragPageTurn } from './Book/pageSim/dragPageTurn.js';
+import { loadDesk } from './desk.js';
 import { initBookLoader } from './loader/bookLoader.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
@@ -23,7 +24,17 @@ const {
 const bookGroup = new THREE.Group();
 scene.add(bookGroup);
 
-let pages = await PageSimulation.create(bookGroup);
+// Desk goes straight under `scene`, not `bookGroup` -- it's furniture the
+// book rests on, so it should stay put in world space even when the book
+// itself is right-drag-rotated (bookGroup's own transform, see the
+// pointer handlers below). Loaded alongside the page simulation rather
+// than after it, since the two are independent and neither needs to wait
+// on the other.
+const [pagesInstance] = await Promise.all([
+  PageSimulation.create(bookGroup),
+  loadDesk(scene, { yRotation: Math.PI / 2, scale: 1.2 }),
+]);
+let pages = pagesInstance;
 
 // --- drag-to-turn-a-page ---
 // Click-and-drag on the currently-showing B or C panel bends a temporary
@@ -311,7 +322,10 @@ renderer.setAnimationLoop(() => {
 
 if (import.meta.env.DEV) {
   // `pages` is reassigned by applyPdfDimensions, so expose it as a getter.
+  // THREE is included so console debugging can build THREE.Box3 etc.
+  // against these objects without a separate import (e.g. checking the
+  // desk/book bounding boxes against each other -- see desk.js).
   window.__athenaeum = {
-    scene, camera, controls, renderer, bookGroup, get pages() { return pages; },
+    scene, camera, controls, renderer, bookGroup, THREE, get pages() { return pages; },
   };
 }
