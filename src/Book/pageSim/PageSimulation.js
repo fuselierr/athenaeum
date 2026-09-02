@@ -194,9 +194,59 @@ export class PageSimulation {
   // together -- they are two halves of one decision.
   static PAGE_TOP_AT_PLUS_X = true;
 
-  // Which panels sit on the -Z side of the spine, and so need the
-  // handedness correction described in (1) above.
-  static SLOT_NEEDS_MIRROR = { A: true, B: true, C: false, D: false };
+  // Which panels extend toward -Z from their hinge (A and B) rather than
+  // +Z (C and D). TWO things follow from this single geometric fact, and
+  // both matter:
+  //
+  //   * handedness -- these are the panels needing the mirrored axis
+  //     described in (1) above.
+  //   * facing -- a panel's own geometric front face points along
+  //     u cross v, so on the -Z panels it points DOWN, away from a camera
+  //     above the book. What you actually see of A or B is its BACK face
+  //     (they render at all only because the page materials are
+  //     DoubleSide). dragPageTurn.js keys off this to decide which side of
+  //     its two-sided turning leaf carries which page.
+  static SLOT_ON_MINUS_Z = { A: true, B: true, C: false, D: false };
+
+  /**
+   * True when `slot`'s own geometric front face points up, toward a
+   * camera above the book -- i.e. when the surface you see is its front
+   * rather than its back. See SLOT_ON_MINUS_Z.
+   */
+  static slotFrontFacesUp(slot) {
+    return !PageSimulation.SLOT_ON_MINUS_Z[slot];
+  }
+
+  /**
+   * Orient `texture` the way `slot` would show it -- colour space and uv
+   * transform -- WITHOUT assigning it to that slot's mesh. For code that
+   * needs a page oriented as some panel will show it while actually
+   * drawing it somewhere else (dragPageTurn's turning leaf, whose two
+   * faces belong to two different panels). setPageTexture is just this
+   * plus the assignment.
+   */
+  orientPageTexture(slot, texture) {
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    // Start from the handedness correction (one mirrored axis, or none),
+    // then apply the reading-orientation choice on top as a 180-degree
+    // turn -- both axes -- if page tops belong at +X.
+    let mirrorU = false;
+    let mirrorV = PageSimulation.SLOT_ON_MINUS_Z[slot];
+    if (PageSimulation.PAGE_TOP_AT_PLUS_X) {
+      mirrorU = !mirrorU;
+      mirrorV = !mirrorV;
+    }
+
+    texture.center.set(0.5, 0.5);
+    texture.rotation = 0;
+    texture.offset.set(0, 0);
+    // A mirrored axis is repeat -1 about the centre, i.e. u -> 1 - u (or
+    // v -> 1 - v); the result stays inside [0, 1] either way, so the
+    // default ClampToEdge wrapping is fine and no wrap mode is touched.
+    texture.repeat.set(mirrorU ? -1 : 1, mirrorV ? -1 : 1);
+    return texture;
+  }
 
   /**
    * Put a rendered page texture (e.g. a THREE.CanvasTexture from PDF.js)
@@ -216,25 +266,7 @@ export class PageSimulation {
   setPageTexture(slot, texture) {
     const mesh = this.pageMeshes[slot];
     if (!mesh) return;
-    texture.colorSpace = THREE.SRGBColorSpace;
-
-    // Start from the handedness correction (one mirrored axis, or none),
-    // then apply the reading-orientation choice on top as a 180-degree
-    // turn -- both axes -- if page tops belong at +X.
-    let mirrorU = false;
-    let mirrorV = PageSimulation.SLOT_NEEDS_MIRROR[slot];
-    if (PageSimulation.PAGE_TOP_AT_PLUS_X) {
-      mirrorU = !mirrorU;
-      mirrorV = !mirrorV;
-    }
-
-    texture.center.set(0.5, 0.5);
-    texture.rotation = 0;
-    texture.offset.set(0, 0);
-    // A mirrored axis is repeat -1 about the centre, i.e. u -> 1 - u (or
-    // v -> 1 - v); the result stays inside [0, 1] either way, so the
-    // default ClampToEdge wrapping is fine and no wrap mode is touched.
-    texture.repeat.set(mirrorU ? -1 : 1, mirrorV ? -1 : 1);
+    this.orientPageTexture(slot, texture);
 
     mesh.material.map = texture;
     mesh.material.color.set(PageSimulation.PAGE_TINT);

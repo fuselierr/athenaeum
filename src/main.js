@@ -37,8 +37,7 @@ const [pagesInstance] = await Promise.all([
   loadDesk(scene),
   loadLamp(scene, {
     position: new THREE.Vector3(1.2, 0, -2.6),
-    rotationY: -Math.PI / 2,
-    scale: 3.75,
+    scale: 4.75,
   }),
 ]);
 let pages = pagesInstance;
@@ -71,7 +70,8 @@ const dragPageTurn = createDragPageTurn({
   renderer,
   controls,
   canTurn: canTurnPanel,
-  getBackTexture: getTurnBackTexture,
+  getLandingTexture: getTurnLandingTexture,
+  getUnderneathTexture: getTurnUnderneathTexture,
   commitTurn: commitTurnPanel,
 });
 
@@ -118,18 +118,22 @@ function clampLeafStart(start) {
   return Math.max(0, Math.min(start, maxStart));
 }
 
-// Which visible panel is the RIGHT-hand page of the spread. Everything
-// about spread ordering follows from this one line -- flip it if the
-// book should read the other way (a right-to-left book, or if you'd
-// rather the very first page open as a left-hand page).
+// Which visible panel is the RIGHT-hand page of the spread. All spread
+// ordering -- which page number goes where, and which way a drag turns --
+// follows from this one line.
 //
-// B, because: every panel renders its page with the top toward
-// x = -HINGE_LEN/2 (see PageSimulation.SLOT_MIRROR_V), which puts the
-// reader's right at -Z, and B is the panel that extends to -Z from the
-// spine while C extends to +Z. It also matches the page-turn directions
-// already wired up in dragPageTurn.js -- dragging B turns FORWARD, which
-// is the right-hand page in a left-to-right book.
-const RIGHT_HAND_PANEL = 'B';
+// 'C', because every panel renders its page with the top toward
+// x = +HINGE_LEN/2 (PageSimulation.PAGE_TOP_AT_PLUS_X). A reader whose
+// "up the page" is +X and who is looking down at the book has their right
+// hand at +Z, and C is the panel that extends to +Z from the spine while
+// B extends to -Z. Turning then works out on its own: dragging C sweeps
+// it from the +Z side over to B's shape on the -Z side, i.e. right to
+// left across the spine, which is what turning FORWARD looks like.
+//
+// This is one half of a two-part decision -- flip PAGE_TOP_AT_PLUS_X and
+// this constant TOGETHER to make the book read from the other side of the
+// desk (or for a right-to-left book, flip only this one).
+const RIGHT_HAND_PANEL = 'C';
 const LEFT_HAND_PANEL = RIGHT_HAND_PANEL === 'B' ? 'C' : 'B';
 
 // Which page index a panel shows for a given spread: lower number on the
@@ -159,7 +163,24 @@ function turnTargetLeafStart(panel) {
 function canTurnPanel(panel) {
   return turnTargetLeafStart(panel) !== leafStart;
 }
-function getTurnBackTexture(panel) {
+function oppositePanel(panel) {
+  return panel === RIGHT_HAND_PANEL ? LEFT_HAND_PANEL : RIGHT_HAND_PANEL;
+}
+
+// The two pages a turn needs beyond the one being grabbed, which are NOT
+// the same page -- conflating them is what put the page after next on the
+// back of the turning leaf.
+//
+// A leaf turned from one side of the spine lands on the OTHER side, so
+// the page on its far face is the one that ends up on the opposite panel
+// of the target spread. Meanwhile the panel you grabbed is left showing
+// its own slot of that same target spread. Turning forward from [N, N+1]
+// with N+1 grabbed: the leaf's far face is N+2 (it becomes the new
+// left-hand page) while N+3 is uncovered underneath on the right.
+function getTurnLandingTexture(panel) {
+  return textureForPage(pageIndexForPanel(oppositePanel(panel), turnTargetLeafStart(panel)));
+}
+function getTurnUnderneathTexture(panel) {
   return textureForPage(pageIndexForPanel(panel, turnTargetLeafStart(panel)));
 }
 function commitTurnPanel(panel) {

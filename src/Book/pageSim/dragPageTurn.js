@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { HINGE_LEN, PANEL_REACH, BC_FIXED_ANGLE } from './config.js';
 import { pageAngle } from './math.js';
+import { PageSimulation } from './PageSimulation.js';
 import {
   CURL_ROWS, CURL_INDEX, createCurlUV, writeCurlUV, buildCurlStrip,
 } from './curlGeometry.js';
@@ -24,22 +25,32 @@ import {
  * always turns backward (C's shape -> B's shape) — the panel decides
  * direction, not the drag direction.
  *
- * The temp page is double-sided with two different textures: its front
- * face is whatever the grabbed panel is currently showing, its back face
- * is whatever that panel will show once the turn actually commits (the
- * "next"/"previous" page, from `getBackTexture`). The real panel mesh
- * underneath is switched to that same back texture the moment the drag
- * starts — via PageSimulation.setPageTexture, so it picks up the exact
- * same tint/rotation convention every other slot assignment does — so it
- * no longer sits blank behind the temp page; it already shows the
- * upcoming content, and is revealed as the temp page peels away. A
- * cancelled drag (released before the halfway point) reverts the real
+ * The temp strip is a real two-sided leaf, and THREE different pages are
+ * in play during one turn — mixing any two of them up is what made this
+ * show the wrong page on the wrong face:
+ *
+ *   1. the page on the grabbed panel now — the face you take hold of;
+ *   2. the page this leaf LANDS as, on the opposite panel, once the turn
+ *      completes (`getLandingTexture`) — the leaf's other face, and the
+ *      one that swings into view as it flips;
+ *   3. the page revealed UNDERNEATH on the grabbed panel itself
+ *      (`getUnderneathTexture`) — a different page again, painted onto
+ *      the real mesh the moment the drag starts (through
+ *      PageSimulation.setPageTexture, so it picks up the same tint and
+ *      orientation as any other slot assignment) so nothing sits blank
+ *      behind the leaf as it peels away.
+ *
+ * Turning forward from a spread showing [N, N+1] with N+1 grabbed: the
+ * leaf's faces are N+1 and N+2, and N+3 is revealed underneath it.
+ *
+ * A cancelled drag (released before the halfway point) reverts the real
  * panel back to what it showed before the drag started; a completed one
  * (released past halfway) calls `commitTurn`, which drives the actual
  * page content forward/backward (main.js's showLeaf) to match.
  */
 export function createDragPageTurn({
-  getPages, camera, renderer, controls, canTurn, getBackTexture, commitTurn,
+  getPages, camera, renderer, controls, canTurn,
+  getLandingTexture, getUnderneathTexture, commitTurn,
 }) {
   const dom = renderer.domElement;
   const raycaster = new THREE.Raycaster();
@@ -70,7 +81,7 @@ export function createDragPageTurn({
   let grabbedPanel = null; // 'B' | 'C'
   let grabbedMesh = null;
   let originalTexture = null; // grabbed panel's texture before the drag started, for a cancelled turn
-  let hasBackTexture = false; // false near either end of the book -- nothing to turn to
+  let hasTurnTextures = false; // false near either end of the book -- nothing to turn to
   let turnSign = 1; // +1 for B (forward), -1 for C (backward)
   const pivotScreen = new THREE.Vector2();
   let angle0 = 0;
@@ -115,16 +126,17 @@ export function createDragPageTurn({
     const total = curlRowFrac[CURL_ROWS - 1] || 1;
     for (let i = 0; i < CURL_ROWS; i++) curlRowFrac[i] /= total;
 
-    // Front and back get OPPOSITE flipU: the back face is the exact same
-    // vertices/UVs seen from the opposite vantage point, which reads as
-    // mirrored to the viewer (see the flipU comment in curlGeometry.js --
-    // this book already hit exactly this problem once, with B's text
-    // showing up backwards on a DoubleSide single-material mesh). Since
-    // the back face is a real, different page meant to be read normally
-    // once it's facing the camera, its UV needs the opposite flip so it
-    // doesn't come out mirrored.
+    // BOTH faces get the plain, unflipped uv layout -- the same one the
+    // real B/C strips use. An earlier version flipped u on the back face,
+    // reasoning that a surface seen from behind reads mirrored. It does
+    // not: which uv lands on which vertex is fixed by the vertex data, so
+    // a given texel sits at the same WORLD position no matter which side
+    // of the surface you view it from. What actually differs between the
+    // two panels is the handedness of their uv frames, and that is already
+    // corrected per panel by PageSimulation.orientPageTexture -- so
+    // flipping u here just double-corrected it.
     writeCurlUV(tempMeshFront.geometry.attributes.uv.array, curlRowFrac, false);
-    writeCurlUV(tempMeshBack.geometry.attributes.uv.array, curlRowFrac, true);
+    writeCurlUV(tempMeshBack.geometry.attributes.uv.array, curlRowFrac, false);
     tempMeshFront.geometry.attributes.uv.needsUpdate = true;
     tempMeshBack.geometry.attributes.uv.needsUpdate = true;
   }
@@ -158,7 +170,7 @@ export function createDragPageTurn({
     updateRowFracAndUV();
   }
 
-  function makeTempMesh(baseMaterial, side) {
+  function makeTempMesh(baseMaterial, side, mapOverride) {
     const geo = new THREE.BufferGeometry();
     // Position attribute wraps the SAME typed array on both the front and
     // back geometries -- one rebuild in rebuildTempMesh updates both, no
@@ -170,6 +182,7 @@ export function createDragPageTurn({
     geo.setIndex(CURL_INDEX);
     const mat = baseMaterial.clone();
     mat.side = side;
+    if (mapOverride) mat.map = mapOverride;
     mat.needsUpdate = true;
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
@@ -204,26 +217,71 @@ export function createDragPageTurn({
     screenPointFor(_anchorWorld, pivotScreen);
     angle0 = Math.atan2(event.clientY - pivotScreen.y, event.clientX - pivotScreen.x);
 
-    // Build the temp mesh's FRONT material from the panel's current
-    // material/texture before touching the real mesh at all.
-    tempPositions = new Float32Array(2 * CURL_ROWS * 3);
-    tempMeshFront = makeTempMesh(grabbedMesh.material, THREE.FrontSide);
+    // The turning leaf's two faces belong to two DIFFERENT panels, and
+    // that is the whole trick here:
+    //
+    //   * the face you grab shows the page that is on `panel` right now,
+    //     oriented the way `panel` orients it;
+    //   * the other face shows the page this leaf LANDS as once the turn
+    //     completes -- which ends up on the opposite panel, so it must be
+    //     oriented the way THAT panel orients it.
+    //
+    // Getting the second one from `panel` (as this used to) is what put
+    // the wrong page on the back of the leaf and stood it on its head:
+    // wrong page because it read the grabbed panel's slot of the target
+    // spread rather than the landing panel's, wrong way up because B and
+    // C mirror opposite axes.
+    //
+    // Which of THREE.FrontSide / BackSide is the grabbed face is not
+    // fixed either: a panel's geometric front points along u cross v,
+    // which faces up on C/D but down on A/B (see
+    // PageSimulation.SLOT_ON_MINUS_Z). At progress 0 the strip is
+    // congruent with `panel`, so the side facing the camera is whichever
+    // one `panel` itself shows; at progress 1 it is congruent with the
+    // landing panel, on the far side of the spine, which always has the
+    // opposite handedness -- so the visible face swaps exactly once over
+    // the turn. That IS the leaf flipping over. Hardcoding grabbed =
+    // FrontSide happened to be right for C and exactly backwards for B,
+    // which is why turning back a page showed its two faces swapped.
+    const landingPanel = panel === 'B' ? 'C' : 'B';
+    const grabbedSide = PageSimulation.slotFrontFacesUp(panel) ? THREE.FrontSide : THREE.BackSide;
+    const landingSide = grabbedSide === THREE.FrontSide ? THREE.BackSide : THREE.FrontSide;
 
-    // Preview the upcoming content on the real panel underneath -- through
-    // setPageTexture, so it gets the same tint/rotation every other slot
-    // assignment does -- then clone ITS material for the temp mesh's back
-    // face, so front and back both end up with exactly the material
-    // conventions PageSimulation itself uses.
-    const backTexture = getBackTexture(panel);
-    hasBackTexture = !!backTexture;
-    if (backTexture) {
-      pages.setPageTexture(panel, backTexture);
-      tempMeshBack = makeTempMesh(grabbedMesh.material, THREE.BackSide);
+    // Built from the panel's current material/texture, before the
+    // underneath preview below touches the real mesh at all.
+    tempPositions = new Float32Array(2 * CURL_ROWS * 3);
+    const grabbedFace = makeTempMesh(grabbedMesh.material, grabbedSide);
+
+    const landingTexture = getLandingTexture(panel);
+    hasTurnTextures = !!landingTexture;
+    let landingFace;
+    if (landingTexture) {
+      // Cloned, then oriented for the LANDING panel. The clone shares its
+      // Source with the original, so this costs no extra gpu upload -- it
+      // just keeps this leaf's uv transform off the cached texture, which
+      // main.js hands out per page index and may already have on a panel
+      // under a different slot's orientation.
+      const landingTex = landingTexture.clone();
+      landingTex.needsUpdate = true;
+      pages.orientPageTexture(landingPanel, landingTex);
+      landingFace = makeTempMesh(grabbedMesh.material, landingSide, landingTex);
     } else {
-      // Nothing to turn to (start/end of book) -- fall back to mirroring
-      // the front content rather than showing nothing on the back face.
-      tempMeshBack = makeTempMesh(tempMeshFront.material, THREE.BackSide);
+      // Nothing to land as (start/end of book) -- reuse the grabbed face's
+      // content rather than showing a blank back.
+      landingFace = makeTempMesh(grabbedFace.material, landingSide);
     }
+
+    // Preview on the real panel underneath what that panel will be
+    // showing once the turn commits -- a DIFFERENT page from the leaf's
+    // landing face: the leaf lands on the opposite panel, so what gets
+    // revealed here is this panel's own slot of the target spread. Set
+    // through setPageTexture so it picks up the same tint/orientation
+    // every other slot assignment does.
+    const underneathTexture = getUnderneathTexture(panel);
+    if (underneathTexture) pages.setPageTexture(panel, underneathTexture);
+
+    tempMeshFront = grabbedSide === THREE.FrontSide ? grabbedFace : landingFace;
+    tempMeshBack = grabbedSide === THREE.FrontSide ? landingFace : grabbedFace;
 
     tempGroup = new THREE.Group();
     tempGroup.add(tempMeshFront, tempMeshBack);
@@ -248,7 +306,7 @@ export function createDragPageTurn({
   }
 
   function endTurn(pages, committed) {
-    if (committed && hasBackTexture) {
+    if (committed && hasTurnTextures) {
       commitTurn(grabbedPanel);
     } else if (pages && originalTexture) {
       // Cancelled (or nothing was actually available to turn to) -- put

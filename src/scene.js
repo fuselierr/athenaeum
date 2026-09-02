@@ -62,23 +62,10 @@ async function addEnvironment(scene, renderer) {
 }
 
 // The EXR drives ambient/reflected light via scene.environment; the
-// hemisphere light is just a low fill. Env maps never cast shadows in
-// three.js, so `sun` stays as a dedicated (dimmed) shadow-caster.
+// hemisphere light is just a low fill. The dedicated overhead `sun`
+// DirectionalLight that used to live here has been removed -- the room is
+// now lit only by the EXR environment (+ this fill) and, once loaded, the
+// lamp's own point light (see lamp.js).
 function addLights(scene) {
   scene.add(new THREE.HemisphereLight(0xaabbff, 0x1a1a1a, 0.15));
-
-  const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-  sun.position.set(3, 17, 7);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
-  sun.shadow.camera.left = -3;
-  sun.shadow.camera.right = 3;
-  sun.shadow.camera.top = 3;
-  sun.shadow.camera.bottom = -3;
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 12;
-  sun.shadow.camera.updateProjectionMatrix();
-  sun.shadow.bias = -0.0015;
-  sun.shadow.normalBias = 0.02;
-  scene.add(sun);
 }
