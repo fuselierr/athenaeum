@@ -5,6 +5,7 @@ import { setPageDimensions, PANEL_REACH as INITIAL_PANEL_REACH } from './Book/pa
 import { updateLocalCorners } from './Book/pageSim/math.js';
 import { createDragPageTurn } from './Book/pageSim/dragPageTurn.js';
 import { loadDesk } from './desk.js';
+import { createDebugLabels } from './debugLabels.js';
 import { initBookLoader } from './loader/bookLoader.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
@@ -32,7 +33,7 @@ scene.add(bookGroup);
 // on the other.
 const [pagesInstance] = await Promise.all([
   PageSimulation.create(bookGroup),
-  loadDesk(scene, { yRotation: Math.PI / 2, scale: 1.2 }),
+  loadDesk(scene),
 ]);
 let pages = pagesInstance;
 
@@ -66,6 +67,14 @@ const dragPageTurn = createDragPageTurn({
   canTurn: canTurnPanel,
   getBackTexture: getTurnBackTexture,
   commitTurn: commitTurnPanel,
+});
+
+// --- debug orientation labels (` to toggle) ---
+// Floating TOP/BOTTOM-of-spine and A/B/C/D-panel labels, purely to see
+// how the book's local axes map onto the screen -- see debugLabels.js.
+// Same `getPages` closure pattern as dragPageTurn above.
+const debugLabels = createDebugLabels({
+  scene, camera, renderer, getPages: () => pages,
 });
 
 // --- controls: flip / reset buttons ---
@@ -318,6 +327,7 @@ renderer.setAnimationLoop(() => {
   dragPageTurn.update(dt);
   controls.update();
   renderer.render(scene, camera);
+  debugLabels.update();
 });
 
 if (import.meta.env.DEV) {
