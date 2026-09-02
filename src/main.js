@@ -67,7 +67,7 @@ function showLeaf(start) {
 }
 
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'r' || e.key === 'R') { pages.reset(); refreshFlipLabel(); }
+  if (e.key === 'r' || e.key === 'R') { pages.reset(); bookGroup.quaternion.identity(); refreshFlipLabel(); }
   if (e.key === 'f' || e.key === 'F') { pages.toggleFlip(); refreshFlipLabel(); }
   if (e.key === '[') pages.setProgress(pages.progress - 0.05);
   if (e.key === ']') pages.setProgress(pages.progress + 0.05);

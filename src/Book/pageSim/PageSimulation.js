@@ -309,6 +309,26 @@ export class PageSimulation {
     this.spreadBack.sync();
   }
 
+  // B's and C's own hinge-tangent angle is a fixed constant (BC_FIXED_ANGLE)
+  // for the entire lifetime of the book. Gravity itself never gets a
+  // chance to touch it in the first place -- spread.js's drop() creates
+  // both bodyB (spreadFront.bodyFar) and bodyC (spreadBack.bodyNear) with
+  // gravityScale 0, so Rapier's own gravity force is simply never applied
+  // to them, not even for one physics substep. What DOES still respond to
+  // gravity is A's/D's angle (the flat reference/cover bodies, ordinary
+  // gravityScale 1) -- that's what drives the curl's SHAPE further out
+  // (buildCurlStrip's refAngle, the straight run past the arc, ending at
+  // the tip), via straightAngle() in spread.js. Only the tangent right at
+  // the shared hinge is fixed; the bend is not.
+  //
+  // This still runs every frame regardless, re-asserting the exact fixed
+  // angle and zeroing angular velocity -- not to fight gravity (there's
+  // none to fight, per the above), but because bodyB/bodyC are still real
+  // dynamic bodies on real revolute joints, and per-spread's own
+  // enforceNoCrossing() (spread.js) can still nudge a curl body's angle
+  // during stepPhysics() to keep it from visually crossing its spread's
+  // cover -- this always runs after that, so it's the final word on where
+  // B/C's hinge angle actually ends up.
   _enforceNoCrossingBC() {
     const bodyB = this.spreadFront.bodyFar;
     const bodyC = this.spreadBack.bodyNear;
