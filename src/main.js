@@ -5,6 +5,7 @@ import { setPageDimensions, PANEL_REACH as INITIAL_PANEL_REACH } from './Book/pa
 import { updateLocalCorners } from './Book/pageSim/math.js';
 import { createDragPageTurn } from './Book/pageSim/dragPageTurn.js';
 import { loadDesk } from './desk.js';
+import { loadLamp } from './lamp.js';
 import { createDebugLabels } from './debugLabels.js';
 import { initBookLoader } from './loader/bookLoader.js';
 
@@ -34,6 +35,11 @@ scene.add(bookGroup);
 const [pagesInstance] = await Promise.all([
   PageSimulation.create(bookGroup),
   loadDesk(scene),
+  loadLamp(scene, {
+    position: new THREE.Vector3(1.2, 0, -2.6),
+    rotationY: -Math.PI / 2,
+    scale: 3.75,
+  }),
 ]);
 let pages = pagesInstance;
 
@@ -112,32 +118,49 @@ function clampLeafStart(start) {
   return Math.max(0, Math.min(start, maxStart));
 }
 
+// Which visible panel is the RIGHT-hand page of the spread. Everything
+// about spread ordering follows from this one line -- flip it if the
+// book should read the other way (a right-to-left book, or if you'd
+// rather the very first page open as a left-hand page).
+//
+// B, because: every panel renders its page with the top toward
+// x = -HINGE_LEN/2 (see PageSimulation.SLOT_MIRROR_V), which puts the
+// reader's right at -Z, and B is the panel that extends to -Z from the
+// spine while C extends to +Z. It also matches the page-turn directions
+// already wired up in dragPageTurn.js -- dragging B turns FORWARD, which
+// is the right-hand page in a left-to-right book.
+const RIGHT_HAND_PANEL = 'B';
+const LEFT_HAND_PANEL = RIGHT_HAND_PANEL === 'B' ? 'C' : 'B';
+
+// Which page index a panel shows for a given spread: lower number on the
+// left, higher on the right -- the ordinary two-page-spread convention.
+function pageIndexForPanel(panel, start) {
+  return panel === RIGHT_HAND_PANEL ? start + 1 : start;
+}
+
 function showLeaf(start) {
   if (pageCanvases.length === 0) return;
   leafStart = clampLeafStart(start);
-  // B/C swapped from the naive leafStart/leafStart+1 assignment to match
-  // what actually renders -- determined empirically, still matches what's
-  // shown.
-  const b = textureForPage(leafStart + 1);
-  const c = textureForPage(leafStart);
-  if (b) pages.setPageTexture('B', b);
-  if (c) pages.setPageTexture('C', c);
+  for (const panel of [LEFT_HAND_PANEL, RIGHT_HAND_PANEL]) {
+    const tex = textureForPage(pageIndexForPanel(panel, leafStart));
+    if (tex) pages.setPageTexture(panel, tex);
+  }
 }
 
-// Where dragging `panel` (forward for B, backward for C -- see
-// dragPageTurn.js) would land, and what it would show there. Shared by
-// createDragPageTurn's canTurn/getBackTexture/commitTurn callbacks so a
-// drag's preview and its eventual commit always agree with each other and
-// with showLeaf/the arrow keys.
+// Where dragging `panel` would land, and what it would show there --
+// dragging the right-hand page turns FORWARD, the left-hand page
+// BACKWARD, matching dragPageTurn.js's own panel-decides-direction rule.
+// Shared by createDragPageTurn's canTurn/getBackTexture/commitTurn
+// callbacks so a drag's preview and its eventual commit always agree with
+// each other and with showLeaf/the arrow keys.
 function turnTargetLeafStart(panel) {
-  return clampLeafStart(leafStart + (panel === 'B' ? 2 : -2));
+  return clampLeafStart(leafStart + (panel === RIGHT_HAND_PANEL ? 2 : -2));
 }
 function canTurnPanel(panel) {
   return turnTargetLeafStart(panel) !== leafStart;
 }
 function getTurnBackTexture(panel) {
-  const target = turnTargetLeafStart(panel);
-  return panel === 'B' ? textureForPage(target + 1) : textureForPage(target);
+  return textureForPage(pageIndexForPanel(panel, turnTargetLeafStart(panel)));
 }
 function commitTurnPanel(panel) {
   showLeaf(turnTargetLeafStart(panel));

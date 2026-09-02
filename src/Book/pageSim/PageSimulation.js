@@ -154,31 +154,87 @@ export class PageSimulation {
   // without meaningfully darkening the rendered text.
   static PAGE_TINT = 0xf5ecd2;
 
+  // --- how a page texture is oriented on a panel ---------------------
+  //
+  // Two SEPARATE things decide this. Keeping them apart is what keeps the
+  // reading direction adjustable without re-deriving the mirror bug.
+  //
+  // 1. HANDEDNESS CORRECTION (fixed by the geometry, never a choice).
+  //    Every one of the four panels carries the SAME uv layout in its own
+  //    frame -- measured, not assumed: u = 0 at x = -HINGE_LEN/2 and u = 1
+  //    at x = +HINGE_LEN/2, v = 1 at the spine-side hinge and v = 0 at the
+  //    outer edge (flat pages get this from PlaneGeometry's default uvs,
+  //    the curl strips from writeCurlUV in curlGeometry.js). What differs
+  //    is which way each panel extends from its hinge: A and B reach
+  //    toward -Z, C and D toward +Z. So on A/B the frame (u across +X, v
+  //    toward the spine) has the opposite HANDEDNESS, seen from the camera
+  //    side, to the one C/D have -- u cross v points away from the viewer
+  //    on A/B, toward it on C/D. A texture mapped through frames of
+  //    opposite handedness comes out MIRRORED on one of them, and no
+  //    amount of rotation fixes a mirror (that was the original bug: 'B'
+  //    got texture.rotation = PI, which left its text still mirrored AND
+  //    pointing the opposite way up from C's). Undoing a handedness flip
+  //    takes a handedness flip -- exactly one mirrored axis on A/B, none
+  //    on C/D.
+  //
+  // 2. READING ORIENTATION (a choice -- PAGE_TOP_AT_PLUS_X below).
+  //    A page's top-to-bottom axis necessarily runs along the spine, i.e.
+  //    world X, so the only question is which END of the spine the page
+  //    tops point at. Flipping that choice is a 180-degree turn of the
+  //    content in its own plane: it mirrors BOTH axes on every panel,
+  //    which leaves each panel's handedness correction intact (two flips
+  //    cancel) while swapping which spine end reads as "up" -- and with
+  //    it, which side of the spine is the reader's right.
+  //
+  // true: page tops point at x = +HINGE_LEN/2, so a camera parked on the
+  // -X side is looking from the pages' BOTTOM edge toward their top --
+  // the normal way you sit at a book. That also puts the reader's right
+  // at +Z, which is why main.js's RIGHT_HAND_PANEL is 'C' (C and D are
+  // the +Z panels). Flip this to false and RIGHT_HAND_PANEL to 'B'
+  // together -- they are two halves of one decision.
+  static PAGE_TOP_AT_PLUS_X = true;
+
+  // Which panels sit on the -Z side of the spine, and so need the
+  // handedness correction described in (1) above.
+  static SLOT_NEEDS_MIRROR = { A: true, B: true, C: false, D: false };
+
   /**
    * Put a rendered page texture (e.g. a THREE.CanvasTexture from PDF.js)
    * onto one of the four visible surfaces ('A' | 'B' | 'C' | 'D', see
    * pageMeshes). Sets the placeholder material color to PAGE_TINT so the
    * texture reads as warm paper instead of being multiplied by pure white.
+   *
+   * Assumes the incoming canvas is oriented the way bookLoader.js renders
+   * it -- pdf.js viewport rotation 270, which puts the page's top edge
+   * along the canvas's left edge and the page's right edge along the
+   * canvas's top. Every transform field is written on every call, never
+   * just the ones that differ from the default: main.js's textureForPage
+   * caches one CanvasTexture per page index and reuses it across slots as
+   * the book is paged through, so a texture arriving here may still carry
+   * the previous slot's transform.
    */
   setPageTexture(slot, texture) {
     const mesh = this.pageMeshes[slot];
     if (!mesh) return;
     texture.colorSpace = THREE.SRGBColorSpace;
 
-    // B needs a 180° rotation to read right side up. TRIED AND REVERTED:
-    // doing this by flipping raw per-vertex UV values on B's curl mesh (see
-    // curlGeometry.js's writeCurlUV) -- it moved the right pixels to the
-    // right place, but visibly distorted the text, since flipping the UV
-    // traversal direction on a curved, non-square mesh isn't a clean
-    // rotation the way it would be on a flat quad. This does the rotation
-    // on the TEXTURE instead, via THREE.Texture's own rotation/center
-    // (rotates about the texture's own centre, in UV space, independent of
-    // the mesh) -- the mesh's UV data itself stays a single, simple,
-    // un-hacked convention shared by every slot. Reset explicitly for every
-    // other slot too, since a cached CanvasTexture (see main.js's
-    // textureForPage) could in principle be reused across slots.
+    // Start from the handedness correction (one mirrored axis, or none),
+    // then apply the reading-orientation choice on top as a 180-degree
+    // turn -- both axes -- if page tops belong at +X.
+    let mirrorU = false;
+    let mirrorV = PageSimulation.SLOT_NEEDS_MIRROR[slot];
+    if (PageSimulation.PAGE_TOP_AT_PLUS_X) {
+      mirrorU = !mirrorU;
+      mirrorV = !mirrorV;
+    }
+
     texture.center.set(0.5, 0.5);
-    texture.rotation = slot === 'B' ? Math.PI : 0;
+    texture.rotation = 0;
+    texture.offset.set(0, 0);
+    // A mirrored axis is repeat -1 about the centre, i.e. u -> 1 - u (or
+    // v -> 1 - v); the result stays inside [0, 1] either way, so the
+    // default ClampToEdge wrapping is fine and no wrap mode is touched.
+    texture.repeat.set(mirrorU ? -1 : 1, mirrorV ? -1 : 1);
 
     mesh.material.map = texture;
     mesh.material.color.set(PageSimulation.PAGE_TINT);

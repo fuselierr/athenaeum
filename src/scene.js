@@ -13,7 +13,7 @@ export async function createScene() {
   scene.fog = new THREE.Fog(0x11141a, 8, 20);
 
   const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.05, 100);
-  camera.position.set(3.2, 2.4, 3.6);
+  camera.position.set(-3.2, 2.4, 1);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
