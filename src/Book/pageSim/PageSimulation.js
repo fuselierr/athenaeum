@@ -47,10 +47,18 @@ export class PageSimulation {
     this._tipB = new THREE.Vector3();
     this._tipC = new THREE.Vector3();
 
-    // Placeholder gravity — setFlipped(false) in reset() picks the sign
-    // that actually renders as "down" once the render-only flip above is
-    // factored in.
+    // Placeholder gravity — reset() below calls _applyGravity(), which picks
+    // the real vector once _gravityDir/flipped are set up.
     this.world = new RAPIER.World({ x: 0, y: GRAVITY_MAG, z: 0 });
+
+    // Which way "down" points, in THIS GROUP'S PARENT's space (i.e.
+    // whatever main.js's bookGroup wrapper — or plain `parent`, if there is
+    // no such wrapper — considers world-down to be). Defaults to -Y, the
+    // ordinary world-down assumption, so a caller that never calls
+    // setGravityDirection() gets exactly the old fixed-gravity behavior.
+    // See setGravityDirection()/​_applyGravity() for how this and `flipped`
+    // combine into the actual physics vector.
+    this._gravityDir = new THREE.Vector3(0, -1, 0);
 
     this.flipped = false;
     this._lastStep = 0; // timestamp of the previous step(), ms; 0 = not yet stepped
@@ -217,21 +225,63 @@ export class PageSimulation {
   }
 
   /**
-   * Turn the whole book over. Every anchor sits at y = 0 and the hinge axis
-   * is world X, so rotating the book 180° about the spine leaves every
-   * position and the hinge axis unchanged — the only real change is which
-   * way gravity pulls relative to the book, so a flip is exactly inverting
-   * gravity's Y. `this.root` already renders everything rotated 180° about
-   * the spine (which negates Y on the way to the screen), so physical
-   * gravity points +Y for pages to visibly fall down in the default state.
+   * Turn the whole book over, independent of whatever direction gravity is
+   * currently coming from (see setGravityDirection) — a deliberate "look at
+   * the other side" action, not a physical rotation. Implemented as an
+   * extra sign flip in _applyGravity() rather than touching this.root's
+   * transform, so it composes with a live gravity direction instead of
+   * fighting it.
    */
   setFlipped(v) {
     this.flipped = v;
-    this.world.gravity = { x: 0, y: v ? -GRAVITY_MAG : GRAVITY_MAG, z: 0 };
+    this._applyGravity();
   }
 
   toggleFlip() {
     this.setFlipped(!this.flipped);
+  }
+
+  /**
+   * Point gravity in a fixed real-world direction regardless of how this
+   * simulation's own root (or an outer wrapper group, e.g. main.js's
+   * bookGroup, which the caller is responsible for accounting for) is
+   * currently rotated — so spinning the book via a trackball-style drag
+   * makes pages actually sag toward true "down" instead of the physics
+   * silently rotating along with the render transform (which is what
+   * happens if you never call this: Rapier's gravity vector lives in this
+   * group's own local/physics space and has no idea an outer transform
+   * exists).
+   *
+   * @param {THREE.Vector3} dir  "down", expressed in THIS GROUP'S PARENT's
+   *   local space (i.e. undo any outer wrapper's rotation yourself before
+   *   calling this, the same way main.js does each frame with its
+   *   bookGroup: `worldDown.clone().applyQuaternion(bookGroup.quaternion.clone().invert())`).
+   *   Does NOT need this.root's own permanent 180° flip undone —
+   *   _applyGravity() accounts for that itself, same as it always has.
+   *   Magnitude is ignored; only direction matters.
+   */
+  setGravityDirection(dir) {
+    this._gravityDir.copy(dir).normalize();
+    this._applyGravity();
+  }
+
+  /**
+   * Converts _gravityDir (this.root's PARENT's space) into this.root's own
+   * local space — the same space the Rapier world's bodies/gravity actually
+   * live in — by undoing this.root's fixed rotation.x = PI. That rotation
+   * is a full 180°, which is its own inverse, so "undo" is just negating Y
+   * and Z (the standard rotate-180-about-X formula with the y/z terms'
+   * signs flipped) rather than needing a real matrix inverse. `flipped`
+   * layers on top as one more sign flip, same role it always had.
+   */
+  _applyGravity() {
+    const d = this._gravityDir;
+    const sign = this.flipped ? -1 : 1;
+    this.world.gravity = {
+      x: d.x * GRAVITY_MAG * sign,
+      y: -d.y * GRAVITY_MAG * sign,
+      z: -d.z * GRAVITY_MAG * sign,
+    };
   }
 
   /**
@@ -258,7 +308,6 @@ export class PageSimulation {
     this.spreadFront.sync();
     this.spreadBack.sync();
   }
-
 
   _enforceNoCrossingBC() {
     const bodyB = this.spreadFront.bodyFar;

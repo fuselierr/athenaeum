@@ -218,6 +218,25 @@ window.addEventListener('pointerup', (e) => {
   if (e.button === 2) rotatingBook = false;
 });
 
+// --- gravity: stays pointed at true world-down regardless of bookGroup's
+// current rotation. Rapier's gravity vector lives in PageSimulation's own
+// local/physics space, which knows nothing about bookGroup's transform, so
+// without this, spinning the book via right-drag would silently spin the
+// physics right along with it -- pages would stay put relative to the
+// book's covers instead of actually sagging toward the floor as you turn
+// it, which is what made rotating the book look like it was "flipping
+// gravity". Recomputed every frame (cheap: one quaternion-vector rotation)
+// rather than only on pointermove, so it stays correct even if bookGroup is
+// ever rotated some other way later. ---
+const WORLD_DOWN = new THREE.Vector3(0, -1, 0);
+const _localDown = new THREE.Vector3();
+const _invBookQuat = new THREE.Quaternion();
+function applyWorldGravity() {
+  _invBookQuat.copy(bookGroup.quaternion).invert();
+  _localDown.copy(WORLD_DOWN).applyQuaternion(_invBookQuat);
+  pages.setGravityDirection(_localDown);
+}
+
 // --- render loop ---
 let lastFrameTime = performance.now();
 renderer.setAnimationLoop(() => {
@@ -226,6 +245,7 @@ renderer.setAnimationLoop(() => {
   lastFrameTime = now;
 
   applyPan(dt);
+  applyWorldGravity();
   pages.step();
   controls.update();
   renderer.render(scene, camera);

@@ -157,20 +157,16 @@ export function createSpread(world, parent, opts) {
     mesh.updateMatrixWorld(true);
   }
 
-  // Ref-angle override for the CURL SHAPE only (buildCurlStrip's target
-  // tangent), separate from the reference body's own real physics angle.
-  // Set every frame by PageSimulation._enforceNoCrossingTips before sync()
-  // runs, so B's/C's curl never sweeps out past where the other one's curl
-  // currently ends — without ever touching A's/D's or B's/C's actual rigid
-  // bodies. null means "use the reference body's real angle", i.e. no clamp
-  // in effect.
-  let _refAngleOverride = null;
-  function setRefAngleClamp(angle) { _refAngleOverride = angle; }
-
+  // The straight part of the curl is driven by the live angle of the
+  // reference page itself. This is intentionally gravity-sensitive: it must
+  // track the reference body's current physics state, not a stale or
+  // artificially clamped angle. The curl can still be prevented from
+  // crossing the other page, but that is a separate rigid-body correction,
+  // not a change to the straight tangent.
   function updateCurlMesh() {
     const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
     const refBody = curlPage === 'near' ? bodyFar : bodyNear;
-    const refAngle = _refAngleOverride ?? pageAngle(refBody);
+    const refAngle = pageAngle(refBody);
     buildCurlStrip(
       curlPositions, curlAnchorVec, pageAngle(curlBody), refAngle,
       pairGap(), PANEL_REACH, halfWidth,
@@ -333,9 +329,7 @@ export function createSpread(world, parent, opts) {
   // buildCurlStrip -- always exactly the reference (flat/cover) page's own
   // current angle, since that's the whole point of the arc: it bends until
   // its tangent matches dirEnd, then continues straight in that exact
-  // direction. Distinct from the curling page's own base/hinge angle,
-  // which is what pageAngle(curlBody) reads. This is the reference body's
-  // REAL angle, unaffected by any setRefAngleClamp override in effect.
+  // direction. This is the live, gravity-driven reference-body angle.
   function straightAngle() {
     const refBody = curlPage === 'near' ? bodyFar : bodyNear;
     return pageAngle(refBody);
@@ -367,7 +361,7 @@ export function createSpread(world, parent, opts) {
 
   return {
     drop, moveAnchor, stepPhysics, sync, dispose,
-    curlTipAt, curlTipAtRef, straightAngle, setRefAngleClamp,
+    curlTipAt, curlTipAtRef, straightAngle,
     get bodyNear() { return bodyNear; },
     get bodyFar() { return bodyFar; },
     anchorNear, anchorFar,
