@@ -59,14 +59,19 @@ export const OPEN_LIMIT = Math.PI * 0.98;
 // Membership group 1, filter excludes group 1.
 export const NO_SELF_COLLIDE = (1 << 16) | 0xfffe;
 
-// As two pages of the same spread approach each other, the thin cushion of
+// As a spread's real reference/cover body (A or D) approaches its own
+// invisible pseudo double (see spread.js's drop()), the thin cushion of
 // trapped air has to squeeze out through a shrinking gap — the closer they
 // get, the harder it pushes back. Modeled as a cap on the closing component
 // of their relative angular velocity, shrinking in proportion to the
 // remaining gap, so the closing rate can never outrun the gap itself: a
-// clean exponential ease-out instead of a constant-speed slap shut. Applied
-// only within a spread's own pair, never between the two inner pages (which
-// get a hard stop with no easing — see PageSimulation._enforceNoCrossingBC).
+// clean exponential ease-out instead of a constant-speed slap shut. Two
+// separate cushions, one per spread (A vs its pseudo, D vs its pseudo),
+// each applied only within that pair — never between the two inner pages
+// (which get a hard stop with no easing — see
+// PageSimulation._enforceNoCrossingBC) and never between the two pseudo
+// bodies themselves (also a hard stop, no easing — see
+// PageSimulation._enforceNoCrossingPseudo).
 export const AIR_CUSHION_RANGE = 0.9; // radians of gap where squeezed air starts pushing back
 export const AIR_CUSHION_MAX_RATE = 2.2; // closing rate (rad/s) allowed at the edge of that range
 
@@ -88,3 +93,29 @@ export const BC_FIXED_ANGLE = BC_MEET_ANGLE;
 // Fractions of OPEN_LIMIT the outer cover pages splay to at t = 0.
 export const COVER_START_NEAR = OPEN_LIMIT * 0.05;
 export const COVER_START_FAR = OPEN_LIMIT * 0.95;
+
+// A tiny constant angular push applied to the two pseudo bodies EVERY
+// frame, P1 toward a smaller angle and P2 toward a larger one -- i.e.
+// always apart from each other, on top of (and independent of) whatever
+// gravity itself is doing to them. Under ordinary gravity this is small
+// enough to be invisible, lost in everything else already moving them.
+// It matters for one specific case: flip the book over (setFlipped) and
+// gravity alone would pull P1 and P2 toward the exact same resting
+// angle -- both hinges feel an identical torque with no reason to settle
+// on either side of the other, a real (if unstable) tie. That tie is
+// exactly BC_FIXED_ANGLE, i.e. the book reading as fully collapsed shut
+// rather than splayed open around wherever it was last reading -- this
+// nudge is what breaks the tie so it settles open instead. See
+// PageSimulation._applyPseudoRepulsion.
+export const PSEUDO_REPEL_RATE = 0.12; // rad/s^2
+
+// Restitution for the P1/P2 hard-stop collision (PageSimulation.
+// _enforceNoCrossingPseudo) -- 0 = perfectly inelastic (they end up moving
+// together, at their shared momentum-conserving velocity, NOT zero -- see
+// that method's comment for why zeroing outright was wrong), 1 = perfectly
+// elastic (for the equal masses/inertia every page body shares here, that
+// means a full velocity swap). This sits between the two: momentum is
+// always conserved either way, this only tunes how much of the closing
+// energy comes back out as separating velocity afterward versus being
+// absorbed, like real paper/card would.
+export const PSEUDO_COLLISION_RESTITUTION = 0.4;

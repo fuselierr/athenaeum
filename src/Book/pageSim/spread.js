@@ -42,6 +42,12 @@ export function createSpread(world, parent, opts) {
   const anchorFarVec = new THREE.Vector3(0, anchorFar.y, anchorFar.z);
   const halfWidth = HINGE_LEN / 2;
   const curlAnchorVec = curlPage === 'near' ? anchorNearVec : anchorFarVec;
+  // Ref side = whichever of near/far ISN'T the curl page -- both the real
+  // reference/cover body (A or D) and the pseudo body below (see drop())
+  // are hinged at this same anchor.
+  const refIsNear = curlPage !== 'near';
+  const refAnchor = refIsNear ? anchorNear : anchorFar;
+  const refAnchorBody = refIsNear ? anchorBodyNear : anchorBodyFar;
 
   // Live spacing between this spread's two hinges. It used to be the
   // constant SPINE_GAP; now the inner leaf's anchor slides along the spine
@@ -261,11 +267,6 @@ export function createSpread(world, parent, opts) {
     makeJoint(anchorBodyNear, bodyNear);
     makeJoint(anchorBodyFar, bodyFar);
 
-    // Ref side = whichever of near/far ISN'T the curl page -- the pseudo
-    // body below is hinged at that same side's anchor.
-    const refIsNear = !curlIsNear;
-    const refAnchor = refIsNear ? anchorNear : anchorFar;
-    const refAnchorBody = refIsNear ? anchorBodyNear : anchorBodyFar;
     const refStartAngle = refIsNear ? startAngleNear : startAngleFar;
     const refDamping = refIsNear ? dampingNear : dampingFar;
     pseudoBody = makePage(refAnchor, refStartAngle, refDamping, 1);
@@ -294,21 +295,77 @@ export function createSpread(world, parent, opts) {
     }
   }
 
+  // Cushions the REAL reference/cover body (A or D) against its own pseudo
+  // double (see drop()'s comment) as the two approach each other -- not,
+  // as this used to, the cover against the curl page (whose own hinge
+  // angle is fixed elsewhere and whose angular velocity is zeroed every
+  // frame regardless, which made that pairing mostly moot now that curl
+  // shape is driven by the pseudo bodies instead). refBody and pseudoBody
+  // normally track each other exactly (identical physics), so ordinarily
+  // there's nothing to cushion -- this only actually does anything once
+  // something has made them diverge, e.g. _enforceNoCrossingPseudo pulling
+  // a pseudo body back from its natural angle. Signed throughout (unlike
+  // the old near/far version, which could assume a fixed ordering) since
+  // either body can end up ahead of the other.
   function applyAirCushion() {
-    const angleNear = pageAngle(bodyNear);
-    const angleFar = pageAngle(bodyFar);
-    const gap = angleFar - angleNear;
+    const refBody = refIsNear ? bodyNear : bodyFar;
+    const angleRef = pageAngle(refBody);
+    const anglePseudo = pageAngle(pseudoBody);
+    const d = anglePseudo - angleRef;
+    const gap = Math.abs(d);
     if (gap <= 0 || gap >= AIR_CUSHION_RANGE) return;
 
-    const avN = bodyNear.angvel().x;
-    const avF = bodyFar.angvel().x;
-    const closingRate = avN - avF;
+    const avRef = refBody.angvel().x;
+    const avPseudo = pseudoBody.angvel().x;
+    const sign = Math.sign(d);
+    const closingRate = sign * (avRef - avPseudo); // positive when the gap is shrinking, whichever body is ahead
     const maxClosingRate = AIR_CUSHION_MAX_RATE * (gap / AIR_CUSHION_RANGE);
     if (closingRate <= maxClosingRate) return;
 
     const removed = closingRate - maxClosingRate;
-    bodyNear.setAngvel({ x: avN - removed / 2, y: 0, z: 0 }, true);
-    bodyFar.setAngvel({ x: avF + removed / 2, y: 0, z: 0 }, true);
+    refBody.setAngvel({ x: avRef - sign * (removed / 2), y: 0, z: 0 }, true);
+    pseudoBody.setAngvel({ x: avPseudo + sign * (removed / 2), y: 0, z: 0 }, true);
+  }
+
+  // Hard stop: the real reference/cover body (A or D) must never pass its
+  // own pseudo double -- pipeline step 2 (see PageSimulation.step()), which
+  // runs AFTER step 1 (_enforceNoCrossingPseudo, P1 cannot cross P2). Only
+  // refBody is ever touched here; pseudoBody is left exactly where step 1
+  // settled it. That split -- this function only ever moves refBody, step
+  // 1 only ever moves pseudo bodies -- is deliberate: two corrections that
+  // touch disjoint sets of bodies can never undo each other, however they
+  // get ordered. (An earlier version of this function did the reverse --
+  // clamped pseudoBody against refBody -- which, running after step 1,
+  // could shove a pseudo body right back past its OWN counterpart and
+  // silently re-break step 1's "P1 cannot cross P2" within the same
+  // frame.) Plain angle comparison, no bisection needed (unlike
+  // enforceNoCrossing below) since both bodies live on the exact same
+  // 1-DOF hinge convention.
+  //
+  // "Past" flips with which side this spread's reference sits on: A (this
+  // spread's refBody when refIsNear, i.e. spreadFront) must not EXCEED P1's
+  // angle, but D (refIsNear false, spreadBack) sits on the OTHER side of
+  // the shared B/C hinge and must not fall BELOW P2's -- same physical
+  // rule ("don't overtake your own pseudo"), opposite-signed comparison
+  // because the two ref sides open away from each other. Matches the
+  // relative-order requirement the previous (pseudo-clamping) version of
+  // this function enforced -- only WHICH body gets corrected changed, not
+  // which direction counts as "passed".
+  function enforceNoPassingRef() {
+    const refBody = refIsNear ? bodyNear : bodyFar;
+    const angleRef = pageAngle(refBody);
+    const anglePseudo = pageAngle(pseudoBody);
+    const violated = refIsNear ? angleRef > anglePseudo : angleRef < anglePseudo;
+    if (!violated) return;
+
+    const t = pageTransform(refAnchor, anglePseudo);
+    refBody.setTranslation(t.pos, true);
+    refBody.setRotation(t.rot, true);
+
+    // Kill only the velocity still driving it further past.
+    const av = refBody.angvel().x;
+    const stillDriving = refIsNear ? av > 0 : av < 0;
+    if (stillDriving) refBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
 
   // Geometric no-crossing: measure how close the curling page's tip has
@@ -420,10 +477,17 @@ export function createSpread(world, parent, opts) {
   }
 
   return {
-    drop, moveAnchor, stepPhysics, sync, dispose,
+    drop, moveAnchor, stepPhysics, sync, dispose, enforceNoPassingRef,
     curlTip, curlTipAt, curlTipAtRef, straightAngle, setRefAngleClamp,
     get bodyNear() { return bodyNear; },
     get bodyFar() { return bodyFar; },
+    // pseudoBody: the invisible physics double hinged at refAnchor (see the
+    // comment above drop()) -- exposed so PageSimulation can keep the front
+    // and back spreads' pseudo bodies from swinging past parallel with each
+    // other (_enforceNoCrossingPseudo). refAnchor is the same {y,z} anchor
+    // object both it and the real reference/cover body (A or D) share.
+    get pseudoBody() { return pseudoBody; },
+    refAnchor,
     anchorNear, anchorFar,
     // Exposed so page textures can be assigned from outside (see
     // PageSimulation.setPageTexture). flatMesh is the reference/cover page

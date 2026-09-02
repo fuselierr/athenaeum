@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import {
   SPINE_GAP, GRAVITY_MAG, OPEN_LIMIT,
   BC_MEET_ANGLE, BC_START_GAP, COVER_START_NEAR, COVER_START_FAR, BC_FIXED_ANGLE,
+  PSEUDO_REPEL_RATE, PSEUDO_COLLISION_RESTITUTION,
 } from './config.js';
 import { pageAngle, pageTransform } from './math.js';
 import { createSpread } from './spread.js';
@@ -304,6 +305,19 @@ export class PageSimulation {
     this.spreadFront.stepPhysics();
     this.spreadBack.stepPhysics();
     this._enforceNoCrossingBC();
+    // Correction pipeline, in order: (1) P1 cannot cross P2
+    // (_enforceNoCrossingPseudo, touches only the pseudo bodies); (2) a
+    // tiny constant push apart on top of THAT result (_applyPseudoRepulsion
+    // -- deliberately AFTER, see its own comment for why); then (3) A
+    // cannot cross P1 and D cannot cross P2 (enforceNoPassingRef, touches
+    // only the real cover bodies). Steps 1 and 3 only ever move bodies the
+    // OTHER treats as fixed, so neither can undo the other regardless of
+    // order -- see spread.js's enforceNoPassingRef comment for why that
+    // split matters.
+    this._enforceNoCrossingPseudo();
+    this._applyPseudoRepulsion(this.world.timestep); // capped, same effective dt world.step() just used
+    this.spreadFront.enforceNoPassingRef();
+    this.spreadBack.enforceNoPassingRef();
 
     this.spreadFront.sync();
     this.spreadBack.sync();
@@ -344,6 +358,90 @@ export class PageSimulation {
       body.setRotation(t.rot, true);
       body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
+  }
+
+  /**
+   * A tiny constant angular push on the two pseudo bodies, always apart
+   * from each other -- P1 (spreadFront's) toward a smaller angle, P2
+   * (spreadBack's) toward a larger one -- independent of whatever gravity
+   * itself is doing to them. See PSEUDO_REPEL_RATE's own comment in
+   * config.js for why: without this, flipping the book over (setFlipped)
+   * can leave gravity pulling P1 and P2 toward the exact same resting
+   * angle, an unstable tie that would otherwise show up as the book
+   * reading as collapsed shut (right at BC_FIXED_ANGLE) instead of open to
+   * wherever it was last reading. PSEUDO_REPEL_RATE is small enough that
+   * under ordinary gravity it's lost in everything else already moving
+   * these bodies -- it only actually decides anything once real gravity
+   * has nothing left to decide it instead.
+   *
+   * MUST run AFTER _enforceNoCrossingPseudo, not before -- that used to be
+   * a real bug ("1 and 2 still combine and lock together" during
+   * persistent contact): _enforceNoCrossingPseudo's collision response is
+   * momentum-conserving between EXACTLY these two bodies, so a velocity
+   * bias added right before it doesn't survive -- the same blend that
+   * conserves momentum also (correctly, for a real collision) transfers
+   * whichever body was pushed faster back to the other one, net
+   * cancelling the push on any frame the two are still in contact. Applied
+   * after instead, the push survives untouched into whatever the NEXT
+   * frame's world.step() integrates positions from.
+   */
+  _applyPseudoRepulsion(dt) {
+    const p1 = this.spreadFront.pseudoBody;
+    const p2 = this.spreadBack.pseudoBody;
+    const delta = PSEUDO_REPEL_RATE * dt;
+    const av1 = p1.angvel().x;
+    const av2 = p2.angvel().x;
+    p1.setAngvel({ x: av1 - delta, y: 0, z: 0 }, true);
+    p2.setAngvel({ x: av2 + delta, y: 0, z: 0 }, true);
+  }
+
+  /**
+   * Keeps the two invisible pseudo bodies (spreadFront's, mirroring A;
+   * spreadBack's, mirroring D -- see spread.js's drop()) from swinging past
+   * being PARALLEL to each other. Both read their angle through the exact
+   * same pageAngle/pageTransform formula, so "parallel" is simply
+   * angleFront === angleBack -- past that point they'd have swapped which
+   * one reads as "more open", which since curl shape is driven entirely by
+   * these two angles (see straightAngle() in spread.js) would show up as
+   * B's and C's curls suddenly swapping which one bends further.
+   *
+   * Only the pseudo bodies are touched here -- the real A/D covers keep
+   * swinging completely freely, same as always. When crossed, both pseudo
+   * angles are pulled back to meet exactly at their midpoint (position
+   * still needs a hard, unconditional correction -- that's what actually
+   * stops them visually crossing) and their angular velocity is resolved
+   * as a proper 1D collision instead of just being zeroed: p1 and p2 are
+   * equal mass/inertia (identical colliders -- see makePage), so momentum
+   * conservation is a simple symmetric blend of their pre-collision
+   * velocities, weighted by PSEUDO_COLLISION_RESTITUTION (0 = they end up
+   * moving together at their shared momentum-conserving velocity, 1 = they
+   * fully swap velocities -- see that constant's own comment in
+   * config.js). Zeroing both, like this used to, silently threw away
+   * whatever momentum they arrived with instead of conserving it.
+   */
+  _enforceNoCrossingPseudo() {
+    const p1 = this.spreadFront.pseudoBody;
+    const p2 = this.spreadBack.pseudoBody;
+    const a1 = pageAngle(p1);
+    const a2 = pageAngle(p2);
+    if (a1 <= a2) return;
+
+    const mid = (a1 + a2) / 2;
+    const t1 = pageTransform(this.spreadFront.refAnchor, mid);
+    p1.setTranslation(t1.pos, true);
+    p1.setRotation(t1.rot, true);
+
+    const t2 = pageTransform(this.spreadBack.refAnchor, mid);
+    p2.setTranslation(t2.pos, true);
+    p2.setRotation(t2.rot, true);
+
+    const av1 = p1.angvel().x;
+    const av2 = p2.angvel().x;
+    const e = PSEUDO_COLLISION_RESTITUTION;
+    const newAv1 = ((1 - e) * av1 + (1 + e) * av2) / 2;
+    const newAv2 = ((1 + e) * av1 + (1 - e) * av2) / 2;
+    p1.setAngvel({ x: newAv1, y: 0, z: 0 }, true);
+    p2.setAngvel({ x: newAv2, y: 0, z: 0 }, true);
   }
 
   dispose() {
