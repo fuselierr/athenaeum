@@ -3,6 +3,7 @@ import { createScene } from './scene.js';
 import { PageSimulation } from './Book/pageSim/PageSimulation.js';
 import { setPageDimensions, PANEL_REACH as INITIAL_PANEL_REACH } from './Book/pageSim/config.js';
 import { updateLocalCorners } from './Book/pageSim/math.js';
+import { createDragPageTurn } from './Book/pageSim/dragPageTurn.js';
 import { initBookLoader } from './loader/bookLoader.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
@@ -23,6 +24,38 @@ const bookGroup = new THREE.Group();
 scene.add(bookGroup);
 
 let pages = await PageSimulation.create(bookGroup);
+
+// --- drag-to-turn-a-page ---
+// Click-and-drag on the currently-showing B or C panel bends a temporary
+// double-sided copy of it, following the exact same radial-curl shape
+// B/C themselves are built from, until it settles into the OTHER panel's
+// shape (a completed turn) or eases back to where it started (a
+// cancelled one). The temp page's front face shows the panel's current
+// content, its back face shows the content the panel will hold once the
+// turn actually commits (see getTurnBackTexture below) -- so flipping it
+// over reads as turning to a real next/previous page, not just bending a
+// blank shape. The real B/C mesh underneath is switched to that same
+// "next" texture the moment the drag starts (still hidden behind the
+// temp page at that point, since they're coincident) rather than staying
+// on its old content, so as the temp page peels away mid-drag the
+// correct upcoming page is already there instead of a blank/stale one.
+// Committing a turn (release past the halfway point) advances the real
+// book via commitTurnPanel -> showLeaf, same as the arrow keys; releasing
+// short of halfway reverts the previewed panel back to what it showed
+// before the drag started. `getPages` is a closure, not a direct capture,
+// since `pages` itself is reassigned by applyPdfDimensions below; the
+// texture/leaf callbacks are function declarations further down, safe to
+// reference here since they're only ever invoked later, once
+// pageCanvases/leafStart are populated.
+const dragPageTurn = createDragPageTurn({
+  getPages: () => pages,
+  camera,
+  renderer,
+  controls,
+  canTurn: canTurnPanel,
+  getBackTexture: getTurnBackTexture,
+  commitTurn: commitTurnPanel,
+});
 
 // --- controls: flip / reset buttons ---
 const flipBtn = document.getElementById('flipBtn');
@@ -51,12 +84,17 @@ function textureForPage(index) {
   return pageTextures[index];
 }
 
-function showLeaf(start) {
-  if (pageCanvases.length === 0) return;
+function clampLeafStart(start) {
+  if (pageCanvases.length === 0) return 0;
   const maxStart = pageCanvases.length >= 2
     ? (pageCanvases.length - (pageCanvases.length % 2 === 0 ? 2 : 1))
     : 0;
-  leafStart = Math.max(0, Math.min(start, maxStart));
+  return Math.max(0, Math.min(start, maxStart));
+}
+
+function showLeaf(start) {
+  if (pageCanvases.length === 0) return;
+  leafStart = clampLeafStart(start);
   // B/C swapped from the naive leafStart/leafStart+1 assignment to match
   // what actually renders -- determined empirically, still matches what's
   // shown.
@@ -64,6 +102,25 @@ function showLeaf(start) {
   const c = textureForPage(leafStart);
   if (b) pages.setPageTexture('B', b);
   if (c) pages.setPageTexture('C', c);
+}
+
+// Where dragging `panel` (forward for B, backward for C -- see
+// dragPageTurn.js) would land, and what it would show there. Shared by
+// createDragPageTurn's canTurn/getBackTexture/commitTurn callbacks so a
+// drag's preview and its eventual commit always agree with each other and
+// with showLeaf/the arrow keys.
+function turnTargetLeafStart(panel) {
+  return clampLeafStart(leafStart + (panel === 'B' ? 2 : -2));
+}
+function canTurnPanel(panel) {
+  return turnTargetLeafStart(panel) !== leafStart;
+}
+function getTurnBackTexture(panel) {
+  const target = turnTargetLeafStart(panel);
+  return panel === 'B' ? textureForPage(target + 1) : textureForPage(target);
+}
+function commitTurnPanel(panel) {
+  showLeaf(turnTargetLeafStart(panel));
 }
 
 window.addEventListener('keydown', (e) => {
@@ -247,6 +304,7 @@ renderer.setAnimationLoop(() => {
   applyPan(dt);
   applyWorldGravity();
   pages.step();
+  dragPageTurn.update(dt);
   controls.update();
   renderer.render(scene, camera);
 });
