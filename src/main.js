@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { PageSimulation } from './Book/pageSim/PageSimulation.js';
-import { setPageDimensions, PANEL_REACH as INITIAL_PANEL_REACH } from './Book/pageSim/config.js';
+import {
+  setPageDimensions, setSpineGap, spineGapForPageCount,
+  PANEL_REACH as INITIAL_PANEL_REACH,
+} from './Book/pageSim/config.js';
 import { updateLocalCorners } from './Book/pageSim/math.js';
 import { createDragPageTurn } from './Book/pageSim/dragPageTurn.js';
 import { loadDesk } from './desk.js';
@@ -110,12 +113,17 @@ function textureForPage(index) {
   return pageTextures[index];
 }
 
+// Highest leafStart the book can be opened to -- the last spread. Also
+// the denominator for how far through the book we are (see
+// refreshReadingProgress).
+function maxLeafStart() {
+  if (pageCanvases.length < 2) return 0;
+  return pageCanvases.length - (pageCanvases.length % 2 === 0 ? 2 : 1);
+}
+
 function clampLeafStart(start) {
   if (pageCanvases.length === 0) return 0;
-  const maxStart = pageCanvases.length >= 2
-    ? (pageCanvases.length - (pageCanvases.length % 2 === 0 ? 2 : 1))
-    : 0;
-  return Math.max(0, Math.min(start, maxStart));
+  return Math.max(0, Math.min(start, maxLeafStart()));
 }
 
 // Which visible panel is the RIGHT-hand page of the spread. All spread
@@ -149,6 +157,39 @@ function showLeaf(start) {
     const tex = textureForPage(pageIndexForPanel(panel, leafStart));
     if (tex) pages.setPageTexture(panel, tex);
   }
+  refreshReadingProgress();
+}
+
+// --- the two page stacks track how far through the book you are ---
+// The wedge either side of the shared B/C hinge IS the visible stack of
+// pages on that side, and its thickness is just the distance from the
+// hinge to that side's cover. So sliding the hinge along the spine (what
+// setProgress does, and what the old [ / ] keys drove by hand) is the
+// same thing as saying how much of the book has been read: at the very
+// start the hinge sits right against cover A, leaving almost nothing on
+// B's side and the entire block on C's; at the end it has travelled to
+// cover D and the stacks have swapped.
+//
+// PageSimulation.setProgress takes 0 = against cover A, 1 = against cover
+// D, which lines up with leafStart/maxLeafStart as-is -- no inversion --
+// because RIGHT_HAND_PANEL is C, the panel on cover D's side.
+let readingProgress = 0;
+
+// Eased rather than snapped, per frame, because the step per turn is
+// 1/spreads of the whole travel: invisible in a 400-page book, but a
+// quarter of the range in an 8-page one, which snaps hard enough to read
+// as a glitch. Easing costs nothing and covers both.
+const BC_EASE_RATE = 6; // 1/s
+
+function refreshReadingProgress() {
+  const max = maxLeafStart();
+  readingProgress = max > 0 ? leafStart / max : 0;
+}
+
+function applyReadingProgress(dt) {
+  const current = pages.progress;
+  if (Math.abs(current - readingProgress) < 1e-4) return;
+  pages.setProgress(current + (readingProgress - current) * Math.min(BC_EASE_RATE * dt, 1));
 }
 
 // Where dragging `panel` would land, and what it would show there --
@@ -190,8 +231,6 @@ function commitTurnPanel(panel) {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') { pages.reset(); bookGroup.quaternion.identity(); refreshFlipLabel(); }
   if (e.key === 'f' || e.key === 'F') { pages.toggleFlip(); refreshFlipLabel(); }
-  if (e.key === '[') pages.setProgress(pages.progress - 0.05);
-  if (e.key === ']') pages.setProgress(pages.progress + 0.05);
   if (e.key === 'ArrowRight') showLeaf(leafStart + 2);
   if (e.key === 'ArrowLeft') showLeaf(leafStart - 2);
 });
@@ -199,8 +238,12 @@ window.addEventListener('keydown', (e) => {
 // --- book loading ---
 // HINGE_LEN/PANEL_REACH are baked into physics bodies and geometry at
 // construction, so a new page size means rebuilding the whole simulation.
-async function applyPdfDimensions(pageWidthPts, pageHeightPts) {
+async function applyPdfDimensions(pageWidthPts, pageHeightPts, pageCount) {
   setPageDimensions(BASE_PANEL_REACH * (pageHeightPts / pageWidthPts), BASE_PANEL_REACH);
+  // Thickness comes from the page count -- a short book loads thin, a long
+  // one fat. Set before the rebuild below, since SPINE_GAP is baked into
+  // the cover anchors when the spreads are constructed.
+  setSpineGap(spineGapForPageCount(pageCount));
   updateLocalCorners();
   pages.dispose();
   pages = await PageSimulation.create(bookGroup);
@@ -213,6 +256,10 @@ initBookLoader({
     pageCanvases = canvases;
     pageTextures.length = 0;
     showLeaf(0);
+    // Snap, don't ease, on a fresh book: a rebuilt simulation starts with
+    // its hinge centred, and easing from there would look like the book
+    // settling from the middle every time one loads.
+    pages.setProgress(readingProgress);
   },
 });
 
@@ -367,6 +414,7 @@ renderer.setAnimationLoop(() => {
 
   applyPan(dt);
   applyWorldGravity();
+  applyReadingProgress(dt);
   pages.step();
   dragPageTurn.update(dt);
   controls.update();

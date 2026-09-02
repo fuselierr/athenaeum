@@ -172,6 +172,14 @@ export async function loadLamp(scene, options = {}) {
     bulbLight.position.set((bx - center.x) * normScale, (by - box.min.y) * normScale, (bz - center.z) * normScale);
     lamp.add(bulbLight);
 
+    // Fill light: a softer secondary point as if the lamp's inner cavity is
+    // slightly reflective and is bouncing light around the shade instead of
+    // letting the bulb behave like a single bare emitter. This is the
+    // lightweight, scene-friendly version of a reflective bulb interior.
+    const fillLight = new THREE.PointLight(lightColor, lightIntensity * 0.85, lightDistance * 1.5, lightDecay);
+    fillLight.position.set(0, REFERENCE_HEIGHT * (bulbHeightFraction - 0.06), 0.1);
+    lamp.add(fillLight);
+
     if (!hasGlow) {
         // Nothing on this model had an authored emissive color/texture --
         // pass glowColor explicitly (e.g. { glowColor: 0xffddaa }) to force

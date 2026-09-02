@@ -122,8 +122,15 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
       // handler resizes/recreates the whole simulation, rendering the rest
       // of the pages (and firing onPage/the eventual onPagesReady) needs to
       // wait for that to actually finish first.
+      // pdf.numPages goes out with the dimensions rather than waiting for
+      // onPagesReady, because the book's THICKNESS is derived from it
+      // (config.js's spineGapForPageCount) and thickness, like page size,
+      // is baked into physics bodies at construction. Both are known here,
+      // before the first canvas exists, so the caller can rebuild the
+      // simulation once with its final size AND final thickness instead of
+      // rebuilding a second time once the pages finish rendering.
       const rawViewport = page.getViewport({ scale: 1 });
-      await onDimensions(rawViewport.width, rawViewport.height);
+      await onDimensions(rawViewport.width, rawViewport.height, pdf.numPages);
     }
 
     const canvas = document.createElement('canvas');
@@ -142,10 +149,11 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
  * in index.html. Call once from main.js.
  *
  * @param {Object} [opts]
- * @param {(pageWidthPts: number, pageHeightPts: number) => void|Promise<void>} [opts.onDimensions]
- *   Called once, as soon as the first page's raw (unscaled) size is known
- *   -- before any canvas is rendered -- so the book's geometry can be
- *   sized to the PDF's actual page aspect ratio. If it returns a promise,
+ * @param {(pageWidthPts: number, pageHeightPts: number, pageCount: number) => void|Promise<void>} [opts.onDimensions]
+ *   Called once, as soon as the first page's raw (unscaled) size and the
+ *   document's page count are known -- before any canvas is rendered -- so
+ *   the book's geometry can be sized to the PDF's actual page aspect ratio
+ *   and its thickness to the page count. If it returns a promise,
  *   rendering waits for it before continuing (so a caller that disposes
  *   and recreates the whole page simulation here won't race with
  *   onPagesReady firing on the old one).

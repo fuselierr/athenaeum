@@ -22,9 +22,53 @@
 export let HINGE_LEN = 2.0;
 export let PANEL_REACH = 1.4;
 
-// Anchor spacing, both within a spread and between the two spreads. Half of
-// the original study value (0.7).
-export const SPINE_GAP = 0.35;
+// Anchor spacing, both within a spread and between the two spreads --
+// effectively HALF the book's thickness, since cover A sits at +SPINE_GAP
+// and cover D at -SPINE_GAP. Half of the original study value (0.7).
+//
+// `let`, for the same reason HINGE_LEN/PANEL_REACH are: a loaded book
+// resizes it (setSpineGap below, driven by spineGapForPageCount) so a
+// short PDF renders as a thin book and a long one as a fat one. Same
+// caveat as above -- the anchors are baked into physics bodies at
+// construction, so a change only takes effect on the next
+// PageSimulation.create(). PageSimulation.BC_RANGE reads it live, so the
+// inner leaf's travel range rescales with the book automatically.
+export let SPINE_GAP = 0.35;
+
+// The value SPINE_GAP starts at, and the thickness a book of
+// SPINE_GAP_REFERENCE_PAGES pages gets. Kept separate from the mutable
+// SPINE_GAP above ON PURPOSE: spineGapForPageCount() must scale from a
+// FIXED base, or loading a second book would scale from the first book's
+// already-scaled thickness and compound every time.
+const SPINE_GAP_DEFAULT = 0.35;
+
+// Page count that maps to exactly SPINE_GAP_DEFAULT, and the range the
+// result is held inside -- a leaflet still needs enough thickness for the
+// curl/wedge geometry to read as a book at all, and a 900-page doorstop
+// shouldn't grow until it dwarfs the desk.
+const SPINE_GAP_REFERENCE_PAGES = 650;
+const SPINE_GAP_MIN = 0.12;
+const SPINE_GAP_MAX = 0.55;
+
+/**
+ * How thick a book of `pageCount` pages should be. Square root rather
+ * than linear: thickness IS linear in sheet count for real paper, but
+ * across the range books actually span (a 10-page pamphlet to a
+ * 1000-page reference) a linear map spends almost its whole output range
+ * on the extremes and leaves everything in between pinned to a clamp.
+ * Square root keeps the mid-range -- where most books land -- visibly
+ * distinct, and still orders every book correctly by length.
+ */
+export function spineGapForPageCount(pageCount) {
+  if (!Number.isFinite(pageCount) || pageCount < 1) return SPINE_GAP_DEFAULT;
+  const scaled = SPINE_GAP_DEFAULT * Math.sqrt(pageCount / SPINE_GAP_REFERENCE_PAGES);
+  return Math.max(SPINE_GAP_MIN, Math.min(SPINE_GAP_MAX, scaled));
+}
+
+/** See spineGapForPageCount -- callers pass its result here. */
+export function setSpineGap(gap) {
+  SPINE_GAP = gap;
+}
 
 // Physics-only half-thickness, just for a sane inertia tensor.
 export const COLLIDER_THICK = 0.02;
