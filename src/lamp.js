@@ -60,7 +60,7 @@ export async function loadLamp(scene, options = {}) {
         // This model is a single fused mesh (no separate "bulb" node to
         // target by name like the previous lamp.glb had), so the point
         // light is placed by height fraction up the model's own bounding
-        // box instead -- 0.78 sits roughly at the shade, where the emissive
+        // box instead -- 0.78 sits roughly at the shade, fwhere the emissive
         // texture actually glows. Nudge this (0 = base, 1 = very top) if the
         // light looks off relative to where the shade actually is.
         bulbHeightFraction = 0.78,
@@ -163,7 +163,9 @@ export async function loadLamp(scene, options = {}) {
     // lamp's position/rotation/scale correctly.
     const bulbLight = new THREE.PointLight(lightColor, lightIntensity, lightDistance, lightDecay);
     bulbLight.castShadow = true;
-    bulbLight.shadow.mapSize.set(512, 512);
+    bulbLight.shadow.mapSize.set(1024, 1024);
+    bulbLight.shadow.bias = 0.003;
+    
     // Run the bulb's raw-space position through the same bend the mesh got,
     // so the light stays with the shade instead of floating away from it
     // when shadeTiltX is set.

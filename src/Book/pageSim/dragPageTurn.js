@@ -62,6 +62,19 @@ export function createDragPageTurn({
   const TURN_ANGLE_RANGE = Math.PI * 0.6;
   const SETTLE_RATE = 8; // 1/s, exponential ease toward whichever end the drag committed to
 
+  // A turn that plays itself (playTurn) runs on a fixed duration and an
+  // ease-in-out instead of SETTLE_RATE's exponential decay. Decay is right
+  // for finishing a drag -- it starts from wherever you let go and never
+  // has to look like it began -- but driving a whole 0 -> 1 turn with it
+  // would start at full speed and crawl into the finish. Ease-in-out has
+  // the leaf lift, sweep and settle the way a hand would move it.
+  const AUTO_TURN_DURATION = 0.55; // seconds
+
+  // Standard cubic ease-in-out.
+  function easeInOut(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
+  }
+
   // The temp strip and the real panel underneath it (see beginDrag/
   // rebuildTempMesh) both hinge from the exact same anchor point with the
   // exact same tangent (BC_FIXED_ANGLE) -- so right near that anchor,
@@ -75,9 +88,15 @@ export function createDragPageTurn({
   // page's plane keeps them from ever being coincident in the first
   // place, which is a cheap, purely cosmetic fix for what's already a
   // cosmetic layer.
-  const TEMP_TURN_LIFT = -0.001;
+  const TEMP_TURN_LIFT = -0.002;
 
-  let state = 'idle'; // 'idle' | 'dragging' | 'settling'
+  let state = 'idle'; // 'idle' | 'dragging' | 'settling' | 'auto'
+  // Whether the turn in flight came from a pointer. A self-playing turn
+  // (playTurn) must not touch OrbitControls -- disabling and re-enabling
+  // them around a keyboard turn would stomp on whatever state they were
+  // actually in.
+  let pointerDriven = false;
+  let autoElapsed = 0; // seconds into a self-playing turn
   let grabbedPanel = null; // 'B' | 'C'
   let grabbedMesh = null;
   let originalTexture = null; // grabbed panel's texture before the drag started, for a cancelled turn
@@ -191,7 +210,13 @@ export function createDragPageTurn({
     return mesh;
   }
 
-  function beginDrag(panel, pages, event) {
+  /**
+   * Everything a turn needs regardless of what started it: the shape it
+   * morphs between, the two-sided leaf, and the page revealed underneath.
+   * Leaves `progress` at 0 and does NOT pick a state -- the caller decides
+   * whether the turn is driven by a pointer or plays itself out.
+   */
+  function beginTurn(panel, pages) {
     grabbedPanel = panel;
     grabbedMesh = pages.pageMeshes[panel];
     originalTexture = grabbedMesh.material.map;
@@ -211,11 +236,6 @@ export function createDragPageTurn({
       startGap = gapBack; endGap = gapFront;
     }
     progress = 0;
-
-    _anchorLocal.set(0, 0, pages.spreadFront.anchorFar.z);
-    _anchorWorld.copy(_anchorLocal).applyMatrix4(pages.root.matrixWorld);
-    screenPointFor(_anchorWorld, pivotScreen);
-    angle0 = Math.atan2(event.clientY - pivotScreen.y, event.clientX - pivotScreen.x);
 
     // The turning leaf's two faces belong to two DIFFERENT panels, and
     // that is the whole trick here:
@@ -288,9 +308,48 @@ export function createDragPageTurn({
     pages.root.add(tempGroup);
 
     rebuildTempMesh(pages);
+  }
 
+  /** Start a turn the pointer will drive, frame by frame, from `event`. */
+  function beginDrag(panel, pages, event) {
+    beginTurn(panel, pages);
+
+    // Screen-space pivot the drag's angular sweep is measured around --
+    // the shared hinge, projected. Pointer-only: a turn that plays itself
+    // has no cursor to measure against.
+    _anchorLocal.set(0, 0, pages.spreadFront.anchorFar.z);
+    _anchorWorld.copy(_anchorLocal).applyMatrix4(pages.root.matrixWorld);
+    screenPointFor(_anchorWorld, pivotScreen);
+    angle0 = Math.atan2(event.clientY - pivotScreen.y, event.clientX - pivotScreen.x);
+
+    pointerDriven = true;
     controls.enabled = false;
     state = 'dragging';
+  }
+
+  /**
+   * Play a whole turn on `panel` with no pointer involved -- what the
+   * arrow keys call, so a keyboard turn is the same physical page flip a
+   * drag produces rather than a texture swap. Returns false when the turn
+   * can't happen (nothing loaded, already at that end of the book, or a
+   * turn is already in flight), so the caller can decide whether to fall
+   * back to anything.
+   *
+   * Held arrow keys work out on their own: key-repeat fires far faster
+   * than a turn takes, every repeat during one lands on the `state`
+   * check below and is dropped, and the first repeat after a turn
+   * finishes starts the next -- which reads as steadily turning pages.
+   */
+  function playTurn(panel) {
+    if (state !== 'idle') return false;
+    const pages = getPages();
+    if (!pages || !canTurn(panel)) return false;
+
+    beginTurn(panel, pages);
+    pointerDriven = false;
+    autoElapsed = 0;
+    state = 'auto';
+    return true;
   }
 
   function disposeTempGroup() {
@@ -318,7 +377,9 @@ export function createDragPageTurn({
     grabbedPanel = null;
     originalTexture = null;
     state = 'idle';
-    controls.enabled = true;
+    // Only give the controls back if this turn was the one that took them.
+    if (pointerDriven) controls.enabled = true;
+    pointerDriven = false;
   }
 
   dom.addEventListener('pointerdown', (e) => {
@@ -368,9 +429,22 @@ export function createDragPageTurn({
   });
 
   function update(dt) {
-    if (state !== 'settling') return;
+    if (state !== 'settling' && state !== 'auto') return;
     const pages = getPages();
-    if (!pages || !tempGroup) { state = 'idle'; controls.enabled = true; return; }
+    if (!pages || !tempGroup) {
+      state = 'idle';
+      if (pointerDriven) controls.enabled = true;
+      return;
+    }
+
+    if (state === 'auto') {
+      autoElapsed += dt;
+      const t = Math.min(autoElapsed / AUTO_TURN_DURATION, 1);
+      progress = easeInOut(t);
+      rebuildTempMesh(pages);
+      if (t >= 1) endTurn(pages, true);
+      return;
+    }
 
     progress += (settleTarget - progress) * Math.min(SETTLE_RATE * dt, 1);
     if (Math.abs(progress - settleTarget) < 0.01) {
@@ -382,5 +456,5 @@ export function createDragPageTurn({
     rebuildTempMesh(pages);
   }
 
-  return { update };
+  return { update, playTurn };
 }

@@ -33,21 +33,21 @@ export let PANEL_REACH = 1.4;
 // construction, so a change only takes effect on the next
 // PageSimulation.create(). PageSimulation.BC_RANGE reads it live, so the
 // inner leaf's travel range rescales with the book automatically.
-export let SPINE_GAP = 0.35;
+export let SPINE_GAP = 0.3;
 
 // The value SPINE_GAP starts at, and the thickness a book of
 // SPINE_GAP_REFERENCE_PAGES pages gets. Kept separate from the mutable
 // SPINE_GAP above ON PURPOSE: spineGapForPageCount() must scale from a
 // FIXED base, or loading a second book would scale from the first book's
 // already-scaled thickness and compound every time.
-const SPINE_GAP_DEFAULT = 0.35;
+const SPINE_GAP_DEFAULT = 0.3;
 
 // Page count that maps to exactly SPINE_GAP_DEFAULT, and the range the
 // result is held inside -- a leaflet still needs enough thickness for the
 // curl/wedge geometry to read as a book at all, and a 900-page doorstop
 // shouldn't grow until it dwarfs the desk.
 const SPINE_GAP_REFERENCE_PAGES = 650;
-const SPINE_GAP_MIN = 0.12;
+const SPINE_GAP_MIN = 0.06;
 const SPINE_GAP_MAX = 0.55;
 
 /**

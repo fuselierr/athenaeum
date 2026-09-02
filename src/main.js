@@ -229,10 +229,21 @@ function commitTurnPanel(panel) {
 }
 
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'r' || e.key === 'R') { pages.reset(); bookGroup.quaternion.identity(); refreshFlipLabel(); }
+  if (e.key === 'r' || e.key === 'R') {
+    pages.reset();
+    bookGroup.quaternion.identity();
+    bookGroup.position.set(0, 0, 0); // also undo any shift-drag repositioning
+    refreshFlipLabel();
+  }
   if (e.key === 'f' || e.key === 'F') { pages.toggleFlip(); refreshFlipLabel(); }
-  if (e.key === 'ArrowRight') showLeaf(leafStart + 2);
-  if (e.key === 'ArrowLeft') showLeaf(leafStart - 2);
+  // Arrow keys play the same physical turn a drag does rather than
+  // swapping textures underneath you -- playTurn runs dragPageTurn's own
+  // animation and commits through commitTurnPanel -> showLeaf at the end,
+  // so the page content, the leaf's two faces and the hinge position all
+  // move together exactly as they do for a mouse turn. Forward is the
+  // right-hand page, same as dragging it.
+  if (e.key === 'ArrowRight') dragPageTurn.playTurn(RIGHT_HAND_PANEL);
+  if (e.key === 'ArrowLeft') dragPageTurn.playTurn(LEFT_HAND_PANEL);
 });
 
 // --- book loading ---
@@ -384,6 +395,101 @@ window.addEventListener('pointermove', (e) => {
 });
 window.addEventListener('pointerup', (e) => {
   if (e.button === 2) rotatingBook = false;
+});
+
+// --- book placement (shift + left-drag): slide the book in view ---
+// Movement is camera-relative by construction rather than by mapping drag
+// pixels onto camera axes with a tuned sensitivity: the cursor is cast
+// onto a plane through the book, and the book is moved by the difference
+// between where that ray landed at pointerdown and where it lands now. So
+// the book stays exactly under the cursor however the camera is orbited or
+// zoomed, with no constant to retune when the framing changes.
+//
+// The plane FACES THE CAMERA -- its normal is the view direction -- so the
+// book always travels in the plane of the screen, whatever axes that works
+// out to in world space. Using the horizontal (XZ) plane instead, which is
+// what this did first, has two problems: the book can only ever slide
+// along the desk, and the drag degenerates as the camera approaches desk
+// level, where a nearly-parallel ray turns a few pixels of cursor movement
+// into an enormous jump (and misses the plane entirely from below).
+//
+// Captured once at pointerdown rather than re-derived per move: the camera
+// cannot orbit mid-drag anyway (this suppresses OrbitControls, below), and
+// a fixed plane keeps the grab point exact for the whole gesture.
+//
+// The pointerdown listener is on WINDOW in the CAPTURE phase, which is
+// the only place that reliably wins this event: dragPageTurn already
+// claims plain left-drags that hit a page via its own capture listener on
+// the canvas, and OrbitControls claims what's left in the bubble phase.
+// Capture descends window -> document -> canvas, so this runs before
+// both, and stopPropagation means neither ever sees a shift-drag.
+const _slidePlane = new THREE.Plane();
+const _slideRay = new THREE.Raycaster();
+const _slideNdc = new THREE.Vector2();
+const _slideHit = new THREE.Vector3();
+const _slideNormal = new THREE.Vector3(); // view direction at pointerdown
+const _slideGrab = new THREE.Vector3(); // where on the plane the drag started
+const _slideOrigin = new THREE.Vector3(); // bookGroup.position at that moment
+let slidingBook = false;
+
+/**
+ * Where the cursor lands on the horizontal plane the book currently sits
+ * on, or null if the ray can't reach it (camera level with that plane, or
+ * pointed away from it).
+ */
+function pointerToBookPlane(clientX, clientY, out) {
+  const rect = dom.getBoundingClientRect();
+  _slideNdc.set(
+    ((clientX - rect.left) / rect.width) * 2 - 1,
+    -((clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  _slideRay.setFromCamera(_slideNdc, camera);
+  return _slideRay.ray.intersectPlane(_slidePlane, out);
+}
+
+window.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !e.shiftKey || slidingBook) return;
+  // Ignore shift-clicks on the overlaid UI panels -- only the 3D view
+  // slides the book.
+  if (e.target !== dom) return;
+
+  camera.getWorldDirection(_slideNormal);
+  _slidePlane.setFromNormalAndCoplanarPoint(_slideNormal, bookGroup.position);
+  if (!pointerToBookPlane(e.clientX, e.clientY, _slideGrab)) return; // grazing view -- leave the event alone
+
+  _slideOrigin.copy(bookGroup.position);
+  slidingBook = true;
+  dom.style.cursor = 'grabbing';
+  e.stopPropagation();
+  e.preventDefault();
+}, { capture: true });
+
+window.addEventListener('pointermove', (e) => {
+  if (!slidingBook) return;
+  // Deliberately not re-checking shiftKey: releasing shift mid-drag
+  // shouldn't drop the book somewhere unintended -- the gesture ends on
+  // pointerup, like every other drag here.
+  if (!pointerToBookPlane(e.clientX, e.clientY, _slideHit)) return;
+  // Full 3D delta -- the plane is screen-facing, so this is exactly the
+  // cursor's own movement carried into world space.
+  bookGroup.position.copy(_slideOrigin).add(_slideHit).sub(_slideGrab);
+});
+
+window.addEventListener('pointerup', (e) => {
+  if (e.button !== 0 || !slidingBook) return;
+  slidingBook = false;
+  dom.style.cursor = e.shiftKey ? 'move' : '';
+});
+
+// Shift on its own advertises the control before you commit to a drag.
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift' && !slidingBook) dom.style.cursor = 'move';
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift' && !slidingBook) dom.style.cursor = '';
+});
+window.addEventListener('blur', () => {
+  if (!slidingBook) dom.style.cursor = '';
 });
 
 // --- gravity: stays pointed at true world-down regardless of bookGroup's
