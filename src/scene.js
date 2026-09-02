@@ -28,6 +28,11 @@ export async function createScene() {
   controls.target.set(0, 1.0, 0);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
+  // Right-drag no longer pans the camera -- main.js repurposes it to rotate
+  // the book itself instead, and drives its own WASD-based camera pan in
+  // place of what right-drag used to do. Left-drag still orbits, middle
+  // still dollies.
+  controls.mouseButtons.RIGHT = null;
 
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -35,7 +40,9 @@ export async function createScene() {
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  return { scene, camera, renderer, controls };
+  return {
+    scene, camera, renderer, controls,
+  };
 }
 
 // A background texture is never sampled by the lighting pipeline, so the EXR
