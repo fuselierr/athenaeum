@@ -5,14 +5,14 @@
 //   GET  /api/books/:id/pdf -- fetch the converted PDF (what your client-side
 //                              PDF.js/three.js pipeline reads from)
 //
-// Usage: node upload-server.ts
+// Usage: node server/uploadServer.ts
 
 import express from 'express';
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { epubToPdf } from './epub-to-pdf.ts';
+import { epubToPdf } from './epubToPdf.ts';
 
 const STORAGE_DIR = path.join(process.cwd(), 'books');
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100MB -- generous for an epub, adjust to taste

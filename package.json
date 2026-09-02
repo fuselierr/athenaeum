@@ -17,5 +17,10 @@
     "@types/node": "^26.4.0",
     "vite": "^8.2.2"
   },
-  "scripts": {}
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server/uploadServer.ts"
+  }
 }
