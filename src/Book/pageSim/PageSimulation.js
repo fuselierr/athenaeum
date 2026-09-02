@@ -315,11 +315,13 @@ export class PageSimulation {
   // both bodyB (spreadFront.bodyFar) and bodyC (spreadBack.bodyNear) with
   // gravityScale 0, so Rapier's own gravity force is simply never applied
   // to them, not even for one physics substep. What DOES still respond to
-  // gravity is A's/D's angle (the flat reference/cover bodies, ordinary
-  // gravityScale 1) -- that's what drives the curl's SHAPE further out
-  // (buildCurlStrip's refAngle, the straight run past the arc, ending at
-  // the tip), via straightAngle() in spread.js. Only the tangent right at
-  // the shared hinge is fixed; the bend is not.
+  // gravity is each spread's invisible pseudo body -- hinged at the same
+  // anchor as its real reference/cover (A or D), same physics, gravityScale
+  // 1, but never rendered and not A/D themselves (see spread.js's drop())
+  // -- that's what drives the curl's SHAPE further out (buildCurlStrip's
+  // refAngle, the straight run past the arc, ending at the tip), via
+  // straightAngle() in spread.js. Only the tangent right at the shared
+  // hinge is fixed; the bend is not.
   //
   // This still runs every frame regardless, re-asserting the exact fixed
   // angle and zeroing angular velocity -- not to fight gravity (there's

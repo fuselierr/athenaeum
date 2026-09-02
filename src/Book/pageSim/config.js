@@ -8,10 +8,17 @@
  * along Z.
  */
 
-// `let`, not `const` -- setPageDimensions() resizes the book to a loaded
-// PDF's page aspect ratio. Consumers read these fresh each frame, so most
-// pick the change up live; panelGeo/collider sizes are baked in at
-// construction, so main.js recreates the simulation on a dimension change.
+// `let`, not `const` -- setPageDimensions() below can resize the book to
+// match a loaded PDF's actual page aspect ratio (see bookLoader.js's
+// onDimensions and main.js's applyPdfDimensions). Every other module
+// imports these as live ES module bindings and either reads them fresh
+// inside a function body each time (spread.js) or holds a stable object
+// whose contents setPageDimensions/updateLocalCorners (math.js) mutate in
+// place -- so nothing here needs to change for that to work, EXCEPT that
+// anything which bakes these into physics bodies or BufferGeometry sizes
+// at construction time (panelGeo, colliders) only picks up a change on the
+// NEXT PageSimulation.create(), not live -- main.js handles that by
+// disposing and recreating the whole simulation when dimensions change.
 export let HINGE_LEN = 2.0;
 export let PANEL_REACH = 1.4;
 
@@ -73,8 +80,9 @@ export const BC_START_GAP = 0.15; // radians between the two inner pages at t = 
 
 // B's and C's own hinge-tangent angle, held fixed for the entire lifetime
 // of the book -- see PageSimulation._enforceNoCrossingBC. Only their curl
-// SHAPE (driven by A's/D's own, still-dynamic angles via straightAngle())
-// ever changes; the tangent right at the shared hinge never does.
+// SHAPE (driven by each spread's invisible pseudo body -- see spread.js's
+// drop() -- via straightAngle()) ever changes; the tangent right at the
+// shared hinge never does.
 export const BC_FIXED_ANGLE = BC_MEET_ANGLE;
 
 // Fractions of OPEN_LIMIT the outer cover pages splay to at t = 0.

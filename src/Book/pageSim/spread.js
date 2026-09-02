@@ -179,8 +179,8 @@ export function createSpread(world, parent, opts) {
 
   function updateCurlMesh() {
     const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
-    const refBody = curlPage === 'near' ? bodyFar : bodyNear;
-    const refAngle = _refAngleOverride ?? pageAngle(refBody);
+    // pseudoBody, not the real reference body -- see the comment above drop().
+    const refAngle = _refAngleOverride ?? pageAngle(pseudoBody);
     buildCurlStrip(
       curlPositions, curlAnchorVec, pageAngle(curlBody), refAngle,
       pairGap(), PANEL_REACH, halfWidth,
@@ -226,7 +226,7 @@ export function createSpread(world, parent, opts) {
     wedgeGeo.computeVertexNormals();
   }
 
-  let bodyNear, bodyFar;
+  let bodyNear, bodyFar, pseudoBody;
 
   // The curl page's own body (B for the front spread, C for the back one)
   // gets gravityScale 0 -- see PageSimulation._enforceNoCrossingBC for why:
@@ -238,14 +238,38 @@ export function createSpread(world, parent, opts) {
   // gravity swinging IT is exactly what drives the curl's own SHAPE further
   // out (buildCurlStrip's refAngle, i.e. the straight run past the arc,
   // ultimately the tip), via straightAngle()/refAngle in updateCurlMesh.
+  //
+  // `pseudoBody` is a second, invisible body hinged at that SAME anchor
+  // point (same joint, same length, same damping, gravityScale 1 -- an
+  // exact clone of the real reference body's own physics, not rendered or
+  // referenced by anything else). The curl's shape now reads THIS body's
+  // angle instead of the real reference body's -- both for the arc's
+  // default target tangent (updateCurlMesh) and for the no-crossing
+  // distance check (enforceNoCrossing) -- so the curl is only ever coupled
+  // to the pseudo body, never directly to A/D themselves. Since the pseudo
+  // body currently has identical physics to the real one, it tracks it
+  // exactly and nothing LOOKS different yet; the point is this seam now
+  // exists for the pseudo body to later diverge (its own easing/damping/
+  // response) without ever touching A's/D's real, rendered behavior.
   function drop(startAngleNear, startAngleFar) {
     if (bodyNear) world.removeRigidBody(bodyNear);
     if (bodyFar) world.removeRigidBody(bodyFar);
+    if (pseudoBody) world.removeRigidBody(pseudoBody);
     const curlIsNear = curlPage === 'near';
     bodyNear = makePage(anchorNear, startAngleNear, dampingNear, curlIsNear ? 0 : 1);
     bodyFar = makePage(anchorFar, startAngleFar, dampingFar, curlIsNear ? 1 : 0);
     makeJoint(anchorBodyNear, bodyNear);
     makeJoint(anchorBodyFar, bodyFar);
+
+    // Ref side = whichever of near/far ISN'T the curl page -- the pseudo
+    // body below is hinged at that same side's anchor.
+    const refIsNear = !curlIsNear;
+    const refAnchor = refIsNear ? anchorNear : anchorFar;
+    const refAnchorBody = refIsNear ? anchorBodyNear : anchorBodyFar;
+    const refStartAngle = refIsNear ? startAngleNear : startAngleFar;
+    const refDamping = refIsNear ? dampingNear : dampingFar;
+    pseudoBody = makePage(refAnchor, refStartAngle, refDamping, 1);
+    makeJoint(refAnchorBody, pseudoBody);
   }
 
   // Slide one of this spread's two hinges to a new position along the spine
@@ -296,12 +320,12 @@ export function createSpread(world, parent, opts) {
   function enforceNoCrossing() {
     const curlIsNear = curlPage === 'near';
     const curlBody = curlIsNear ? bodyNear : bodyFar;
-    const refBody = curlIsNear ? bodyFar : bodyNear;
     const curlAnchorV = curlIsNear ? anchorNearVec : anchorFarVec;
     const refAnchorV = curlIsNear ? anchorFarVec : anchorNearVec;
 
     const curlAngle = pageAngle(curlBody);
-    const refAngle = pageAngle(refBody);
+    // pseudoBody, not the real reference body -- see the comment above drop().
+    const refAngle = pageAngle(pseudoBody);
     const gap = pairGap();
 
     curlTipPoint(curlAnchorV, curlAngle, refAngle, gap, PANEL_REACH, _noCrossTip);
@@ -340,8 +364,8 @@ export function createSpread(world, parent, opts) {
   // each other even while their base angles never technically cross.
   const _tipOut = new THREE.Vector3();
   function curlTipAt(candidateAngle, out = _tipOut) {
-    const refBody = curlPage === 'near' ? bodyFar : bodyNear;
-    return curlTipPoint(curlAnchorVec, candidateAngle, pageAngle(refBody), pairGap(), PANEL_REACH, out);
+    // pseudoBody, not the real reference body -- see the comment above drop().
+    return curlTipPoint(curlAnchorVec, candidateAngle, pageAngle(pseudoBody), pairGap(), PANEL_REACH, out);
   }
   function curlTip(out = _tipOut) {
     const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
@@ -351,22 +375,23 @@ export function createSpread(world, parent, opts) {
   // Same idea as curlTipAt, but varies the REFERENCE angle instead of the
   // curling page's own angle -- used by PageSimulation._enforceNoCrossingTips
   // to find where this curl's tip would land for some candidate ref angle
-  // (e.g. scaled back from A's/D's real angle) without touching any body.
+  // (e.g. scaled back from the pseudo body's real angle) without touching
+  // any body.
   function curlTipAtRef(candidateRefAngle, out = _tipOut) {
     const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
     return curlTipPoint(curlAnchorVec, pageAngle(curlBody), candidateRefAngle, pairGap(), PANEL_REACH, out);
   }
 
   // The angle of this spread's curling page's STRAIGHT part, i.e. dirEnd in
-  // buildCurlStrip -- always exactly the reference (flat/cover) page's own
-  // current angle, since that's the whole point of the arc: it bends until
-  // its tangent matches dirEnd, then continues straight in that exact
-  // direction. Distinct from the curling page's own base/hinge angle,
-  // which is what pageAngle(curlBody) reads. This is the reference body's
-  // REAL angle, unaffected by any setRefAngleClamp override in effect.
+  // buildCurlStrip -- always exactly the pseudo body's own current angle
+  // (see the comment above drop()), since that's the whole point of the
+  // arc: it bends until its tangent matches dirEnd, then continues straight
+  // in that exact direction. Distinct from the curling page's own
+  // base/hinge angle, which is what pageAngle(curlBody) reads. This is the
+  // pseudo body's REAL angle, unaffected by any setRefAngleClamp override
+  // in effect.
   function straightAngle() {
-    const refBody = curlPage === 'near' ? bodyFar : bodyNear;
-    return pageAngle(refBody);
+    return pageAngle(pseudoBody);
   }
 
   // Split so the cross-spread inner-page correction can run after BOTH
@@ -389,6 +414,7 @@ export function createSpread(world, parent, opts) {
     }
     if (bodyNear) world.removeRigidBody(bodyNear);
     if (bodyFar) world.removeRigidBody(bodyFar);
+    if (pseudoBody) world.removeRigidBody(pseudoBody);
     world.removeRigidBody(anchorBodyNear);
     world.removeRigidBody(anchorBodyFar);
   }
