@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { HINGE_LEN, PANEL_REACH, BC_FIXED_ANGLE } from './config.js';
-import { pageAngle } from './math.js';
-import { PageSimulation } from './PageSimulation.js';
+import { HINGE_LEN, PANEL_REACH, BC_FIXED_ANGLE } from '../pageSim/config.js';
+import { pageAngle } from '../pageSim/math.js';
+import { PageSimulation } from '../pageSim/PageSimulation.js';
 import {
   CURL_ROWS, CURL_INDEX, createCurlUV, writeCurlUV, buildCurlStrip,
-} from './curlGeometry.js';
+} from '../pageSim/curlGeometry.js';
 
 /**
  * Drag-to-turn-a-page.
@@ -31,10 +31,10 @@ import {
  *
  *   1. the page on the grabbed panel now — the face you take hold of;
  *   2. the page this leaf LANDS as, on the opposite panel, once the turn
- *      completes (`getLandingTexture`) — the leaf's other face, and the
+ *      completes (`content.landingTexture`) — the leaf's other face, and the
  *      one that swings into view as it flips;
  *   3. the page revealed UNDERNEATH on the grabbed panel itself
- *      (`getUnderneathTexture`) — a different page again, painted onto
+ *      (`content.underneathTexture`) — a different page again, painted onto
  *      the real mesh the moment the drag starts (through
  *      PageSimulation.setPageTexture, so it picks up the same tint and
  *      orientation as any other slot assignment) so nothing sits blank
@@ -45,12 +45,11 @@ import {
  *
  * A cancelled drag (released before the halfway point) reverts the real
  * panel back to what it showed before the drag started; a completed one
- * (released past halfway) calls `commitTurn`, which drives the actual
- * page content forward/backward (main.js's showLeaf) to match.
+ * (released past halfway) calls `content.commitTurn`, which drives the actual
+ * page content forward/backward (bookContent's showLeaf) to match.
  */
 export function createDragPageTurn({
-  getPages, camera, renderer, controls, canTurn,
-  getLandingTexture, getUnderneathTexture, commitTurn,
+  getPages, camera, renderer, controls, content,
 }) {
   const dom = renderer.domElement;
   const raycaster = new THREE.Raycaster();
@@ -272,7 +271,7 @@ export function createDragPageTurn({
     tempPositions = new Float32Array(2 * CURL_ROWS * 3);
     const grabbedFace = makeTempMesh(grabbedMesh.material, grabbedSide);
 
-    const landingTexture = getLandingTexture(panel);
+    const landingTexture = content.landingTexture(panel);
     hasTurnTextures = !!landingTexture;
     let landingFace;
     if (landingTexture) {
@@ -297,7 +296,7 @@ export function createDragPageTurn({
     // revealed here is this panel's own slot of the target spread. Set
     // through setPageTexture so it picks up the same tint/orientation
     // every other slot assignment does.
-    const underneathTexture = getUnderneathTexture(panel);
+    const underneathTexture = content.underneathTexture(panel);
     if (underneathTexture) pages.setPageTexture(panel, underneathTexture);
 
     tempMeshFront = grabbedSide === THREE.FrontSide ? grabbedFace : landingFace;
@@ -343,7 +342,7 @@ export function createDragPageTurn({
   function playTurn(panel) {
     if (state !== 'idle') return false;
     const pages = getPages();
-    if (!pages || !canTurn(panel)) return false;
+    if (!pages || !content.canTurn(panel)) return false;
 
     beginTurn(panel, pages);
     pointerDriven = false;
@@ -366,7 +365,7 @@ export function createDragPageTurn({
 
   function endTurn(pages, committed) {
     if (committed && hasTurnTextures) {
-      commitTurn(grabbedPanel);
+      content.commitTurn(grabbedPanel);
     } else if (pages && originalTexture) {
       // Cancelled (or nothing was actually available to turn to) -- put
       // the real panel back exactly how it looked before the drag.
@@ -399,7 +398,7 @@ export function createDragPageTurn({
 
     const hitMesh = hits[0].object;
     const panel = hitMesh === pages.pageMeshes.B ? 'B' : 'C';
-    if (!canTurn(panel)) return; // already at the front/back cover on that side -- nothing to turn to
+    if (!content.canTurn(panel)) return; // already at the front/back cover on that side -- nothing to turn to
 
     beginDrag(panel, pages, e);
     // Stop OrbitControls (bound in the bubble phase on this same element)
