@@ -31,11 +31,16 @@ import {
  * animating. Each leaf owns its whole state — its own strip geometry,
  * its own two faces, its own progress — and lives in `turns` until it
  * lands. What makes the stack chain correctly is WHEN the book's page
- * state advances: a keyboard turn commits to `content` the moment it
+ * state advances: a keyboard turn advances `content` the moment it
  * STARTS, not when it finishes, so the next turn already reads the next
  * spread and every leaf in the stack carries a different pair of pages.
- * The leaf is then pure animation, catching up to a book that has
- * already moved on.
+ *
+ * Advancing is deliberately split from REPAINTING, though. Only the panel
+ * being peeled off is repainted up front (to what the leaf uncovers); the
+ * panel the leaf is flying toward keeps its old page until that leaf
+ * actually lands on it, because repainting it up front makes the page on
+ * the far side of the book visibly jump the instant a key is pressed,
+ * with nothing covering it. See content.advanceTurn and finishTurn.
  *
  * A pointer drag cannot work that way — it can be cancelled half-way, so
  * it has to defer its commit until release, and it keeps the grabbed
@@ -172,13 +177,40 @@ export function createDragPageTurn({
     turn.meshBack.geometry.attributes.uv.needsUpdate = true;
   }
 
+  /**
+   * The curl parameters of the panel this leaf leaves and the one it
+   * lands on, as they are RIGHT NOW. `gap` mirrors spread.js's own
+   * pairGap(), including its floor -- that keeps a leaf parked hard
+   * against a cover from collapsing the curl to zero width.
+   */
+  function shapeTargets(turn, pages) {
+    const refFront = pageAngle(pages.spreadFront.pseudoBody);
+    const refBack = pageAngle(pages.spreadBack.pseudoBody);
+    const gapFront = Math.max(Math.abs(pages.spreadFront.anchorFar.z - pages.spreadFront.anchorNear.z), 1e-3);
+    const gapBack = Math.max(Math.abs(pages.spreadBack.anchorFar.z - pages.spreadBack.anchorNear.z), 1e-3);
+    return turn.panel === 'B'
+      ? { startRef: refFront, endRef: refBack, startGap: gapFront, endGap: gapBack }
+      : { startRef: refBack, endRef: refFront, startGap: gapBack, endGap: gapFront };
+  }
+
   function rebuildLeaf(turn, pages) {
     // y = turn.lift, not 0 -- see TEMP_TURN_LIFT above. buildCurlStrip
     // adds this anchor point into every row it writes, so this rigidly
     // lifts the whole strip by a constant offset without distorting it.
     _anchorLocal.set(0, turn.lift, pages.spreadFront.anchorFar.z); // z == spreadBack.anchorNear.z, the shared B/C hinge
-    const refAngle = THREE.MathUtils.lerp(turn.startRef, turn.endRef, turn.progress);
-    const gap = THREE.MathUtils.lerp(turn.startGap, turn.endGap, turn.progress);
+    // Read the two shapes this leaf morphs between LIVE, every frame, not
+    // from a snapshot taken when the turn began. The real B/C strips are
+    // themselves rebuilt every frame from these same two values, and both
+    // keep moving for the whole length of a turn: the pseudo bodies are
+    // still simulating, and the shared hinge is still easing toward the
+    // new reading position, which changes pairGap() on BOTH spreads. A
+    // leaf interpolating between stale endpoints is therefore congruent
+    // with neither panel by the time it gets there -- worst when the
+    // stacks are uneven, since that is when the hinge has furthest to
+    // travel mid-turn, and it shows up as the leaf cutting into the book.
+    const { startRef, endRef, startGap, endGap } = shapeTargets(turn, pages);
+    const refAngle = THREE.MathUtils.lerp(startRef, endRef, turn.progress);
+    const gap = THREE.MathUtils.lerp(startGap, endGap, turn.progress);
     // HINGE_LEN is read live (not cached) -- it's a mutable `let` export
     // that changes when a PDF loads and the book gets resized
     // (setPageDimensions, see main.js's applyPdfDimensions). This module is
@@ -223,24 +255,13 @@ export function createDragPageTurn({
       pivotScreen: new THREE.Vector2(),
       // Stagger stacked leaves so two that start in the same frame are
       // never coplanar with each other.
-      lift: TEMP_TURN_LIFT * (1 + 0.5 * turns.length),
+      // Capped: the stagger only has to separate leaves from each other,
+      // and an uncapped multiple would have the tail of a long cascade
+      // visibly floating off the page block.
+      lift: TEMP_TURN_LIFT * (1 + 0.5 * Math.min(turns.length, 4)),
       positions: new Float32Array(2 * CURL_ROWS * 3),
       rowFrac: new Float32Array(CURL_ROWS),
     };
-
-    const refFront = pageAngle(pages.spreadFront.pseudoBody);
-    const refBack = pageAngle(pages.spreadBack.pseudoBody);
-    // Same floor spread.js's own pairGap() applies -- keeps a leaf parked
-    // right against its cover from collapsing the curl to zero width.
-    const gapFront = Math.max(Math.abs(pages.spreadFront.anchorFar.z - pages.spreadFront.anchorNear.z), 1e-3);
-    const gapBack = Math.max(Math.abs(pages.spreadBack.anchorFar.z - pages.spreadBack.anchorNear.z), 1e-3);
-    if (panel === 'B') {
-      turn.startRef = refFront; turn.endRef = refBack;
-      turn.startGap = gapFront; turn.endGap = gapBack;
-    } else {
-      turn.startRef = refBack; turn.endRef = refFront;
-      turn.startGap = gapBack; turn.endGap = gapFront;
-    }
 
     // The turning leaf's two faces belong to two DIFFERENT panels, and
     // that is the whole trick here:
@@ -276,8 +297,21 @@ export function createDragPageTurn({
     const grabbedFace = makeTempMesh(turn, grabbedMesh.material, grabbedSide);
 
     // Read while `content` is still on the spread this turn starts from.
-    const landingTexture = content.landingTexture(panel);
-    const underneathTexture = content.underneathTexture(panel);
+    // The keyboard path advances the book here too, in the same step, so a
+    // stacked turn behind this one already sees the next spread -- but it
+    // deliberately does NOT repaint the panels; see advanceTurn.
+    let landingTexture;
+    let underneathTexture;
+    if (commitNow) {
+      const advanced = content.advanceTurn(panel);
+      landingTexture = advanced.landing;
+      underneathTexture = advanced.underneath;
+      turn.landingPanel = advanced.landingPanel;
+      turn.pendingLanding = advanced.landing;
+    } else {
+      landingTexture = content.landingTexture(panel);
+      underneathTexture = content.underneathTexture(panel);
+    }
     turn.hasTurnTextures = !!landingTexture;
 
     let landingFace;
@@ -297,17 +331,10 @@ export function createDragPageTurn({
       landingFace = makeTempMesh(turn, grabbedFace.material, landingSide);
     }
 
-    if (commitNow) {
-      // Advances leafStart and repaints BOTH panels to the target spread,
-      // which is exactly the "underneath" reveal -- no separate preview
-      // needed, and the next turn in a stack now reads the next spread.
-      content.commitTurn(panel);
-    } else if (underneathTexture) {
-      // Deferred-commit path: preview by hand what the panel will show,
-      // through setPageTexture so it picks up the same tint/orientation
-      // every other slot assignment does.
-      pages.setPageTexture(panel, underneathTexture);
-    }
+    // Reveal what is under the leaf on the panel it is peeling off. Both
+    // paths do this; only the OPPOSITE panel differs between them, and
+    // that one is not touched until the leaf lands (finishTurn).
+    if (underneathTexture) pages.setPageTexture(panel, underneathTexture);
 
     turn.meshFront = grabbedSide === THREE.FrontSide ? grabbedFace : landingFace;
     turn.meshBack = grabbedSide === THREE.FrontSide ? landingFace : grabbedFace;
@@ -333,9 +360,16 @@ export function createDragPageTurn({
   }
 
   function finishTurn(turn, pages, committed) {
-    // Keyboard turns already committed at the start; only a drag has
-    // anything left to decide here.
-    if (!turn.committed) {
+    // A keyboard turn advanced the book's page state up front but left the
+    // opposite panel alone, so the leaf could fly over a panel still
+    // showing the old page. Now that it has arrived and is covering that
+    // panel, swap the panel to the leaf's far face and let the leaf go --
+    // the two are congruent at this point, so the handover is invisible.
+    if (turn.committed) {
+      if (pages && turn.pendingLanding) {
+        pages.setPageTexture(turn.landingPanel, turn.pendingLanding);
+      }
+    } else {
       if (committed && turn.hasTurnTextures) {
         content.commitTurn(turn.panel);
       } else if (pages && turn.originalTexture) {

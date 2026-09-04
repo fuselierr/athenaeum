@@ -71,6 +71,10 @@ export class PageSimulation {
     // setBCPosition / setProgress.
     this._bcZ = 0;
 
+    // While a cover is being dragged its angle is dictated, not simulated.
+    // null = that cover is back under gravity's control.
+    this._coverHold = { A: null, D: null };
+
     // Covers stay put: A pinned at +SPINE_GAP (front of the block), D at
     // -SPINE_GAP (back). Only the inner leaves' shared hinge (B's far
     // anchor, C's near anchor) moves, between the two.
@@ -282,6 +286,56 @@ export class PageSimulation {
   }
 
   /**
+   * The two cover slots as physics: A is the front spread's near page, D
+   * the back spread's far one. Both hinge on the same axis with the same
+   * angle convention as every other panel.
+   */
+  _coverRef(slot) {
+    return slot === 'A'
+      ? { body: this.spreadFront.bodyNear, anchor: this.spreadFront.anchorNear }
+      : { body: this.spreadBack.bodyFar, anchor: this.spreadBack.anchorFar };
+  }
+
+  /** Where a cover's hinge sits along the spine. */
+  coverHingeZ(slot) {
+    return this._coverRef(slot).anchor.z;
+  }
+
+  /** Current swing angle of each cover, 0 = shut, OPEN_LIMIT = laid flat. */
+  get coverAngles() {
+    return {
+      A: pageAngle(this.spreadFront.bodyNear),
+      D: pageAngle(this.spreadBack.bodyFar),
+    };
+  }
+
+  /**
+   * Hold a cover open at `angle`, or pass null to let go and hand it back
+   * to gravity. Applied inside step()'s correction pipeline rather than
+   * from outside it, so the hold lands in the right order relative to
+   * every other correction -- in particular BEFORE enforceNoPassingRef,
+   * which is what still stops a dragged cover being shoved through the
+   * page block.
+   */
+  setCoverHold(slot, angle) {
+    this._coverHold[slot] = angle == null
+      ? null
+      : Math.max(0, Math.min(OPEN_LIMIT, angle));
+  }
+
+  _applyCoverHold() {
+    for (const slot of ['A', 'D']) {
+      const angle = this._coverHold[slot];
+      if (angle == null) continue;
+      const { body, anchor } = this._coverRef(slot);
+      const t = pageTransform(anchor, angle);
+      body.setTranslation(t.pos, true);
+      body.setRotation(t.rot, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
+  /**
    * Dress the hardcover -- front cover art, plus a synthesized spine and
    * back. See hardcover.setJacket. Returns a promise; the cover image is
    * fetched.
@@ -421,6 +475,7 @@ export class PageSimulation {
     // split matters.
     this._enforceNoCrossingPseudo();
     this._applyPseudoRepulsion(this.world.timestep); // capped, same effective dt world.step() just used
+    this._applyCoverHold();
     this.spreadFront.enforceNoPassingRef();
     this.spreadBack.enforceNoPassingRef();
 

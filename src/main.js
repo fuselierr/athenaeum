@@ -9,6 +9,7 @@ import {
 } from './book/pageSim/config.js';
 import { updateLocalCorners } from './book/pageSim/math.js';
 import { createBookContent, RIGHT_HAND_PANEL, LEFT_HAND_PANEL } from './book/reader/bookContent.js';
+import { createDragCover } from './book/reader/dragCover.js';
 import { createDragPageTurn } from './book/reader/dragPageTurn.js';
 import { createCameraPan } from './input/cameraPan.js';
 import { createBookManipulator } from './input/bookManipulator.js';
@@ -45,6 +46,12 @@ let pages = pagesInstance;
 const getPages = () => pages;
 
 const content = createBookContent(getPages);
+// Constructed BEFORE dragPageTurn on purpose: both listen for pointerdown
+// in the capture phase on the same canvas, and capture-phase listeners on
+// one element fire in registration order. Covers therefore get first look
+// and can swallow a gesture that landed on a board before a page turn
+// starts on whatever lies behind it.
+const dragCover = createDragCover({ getPages, camera, renderer, controls });
 const dragPageTurn = createDragPageTurn({ getPages, camera, renderer, controls, content });
 const cameraPan = createCameraPan({ camera, controls });
 const bookManipulator = createBookManipulator({ bookGroup, camera, renderer, getPages });
@@ -137,7 +144,7 @@ if (import.meta.env.DEV) {
   // THREE is included so console debugging can build THREE.Box3 etc.
   // against these objects without a separate import.
   window.__athenaeum = {
-    scene, camera, controls, renderer, bookGroup, content, dragPageTurn, THREE,
+    scene, camera, controls, renderer, bookGroup, content, dragPageTurn, dragCover, THREE,
     get pages() { return pages; },
   };
 }

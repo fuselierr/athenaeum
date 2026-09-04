@@ -93,6 +93,11 @@ export function createBookContent(getPages) {
     return clampLeafStart(leafStart + (panel === RIGHT_HAND_PANEL ? 2 : -2));
   }
 
+  function refreshReadingProgress() {
+    const max = maxLeafStart();
+    readingProgress = max > 0 ? leafStart / max : 0;
+  }
+
   function showLeaf(start) {
     if (pageCanvases.length === 0) return;
     leafStart = clampLeafStart(start);
@@ -100,8 +105,7 @@ export function createBookContent(getPages) {
       const tex = textureForPage(pageIndexForPanel(panel, leafStart));
       if (tex) getPages().setPageTexture(panel, tex);
     }
-    const max = maxLeafStart();
-    readingProgress = max > 0 ? leafStart / max : 0;
+    refreshReadingProgress();
   }
 
   return {
@@ -153,6 +157,32 @@ export function createBookContent(getPages) {
     },
     commitTurn(panel) {
       showLeaf(turnTargetLeafStart(panel));
+    },
+
+    /**
+     * Move to the next spread WITHOUT repainting the panels, handing back
+     * the two textures the caller now owns responsibility for showing.
+     *
+     * This is what lets several keyboard turns stack. The book's page
+     * state has to advance the moment a turn starts, or the next turn
+     * would compute the same target and every leaf in the cascade would
+     * carry the same pair of pages. But repainting both panels then --
+     * which is what commitTurn does -- makes the page OPPOSITE the one you
+     * grabbed jump to its new content while the leaf is still in mid-air,
+     * before anything has covered it up.
+     *
+     * So the split: `underneath` goes onto the grabbed panel immediately
+     * (it is what the leaf peeling away reveals), while `landing` is the
+     * leaf's far face and belongs to the opposite panel only once the leaf
+     * has actually landed on it -- see dragPageTurn's finishTurn.
+     */
+    advanceTurn(panel) {
+      const target = turnTargetLeafStart(panel);
+      const landing = textureForPage(pageIndexForPanel(oppositePanel(panel), target));
+      const underneath = textureForPage(pageIndexForPanel(panel, target));
+      leafStart = target;
+      refreshReadingProgress();
+      return { landing, underneath, landingPanel: oppositePanel(panel) };
     },
   };
 }
