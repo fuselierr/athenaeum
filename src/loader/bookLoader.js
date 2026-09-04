@@ -157,12 +157,17 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
  *   rendering waits for it before continuing (so a caller that disposes
  *   and recreates the whole page simulation here won't race with
  *   onPagesReady firing on the old one).
+ * @param {(jacket: { coverUrl: string|null, title: string|null,
+ *   author: string|null, description: string|null }) => void} [opts.onJacket]
+ *   Called once an uploaded book's jacket material is known, straight after
+ *   conversion and before page rasterization. Not fired for the local-PDF
+ *   testing shortcut below, which has no epub to read a cover out of.
  * @param {(canvases: HTMLCanvasElement[]) => void} [opts.onPagesReady]
  *   Called once all pages of a successfully-converted book have been
  *   rendered to canvas. Wire this up to build page textures once that
  *   part of the pipeline exists.
  */
-export function initBookLoader({ onDimensions, onPagesReady } = {}) {
+export function initBookLoader({ onDimensions, onPagesReady, onJacket } = {}) {
   const input = document.getElementById('epub-file');
   const status = document.getElementById('upload-status');
 
@@ -185,8 +190,17 @@ export function initBookLoader({ onDimensions, onPagesReady } = {}) {
     input.disabled = true;
     try {
       setStatus('Uploading and converting…');
-      const { pdfUrl } = await uploadEpub(file);
-      await loadAndRenderPdf(pdfUrl);
+      const book = await uploadEpub(file);
+      // Fired before the pages render: the jacket comes from the epub
+      // itself, so it is ready immediately and there is no reason to make
+      // it wait on PDF.js rasterizing the whole book.
+      onJacket?.({
+        coverUrl: book.coverUrl ?? null,
+        title: book.title ?? null,
+        author: book.author ?? null,
+        description: book.description ?? null,
+      });
+      await loadAndRenderPdf(book.pdfUrl);
     } catch (err) {
       console.error('Book upload/conversion failed:', err);
       setStatus(`Error: ${err.message}`);

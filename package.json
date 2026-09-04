@@ -21,6 +21,6 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node server/uploadServer.ts"
+    "server": "node --experimental-strip-types server/uploadServer.ts"
   }
 }

@@ -7,6 +7,7 @@ import {
 } from './config.js';
 import { pageAngle, pageTransform } from './math.js';
 import { createSpread } from './spread.js';
+import { createHardcover } from '../cover/hardcover.js';
 
 /**
  * PageSimulation
@@ -84,6 +85,13 @@ export class PageSimulation {
       colorNear: 0x4fd1c5, colorFar: 0xffa94d, wedgeColor: 0xd9c48a,
       dampingNear: 0.5, dampingFar: 0.32,
       curlPage: 'near', // C molds itself to curve from its hinge to match D
+    });
+
+    // Rides the two outer cover pages; built here so it shares the
+    // simulation's lifetime and the dimensions baked in above.
+    this.hardcover = createHardcover({
+      parent: this.root,
+      coverPages: { front: this.spreadFront.flatMesh, back: this.spreadBack.flatMesh },
     });
 
     this.reset();
@@ -274,6 +282,15 @@ export class PageSimulation {
   }
 
   /**
+   * Dress the hardcover -- front cover art, plus a synthesized spine and
+   * back. See hardcover.setJacket. Returns a promise; the cover image is
+   * fetched.
+   */
+  setJacket(jacket) {
+    return this.hardcover.setJacket(jacket);
+  }
+
+  /**
    * Slide the shared B/C hinge along the spine, clamped to
    * [-BC_RANGE, +BC_RANGE]. Covers A and D don't move. Cheap enough to call
    * every frame — drive it from an easing curve to animate a page flip.
@@ -409,6 +426,7 @@ export class PageSimulation {
 
     this.spreadFront.sync();
     this.spreadBack.sync();
+    this.hardcover.update(); // rides the cover meshes, so strictly after their sync
   }
 
   // B's and C's own hinge-tangent angle is a fixed constant (BC_FIXED_ANGLE)
@@ -533,6 +551,7 @@ export class PageSimulation {
   }
 
   dispose() {
+    this.hardcover.dispose();
     this.spreadFront.dispose();
     this.spreadBack.dispose();
     this.world.free();

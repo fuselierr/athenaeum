@@ -7,7 +7,7 @@ import {
 } from '../pageSim/curlGeometry.js';
 
 /**
- * Drag-to-turn-a-page.
+ * Drag-to-turn-a-page, and keyboard-driven turns.
  *
  * B and C are both just buildCurlStrip() calls sharing the exact same
  * anchor point (the shared inner-leaf hinge) and the exact same hinge-
@@ -25,28 +25,38 @@ import {
  * always turns backward (C's shape -> B's shape) — the panel decides
  * direction, not the drag direction.
  *
+ * CONCURRENCY. Any number of keyboard turns can be in flight at once, so
+ * hammering the arrow keys throws leaf after leaf across the spine
+ * instead of dropping every press that arrives while one is still
+ * animating. Each leaf owns its whole state — its own strip geometry,
+ * its own two faces, its own progress — and lives in `turns` until it
+ * lands. What makes the stack chain correctly is WHEN the book's page
+ * state advances: a keyboard turn commits to `content` the moment it
+ * STARTS, not when it finishes, so the next turn already reads the next
+ * spread and every leaf in the stack carries a different pair of pages.
+ * The leaf is then pure animation, catching up to a book that has
+ * already moved on.
+ *
+ * A pointer drag cannot work that way — it can be cancelled half-way, so
+ * it has to defer its commit until release, and it keeps the grabbed
+ * panel's original texture to put back. Only one drag runs at a time
+ * (there is one cursor), and a drag will not start while other turns are
+ * still in flight, which keeps that deferred commit from racing the
+ * immediate ones.
+ *
  * The temp strip is a real two-sided leaf, and THREE different pages are
  * in play during one turn — mixing any two of them up is what made this
  * show the wrong page on the wrong face:
  *
  *   1. the page on the grabbed panel now — the face you take hold of;
  *   2. the page this leaf LANDS as, on the opposite panel, once the turn
- *      completes (`content.landingTexture`) — the leaf's other face, and the
- *      one that swings into view as it flips;
+ *      completes (`content.landingTexture`) — the leaf's other face, and
+ *      the one that swings into view as it flips;
  *   3. the page revealed UNDERNEATH on the grabbed panel itself
- *      (`content.underneathTexture`) — a different page again, painted onto
- *      the real mesh the moment the drag starts (through
- *      PageSimulation.setPageTexture, so it picks up the same tint and
- *      orientation as any other slot assignment) so nothing sits blank
- *      behind the leaf as it peels away.
+ *      (`content.underneathTexture`) — a different page again.
  *
  * Turning forward from a spread showing [N, N+1] with N+1 grabbed: the
  * leaf's faces are N+1 and N+2, and N+3 is revealed underneath it.
- *
- * A cancelled drag (released before the halfway point) reverts the real
- * panel back to what it showed before the drag started; a completed one
- * (released past halfway) calls `content.commitTurn`, which drives the actual
- * page content forward/backward (bookContent's showLeaf) to match.
  */
 export function createDragPageTurn({
   getPages, camera, renderer, controls, content,
@@ -74,47 +84,28 @@ export function createDragPageTurn({
     return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
   }
 
-  // The temp strip and the real panel underneath it (see beginDrag/
-  // rebuildTempMesh) both hinge from the exact same anchor point with the
-  // exact same tangent (BC_FIXED_ANGLE) -- so right near that anchor,
-  // before the two curves have had any room to diverge toward their
-  // different refAngle/radius targets, they're nearly coincident. Two
-  // coincident curved surfaces z-fight (flicker/clip into each other)
-  // however renderOrder is set, since renderOrder only breaks ties for
-  // whichever fragment the depth test already considers equal -- it can't
-  // fix genuinely overlapping-in-depth geometry that crosses back and
-  // forth as it curves. Lifting the whole temp strip a hair off the real
-  // page's plane keeps them from ever being coincident in the first
-  // place, which is a cheap, purely cosmetic fix for what's already a
-  // cosmetic layer.
+  // The temp strip and the real panel underneath it both hinge from the
+  // exact same anchor point with the exact same tangent (BC_FIXED_ANGLE)
+  // -- so right near that anchor, before the two curves have had any room
+  // to diverge toward their different refAngle/radius targets, they're
+  // nearly coincident. Two coincident curved surfaces z-fight
+  // (flicker/clip into each other) however renderOrder is set, since
+  // renderOrder only breaks ties for whichever fragment the depth test
+  // already considers equal -- it can't fix genuinely overlapping-in-depth
+  // geometry that crosses back and forth as it curves. Lifting the whole
+  // temp strip a hair off the real page's plane keeps them from ever being
+  // coincident in the first place, which is a cheap, purely cosmetic fix
+  // for what's already a cosmetic layer.
+  //
+  // Each leaf in a stack gets its own multiple of this, so leaves that
+  // start in the same frame do not land on each other either.
   const TEMP_TURN_LIFT = -0.002;
 
-  let state = 'idle'; // 'idle' | 'dragging' | 'settling' | 'auto'
-  // Whether the turn in flight came from a pointer. A self-playing turn
-  // (playTurn) must not touch OrbitControls -- disabling and re-enabling
-  // them around a keyboard turn would stomp on whatever state they were
-  // actually in.
-  let pointerDriven = false;
-  let autoElapsed = 0; // seconds into a self-playing turn
-  let grabbedPanel = null; // 'B' | 'C'
-  let grabbedMesh = null;
-  let originalTexture = null; // grabbed panel's texture before the drag started, for a cancelled turn
-  let hasTurnTextures = false; // false near either end of the book -- nothing to turn to
-  let turnSign = 1; // +1 for B (forward), -1 for C (backward)
-  const pivotScreen = new THREE.Vector2();
-  let angle0 = 0;
-  let startRef = 0;
-  let endRef = 0;
-  let startGap = 0;
-  let endGap = 0;
-  let progress = 0;
-  let settleTarget = 0;
+  /** Every leaf currently animating. */
+  const turns = [];
+  /** The one the pointer is driving, if any -- there is only one cursor. */
+  let dragTurn = null;
 
-  let tempGroup = null;
-  let tempMeshFront = null;
-  let tempMeshBack = null;
-  let tempPositions = null;
-  const curlRowFrac = new Float32Array(CURL_ROWS);
   const _anchorLocal = new THREE.Vector3();
   const _anchorWorld = new THREE.Vector3();
 
@@ -128,74 +119,14 @@ export function createDragPageTurn({
     return out;
   }
 
-  function updateRowFracAndUV() {
-    let cum = 0;
-    curlRowFrac[0] = 0;
-    for (let i = 1; i < CURL_ROWS; i++) {
-      const ax = tempPositions[(i - 1) * 3];
-      const ay = tempPositions[(i - 1) * 3 + 1];
-      const az = tempPositions[(i - 1) * 3 + 2];
-      const bx = tempPositions[i * 3];
-      const by = tempPositions[i * 3 + 1];
-      const bz = tempPositions[i * 3 + 2];
-      cum += Math.hypot(bx - ax, by - ay, bz - az);
-      curlRowFrac[i] = cum;
-    }
-    const total = curlRowFrac[CURL_ROWS - 1] || 1;
-    for (let i = 0; i < CURL_ROWS; i++) curlRowFrac[i] /= total;
-
-    // BOTH faces get the plain, unflipped uv layout -- the same one the
-    // real B/C strips use. An earlier version flipped u on the back face,
-    // reasoning that a surface seen from behind reads mirrored. It does
-    // not: which uv lands on which vertex is fixed by the vertex data, so
-    // a given texel sits at the same WORLD position no matter which side
-    // of the surface you view it from. What actually differs between the
-    // two panels is the handedness of their uv frames, and that is already
-    // corrected per panel by PageSimulation.orientPageTexture -- so
-    // flipping u here just double-corrected it.
-    writeCurlUV(tempMeshFront.geometry.attributes.uv.array, curlRowFrac, false);
-    writeCurlUV(tempMeshBack.geometry.attributes.uv.array, curlRowFrac, false);
-    tempMeshFront.geometry.attributes.uv.needsUpdate = true;
-    tempMeshBack.geometry.attributes.uv.needsUpdate = true;
-  }
-
-  function rebuildTempMesh(pages) {
-    // y = TEMP_TURN_LIFT, not 0 -- see the comment on that constant above.
-    // buildCurlStrip adds this anchor point into every row it writes (the
-    // arc rows via `.add(anchorPoint)`, the tip via `.add(curveEnd)` which
-    // already carries it), so this rigidly lifts the whole strip by a
-    // constant offset without distorting its shape at all.
-    _anchorLocal.set(0, TEMP_TURN_LIFT, pages.spreadFront.anchorFar.z); // z == spreadBack.anchorNear.z, the shared B/C hinge
-    const refAngle = THREE.MathUtils.lerp(startRef, endRef, progress);
-    const gap = THREE.MathUtils.lerp(startGap, endGap, progress);
-    // HINGE_LEN is read live (not cached) -- it's a mutable `let` export
-    // that changes when a PDF loads and the book gets resized
-    // (setPageDimensions, see main.js's applyPdfDimensions). spread.js
-    // recomputes its own halfWidth fresh every createSpread() call, which
-    // reruns on every resize; this module is only ever created once by
-    // main.js and never recreated on resize, so caching this at module
-    // scope the way an earlier version did left it frozen at whatever
-    // HINGE_LEN was at startup -- silently out of sync with B/C's real
-    // current width the moment a differently-sized PDF loaded, which is
-    // exactly what showed up as the temp page being a different size
-    // than B/C and clipping into the cover beside it.
-    const halfWidth = HINGE_LEN / 2;
-    buildCurlStrip(tempPositions, _anchorLocal, BC_FIXED_ANGLE, refAngle, gap, PANEL_REACH, halfWidth);
-    tempMeshFront.geometry.attributes.position.needsUpdate = true;
-    tempMeshBack.geometry.attributes.position.needsUpdate = true;
-    tempMeshFront.geometry.computeVertexNormals();
-    tempMeshBack.geometry.computeVertexNormals();
-    updateRowFracAndUV();
-  }
-
-  function makeTempMesh(baseMaterial, side, mapOverride) {
+  function makeTempMesh(turn, baseMaterial, side, mapOverride) {
     const geo = new THREE.BufferGeometry();
     // Position attribute wraps the SAME typed array on both the front and
-    // back geometries -- one rebuild in rebuildTempMesh updates both, no
-    // need to keep two copies in sync by hand. Each geometry still needs
-    // its own BufferAttribute *object* (not shared) so each can carry its
-    // own needsUpdate flag and its own GPU buffer.
-    geo.setAttribute('position', new THREE.BufferAttribute(tempPositions, 3));
+    // back geometries -- one rebuild updates both, no need to keep two
+    // copies in sync by hand. Each geometry still needs its own
+    // BufferAttribute *object* (not shared) so each can carry its own
+    // needsUpdate flag and its own GPU buffer.
+    geo.setAttribute('position', new THREE.BufferAttribute(turn.positions, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(createCurlUV(), 2));
     geo.setIndex(CURL_INDEX);
     const mat = baseMaterial.clone();
@@ -209,17 +140,93 @@ export function createDragPageTurn({
     return mesh;
   }
 
+  function updateRowFracAndUV(turn) {
+    const { positions, rowFrac } = turn;
+    let cum = 0;
+    rowFrac[0] = 0;
+    for (let i = 1; i < CURL_ROWS; i++) {
+      const ax = positions[(i - 1) * 3];
+      const ay = positions[(i - 1) * 3 + 1];
+      const az = positions[(i - 1) * 3 + 2];
+      const bx = positions[i * 3];
+      const by = positions[i * 3 + 1];
+      const bz = positions[i * 3 + 2];
+      cum += Math.hypot(bx - ax, by - ay, bz - az);
+      rowFrac[i] = cum;
+    }
+    const total = rowFrac[CURL_ROWS - 1] || 1;
+    for (let i = 0; i < CURL_ROWS; i++) rowFrac[i] /= total;
+
+    // BOTH faces get the plain, unflipped uv layout -- the same one the
+    // real B/C strips use. An earlier version flipped u on the back face,
+    // reasoning that a surface seen from behind reads mirrored. It does
+    // not: which uv lands on which vertex is fixed by the vertex data, so
+    // a given texel sits at the same WORLD position no matter which side
+    // of the surface you view it from. What actually differs between the
+    // two panels is the handedness of their uv frames, and that is already
+    // corrected per panel by PageSimulation.orientPageTexture -- so
+    // flipping u here just double-corrected it.
+    writeCurlUV(turn.meshFront.geometry.attributes.uv.array, rowFrac, false);
+    writeCurlUV(turn.meshBack.geometry.attributes.uv.array, rowFrac, false);
+    turn.meshFront.geometry.attributes.uv.needsUpdate = true;
+    turn.meshBack.geometry.attributes.uv.needsUpdate = true;
+  }
+
+  function rebuildLeaf(turn, pages) {
+    // y = turn.lift, not 0 -- see TEMP_TURN_LIFT above. buildCurlStrip
+    // adds this anchor point into every row it writes, so this rigidly
+    // lifts the whole strip by a constant offset without distorting it.
+    _anchorLocal.set(0, turn.lift, pages.spreadFront.anchorFar.z); // z == spreadBack.anchorNear.z, the shared B/C hinge
+    const refAngle = THREE.MathUtils.lerp(turn.startRef, turn.endRef, turn.progress);
+    const gap = THREE.MathUtils.lerp(turn.startGap, turn.endGap, turn.progress);
+    // HINGE_LEN is read live (not cached) -- it's a mutable `let` export
+    // that changes when a PDF loads and the book gets resized
+    // (setPageDimensions, see main.js's applyPdfDimensions). This module is
+    // only ever created once and never recreated on resize, so caching
+    // this at module scope left it frozen at whatever HINGE_LEN was at
+    // startup -- which showed up as the temp page being a different size
+    // than B/C and clipping into the cover beside it.
+    const halfWidth = HINGE_LEN / 2;
+    buildCurlStrip(turn.positions, _anchorLocal, BC_FIXED_ANGLE, refAngle, gap, PANEL_REACH, halfWidth);
+    turn.meshFront.geometry.attributes.position.needsUpdate = true;
+    turn.meshBack.geometry.attributes.position.needsUpdate = true;
+    turn.meshFront.geometry.computeVertexNormals();
+    turn.meshBack.geometry.computeVertexNormals();
+    updateRowFracAndUV(turn);
+  }
+
   /**
-   * Everything a turn needs regardless of what started it: the shape it
-   * morphs between, the two-sided leaf, and the page revealed underneath.
-   * Leaves `progress` at 0 and does NOT pick a state -- the caller decides
-   * whether the turn is driven by a pointer or plays itself out.
+   * Builds a leaf for `panel`: the shape it morphs between, its two faces,
+   * and whatever the panel underneath should show.
+   *
+   * `commitNow` is the difference between the two kinds of turn. A
+   * keyboard turn passes true and advances the book's page state up front,
+   * which is what lets several of them stack and each carry a different
+   * spread; committing also repaints both real panels, so it supplies the
+   * "underneath" reveal for free. A drag passes false, previews the
+   * underneath by hand, and keeps the original texture so a cancelled
+   * drag can put it back.
    */
-  function beginTurn(panel, pages) {
-    grabbedPanel = panel;
-    grabbedMesh = pages.pageMeshes[panel];
-    originalTexture = grabbedMesh.material.map;
-    turnSign = panel === 'B' ? 1 : -1;
+  function createTurn(panel, pages, { commitNow }) {
+    const grabbedMesh = pages.pageMeshes[panel];
+    const turn = {
+      panel,
+      grabbedMesh,
+      originalTexture: grabbedMesh.material.map,
+      turnSign: panel === 'B' ? 1 : -1,
+      committed: commitNow,
+      progress: 0,
+      mode: commitNow ? 'auto' : 'dragging',
+      autoElapsed: 0,
+      settleTarget: 0,
+      angle0: 0,
+      pivotScreen: new THREE.Vector2(),
+      // Stagger stacked leaves so two that start in the same frame are
+      // never coplanar with each other.
+      lift: TEMP_TURN_LIFT * (1 + 0.5 * turns.length),
+      positions: new Float32Array(2 * CURL_ROWS * 3),
+      rowFrac: new Float32Array(CURL_ROWS),
+    };
 
     const refFront = pageAngle(pages.spreadFront.pseudoBody);
     const refBack = pageAngle(pages.spreadBack.pseudoBody);
@@ -228,13 +235,12 @@ export function createDragPageTurn({
     const gapFront = Math.max(Math.abs(pages.spreadFront.anchorFar.z - pages.spreadFront.anchorNear.z), 1e-3);
     const gapBack = Math.max(Math.abs(pages.spreadBack.anchorFar.z - pages.spreadBack.anchorNear.z), 1e-3);
     if (panel === 'B') {
-      startRef = refFront; endRef = refBack;
-      startGap = gapFront; endGap = gapBack;
+      turn.startRef = refFront; turn.endRef = refBack;
+      turn.startGap = gapFront; turn.endGap = gapBack;
     } else {
-      startRef = refBack; endRef = refFront;
-      startGap = gapBack; endGap = gapFront;
+      turn.startRef = refBack; turn.endRef = refFront;
+      turn.startGap = gapBack; turn.endGap = gapFront;
     }
-    progress = 0;
 
     // The turning leaf's two faces belong to two DIFFERENT panels, and
     // that is the whole trick here:
@@ -259,130 +265,125 @@ export function createDragPageTurn({
     // one `panel` itself shows; at progress 1 it is congruent with the
     // landing panel, on the far side of the spine, which always has the
     // opposite handedness -- so the visible face swaps exactly once over
-    // the turn. That IS the leaf flipping over. Hardcoding grabbed =
-    // FrontSide happened to be right for C and exactly backwards for B,
-    // which is why turning back a page showed its two faces swapped.
+    // the turn. That IS the leaf flipping over.
     const landingPanel = panel === 'B' ? 'C' : 'B';
     const grabbedSide = PageSimulation.slotFrontFacesUp(panel) ? THREE.FrontSide : THREE.BackSide;
     const landingSide = grabbedSide === THREE.FrontSide ? THREE.BackSide : THREE.FrontSide;
 
-    // Built from the panel's current material/texture, before the
-    // underneath preview below touches the real mesh at all.
-    tempPositions = new Float32Array(2 * CURL_ROWS * 3);
-    const grabbedFace = makeTempMesh(grabbedMesh.material, grabbedSide);
+    // Built from the panel's current material/texture, BEFORE anything
+    // below repaints the real mesh -- the clone captures the map as it is
+    // right now, which is the page you are taking hold of.
+    const grabbedFace = makeTempMesh(turn, grabbedMesh.material, grabbedSide);
 
+    // Read while `content` is still on the spread this turn starts from.
     const landingTexture = content.landingTexture(panel);
-    hasTurnTextures = !!landingTexture;
+    const underneathTexture = content.underneathTexture(panel);
+    turn.hasTurnTextures = !!landingTexture;
+
     let landingFace;
     if (landingTexture) {
       // Cloned, then oriented for the LANDING panel. The clone shares its
       // Source with the original, so this costs no extra gpu upload -- it
       // just keeps this leaf's uv transform off the cached texture, which
-      // main.js hands out per page index and may already have on a panel
-      // under a different slot's orientation.
+      // is handed out per page index and may already be on a panel under
+      // a different slot's orientation.
       const landingTex = landingTexture.clone();
       landingTex.needsUpdate = true;
       pages.orientPageTexture(landingPanel, landingTex);
-      landingFace = makeTempMesh(grabbedMesh.material, landingSide, landingTex);
+      landingFace = makeTempMesh(turn, grabbedMesh.material, landingSide, landingTex);
     } else {
       // Nothing to land as (start/end of book) -- reuse the grabbed face's
       // content rather than showing a blank back.
-      landingFace = makeTempMesh(grabbedFace.material, landingSide);
+      landingFace = makeTempMesh(turn, grabbedFace.material, landingSide);
     }
 
-    // Preview on the real panel underneath what that panel will be
-    // showing once the turn commits -- a DIFFERENT page from the leaf's
-    // landing face: the leaf lands on the opposite panel, so what gets
-    // revealed here is this panel's own slot of the target spread. Set
-    // through setPageTexture so it picks up the same tint/orientation
-    // every other slot assignment does.
-    const underneathTexture = content.underneathTexture(panel);
-    if (underneathTexture) pages.setPageTexture(panel, underneathTexture);
+    if (commitNow) {
+      // Advances leafStart and repaints BOTH panels to the target spread,
+      // which is exactly the "underneath" reveal -- no separate preview
+      // needed, and the next turn in a stack now reads the next spread.
+      content.commitTurn(panel);
+    } else if (underneathTexture) {
+      // Deferred-commit path: preview by hand what the panel will show,
+      // through setPageTexture so it picks up the same tint/orientation
+      // every other slot assignment does.
+      pages.setPageTexture(panel, underneathTexture);
+    }
 
-    tempMeshFront = grabbedSide === THREE.FrontSide ? grabbedFace : landingFace;
-    tempMeshBack = grabbedSide === THREE.FrontSide ? landingFace : grabbedFace;
+    turn.meshFront = grabbedSide === THREE.FrontSide ? grabbedFace : landingFace;
+    turn.meshBack = grabbedSide === THREE.FrontSide ? landingFace : grabbedFace;
 
-    tempGroup = new THREE.Group();
-    tempGroup.add(tempMeshFront, tempMeshBack);
-    pages.root.add(tempGroup);
+    turn.group = new THREE.Group();
+    turn.group.add(turn.meshFront, turn.meshBack);
+    pages.root.add(turn.group);
 
-    rebuildTempMesh(pages);
+    rebuildLeaf(turn, pages);
+    turns.push(turn);
+    return turn;
   }
 
-  /** Start a turn the pointer will drive, frame by frame, from `event`. */
-  function beginDrag(panel, pages, event) {
-    beginTurn(panel, pages);
+  function disposeLeaf(turn) {
+    turn.group?.parent?.remove(turn.group);
+    for (const mesh of [turn.meshFront, turn.meshBack]) {
+      mesh?.geometry.dispose();
+      mesh?.material.dispose();
+    }
+    turn.group = null;
+    turn.meshFront = null;
+    turn.meshBack = null;
+  }
 
-    // Screen-space pivot the drag's angular sweep is measured around --
-    // the shared hinge, projected. Pointer-only: a turn that plays itself
-    // has no cursor to measure against.
-    _anchorLocal.set(0, 0, pages.spreadFront.anchorFar.z);
-    _anchorWorld.copy(_anchorLocal).applyMatrix4(pages.root.matrixWorld);
-    screenPointFor(_anchorWorld, pivotScreen);
-    angle0 = Math.atan2(event.clientY - pivotScreen.y, event.clientX - pivotScreen.x);
+  function finishTurn(turn, pages, committed) {
+    // Keyboard turns already committed at the start; only a drag has
+    // anything left to decide here.
+    if (!turn.committed) {
+      if (committed && turn.hasTurnTextures) {
+        content.commitTurn(turn.panel);
+      } else if (pages && turn.originalTexture) {
+        // Cancelled (or nothing was available to turn to) -- put the real
+        // panel back exactly how it looked before the drag.
+        pages.setPageTexture(turn.panel, turn.originalTexture);
+      }
+    }
+    disposeLeaf(turn);
 
-    pointerDriven = true;
-    controls.enabled = false;
-    state = 'dragging';
+    const i = turns.indexOf(turn);
+    if (i !== -1) turns.splice(i, 1);
+    if (dragTurn === turn) {
+      dragTurn = null;
+      controls.enabled = true; // only the drag ever took them
+    }
   }
 
   /**
    * Play a whole turn on `panel` with no pointer involved -- what the
    * arrow keys call, so a keyboard turn is the same physical page flip a
-   * drag produces rather than a texture swap. Returns false when the turn
-   * can't happen (nothing loaded, already at that end of the book, or a
-   * turn is already in flight), so the caller can decide whether to fall
-   * back to anything.
+   * drag produces rather than a texture swap.
    *
-   * Held arrow keys work out on their own: key-repeat fires far faster
-   * than a turn takes, every repeat during one lands on the `state`
-   * check below and is dropped, and the first repeat after a turn
-   * finishes starts the next -- which reads as steadily turning pages.
+   * Unlimited: every call starts another leaf, however many are already
+   * in flight, so held or hammered arrow keys throw a whole cascade of
+   * pages instead of dropping presses. The book's own ends are the only
+   * bound -- content.canTurn goes false at the front and back cover, and
+   * because each turn commits up front that check already accounts for
+   * every turn currently animating.
+   *
+   * Returns false when the turn can't happen (nothing loaded, at that end
+   * of the book, or a drag is in progress), so the caller can decide
+   * whether to fall back to anything.
    */
   function playTurn(panel) {
-    if (state !== 'idle') return false;
+    if (dragTurn) return false; // don't stack turns onto a page being held
     const pages = getPages();
     if (!pages || !content.canTurn(panel)) return false;
 
-    beginTurn(panel, pages);
-    pointerDriven = false;
-    autoElapsed = 0;
-    state = 'auto';
+    createTurn(panel, pages, { commitNow: true });
     return true;
   }
 
-  function disposeTempGroup() {
-    if (!tempGroup) return;
-    tempGroup.parent?.remove(tempGroup);
-    for (const mesh of [tempMeshFront, tempMeshBack]) {
-      mesh.geometry.dispose();
-      mesh.material.dispose();
-    }
-    tempGroup = null;
-    tempMeshFront = null;
-    tempMeshBack = null;
-  }
-
-  function endTurn(pages, committed) {
-    if (committed && hasTurnTextures) {
-      content.commitTurn(grabbedPanel);
-    } else if (pages && originalTexture) {
-      // Cancelled (or nothing was actually available to turn to) -- put
-      // the real panel back exactly how it looked before the drag.
-      pages.setPageTexture(grabbedPanel, originalTexture);
-    }
-    disposeTempGroup();
-    grabbedMesh = null;
-    grabbedPanel = null;
-    originalTexture = null;
-    state = 'idle';
-    // Only give the controls back if this turn was the one that took them.
-    if (pointerDriven) controls.enabled = true;
-    pointerDriven = false;
-  }
-
   dom.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || state !== 'idle') return;
+    // One drag at a time, and not while a cascade of keyboard turns is
+    // still landing -- a drag defers its commit, which would otherwise
+    // race the immediate ones.
+    if (e.button !== 0 || turns.length > 0) return;
     const pages = getPages();
     if (!pages) return;
 
@@ -398,9 +399,21 @@ export function createDragPageTurn({
 
     const hitMesh = hits[0].object;
     const panel = hitMesh === pages.pageMeshes.B ? 'B' : 'C';
-    if (!content.canTurn(panel)) return; // already at the front/back cover on that side -- nothing to turn to
+    if (!content.canTurn(panel)) return; // already at the front/back cover on that side
 
-    beginDrag(panel, pages, e);
+    const turn = createTurn(panel, pages, { commitNow: false });
+
+    // Screen-space pivot the drag's angular sweep is measured around --
+    // the shared hinge, projected. Pointer-only: a turn that plays itself
+    // has no cursor to measure against.
+    _anchorLocal.set(0, 0, pages.spreadFront.anchorFar.z);
+    _anchorWorld.copy(_anchorLocal).applyMatrix4(pages.root.matrixWorld);
+    screenPointFor(_anchorWorld, turn.pivotScreen);
+    turn.angle0 = Math.atan2(e.clientY - turn.pivotScreen.y, e.clientX - turn.pivotScreen.x);
+
+    dragTurn = turn;
+    controls.enabled = false;
+
     // Stop OrbitControls (bound in the bubble phase on this same element)
     // from ever seeing this pointerdown -- capture:true below runs us
     // first, and without this it would still start its own left-drag
@@ -410,50 +423,57 @@ export function createDragPageTurn({
   }, { capture: true });
 
   window.addEventListener('pointermove', (e) => {
-    if (state !== 'dragging') return;
-    const angle = Math.atan2(e.clientY - pivotScreen.y, e.clientX - pivotScreen.x);
-    let delta = angle - angle0;
+    if (!dragTurn || dragTurn.mode !== 'dragging') return;
+    const angle = Math.atan2(e.clientY - dragTurn.pivotScreen.y, e.clientX - dragTurn.pivotScreen.x);
+    let delta = angle - dragTurn.angle0;
     delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest signed angular difference
-    progress = THREE.MathUtils.clamp((turnSign * delta) / TURN_ANGLE_RANGE, 0, 1);
+    dragTurn.progress = THREE.MathUtils.clamp((dragTurn.turnSign * delta) / TURN_ANGLE_RANGE, 0, 1);
     const pages = getPages();
-    if (pages) rebuildTempMesh(pages);
+    if (pages) rebuildLeaf(dragTurn, pages);
   });
 
   window.addEventListener('pointerup', (e) => {
     if (e.button !== 0) return;
-    if (state === 'dragging') {
-      settleTarget = progress >= 0.5 ? 1 : 0;
-      state = 'settling';
+    if (dragTurn && dragTurn.mode === 'dragging') {
+      dragTurn.settleTarget = dragTurn.progress >= 0.5 ? 1 : 0;
+      dragTurn.mode = 'settling';
     }
   });
 
   function update(dt) {
-    if (state !== 'settling' && state !== 'auto') return;
+    if (turns.length === 0) return;
     const pages = getPages();
-    if (!pages || !tempGroup) {
-      state = 'idle';
-      if (pointerDriven) controls.enabled = true;
+    if (!pages) {
+      // The simulation was disposed out from under us (a resize rebuild).
+      // Every leaf lives under pages.root and went with it, so just let go.
+      for (const turn of turns.slice()) finishTurn(turn, null, false);
       return;
     }
 
-    if (state === 'auto') {
-      autoElapsed += dt;
-      const t = Math.min(autoElapsed / AUTO_TURN_DURATION, 1);
-      progress = easeInOut(t);
-      rebuildTempMesh(pages);
-      if (t >= 1) endTurn(pages, true);
-      return;
-    }
+    // Snapshot: finishTurn splices out of `turns` as leaves land.
+    for (const turn of turns.slice()) {
+      if (turn.mode === 'dragging') continue; // driven by pointermove, not the clock
 
-    progress += (settleTarget - progress) * Math.min(SETTLE_RATE * dt, 1);
-    if (Math.abs(progress - settleTarget) < 0.01) {
-      progress = settleTarget;
-      rebuildTempMesh(pages);
-      endTurn(pages, settleTarget === 1);
-      return;
+      if (turn.mode === 'auto') {
+        turn.autoElapsed += dt;
+        const t = Math.min(turn.autoElapsed / AUTO_TURN_DURATION, 1);
+        turn.progress = easeInOut(t);
+        rebuildLeaf(turn, pages);
+        if (t >= 1) finishTurn(turn, pages, true);
+        continue;
+      }
+
+      // settling
+      turn.progress += (turn.settleTarget - turn.progress) * Math.min(SETTLE_RATE * dt, 1);
+      if (Math.abs(turn.progress - turn.settleTarget) < 0.01) {
+        turn.progress = turn.settleTarget;
+        rebuildLeaf(turn, pages);
+        finishTurn(turn, pages, turn.settleTarget === 1);
+        continue;
+      }
+      rebuildLeaf(turn, pages);
     }
-    rebuildTempMesh(pages);
   }
 
-  return { update, playTurn };
+  return { update, playTurn, get activeTurnCount() { return turns.length; } };
 }

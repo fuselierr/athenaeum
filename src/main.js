@@ -6,8 +6,8 @@ import { PageSimulation } from './book/pageSim/PageSimulation.js';
 import {
   setPageDimensions, setSpineGap, spineGapForPageCount,
   PANEL_REACH as INITIAL_PANEL_REACH,
-} from './Book/pageSim/config.js';
-import { updateLocalCorners } from './Book/pageSim/math.js';
+} from './book/pageSim/config.js';
+import { updateLocalCorners } from './book/pageSim/math.js';
 import { createBookContent, RIGHT_HAND_PANEL, LEFT_HAND_PANEL } from './book/reader/bookContent.js';
 import { createDragPageTurn } from './book/reader/dragPageTurn.js';
 import { createCameraPan } from './input/cameraPan.js';
@@ -54,6 +54,17 @@ const debugLabels = createDebugLabels({ scene, camera, renderer, getPages });
 // HINGE_LEN/PANEL_REACH/SPINE_GAP are baked into physics bodies and
 // geometry at construction, so new page dimensions mean rebuilding the
 // whole simulation.
+// The jacket arrives before the page dimensions do (bookLoader fires
+// onJacket straight after conversion, onDimensions only once PDF.js has
+// laid out page 1), and applyPdfDimensions throws the whole simulation
+// away -- hardcover included -- to rebuild at the new size. So it is kept
+// here and re-applied to whichever simulation is current.
+let jacket = null;
+
+function applyJacket() {
+  if (jacket) pages.setJacket(jacket).catch((err) => console.error('Jacket failed to apply:', err));
+}
+
 async function applyPdfDimensions(pageWidthPts, pageHeightPts, pageCount) {
   setPageDimensions(BASE_PANEL_REACH * (pageHeightPts / pageWidthPts), BASE_PANEL_REACH);
   // Thickness comes from the page count -- a short book loads thin, a long
@@ -63,10 +74,12 @@ async function applyPdfDimensions(pageWidthPts, pageHeightPts, pageCount) {
   updateLocalCorners();
   pages.dispose();
   pages = await PageSimulation.create(bookGroup);
+  applyJacket();
   refreshFlipLabel();
 }
 
 initBookLoader({
+  onJacket: (j) => { jacket = j; applyJacket(); },
   onDimensions: applyPdfDimensions,
   onPagesReady: (canvases) => content.setCanvases(canvases),
 });
@@ -124,6 +137,7 @@ if (import.meta.env.DEV) {
   // THREE is included so console debugging can build THREE.Box3 etc.
   // against these objects without a separate import.
   window.__athenaeum = {
-    scene, camera, controls, renderer, bookGroup, content, THREE, get pages() { return pages; },
+    scene, camera, controls, renderer, bookGroup, content, dragPageTurn, THREE,
+    get pages() { return pages; },
   };
 }
