@@ -15,6 +15,7 @@ import { createCameraPan } from './input/cameraPan.js';
 import { createBookManipulator } from './input/bookManipulator.js';
 import { createDebugLabels } from './debug/debugLabels.js';
 import { initBookLoader } from './loader/bookLoader.js';
+import { createAudioManager } from './audio/audioManager.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
 // tuned around; a loaded PDF's aspect ratio derives HINGE_LEN from this
@@ -22,6 +23,7 @@ import { initBookLoader } from './loader/bookLoader.js';
 const BASE_PANEL_REACH = INITIAL_PANEL_REACH;
 
 const { scene, camera, renderer, controls } = await createScene();
+const audio = createAudioManager();
 
 // The book hangs under its own group rather than directly under `scene` so
 // it can be rotated and slid as a whole (see input/bookManipulator.js)
