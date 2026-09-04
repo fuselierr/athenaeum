@@ -24,7 +24,58 @@ export function createBookManipulator({ bookGroup, camera, renderer, getPages })
   dom.addEventListener('contextmenu', (e) => e.preventDefault());
 
   installArcballRotate({ bookGroup, camera, dom });
-  installScreenPlaneSlide({ bookGroup, camera, dom });
+  installScreenPlaneSlide({
+    bookGroup,
+    camera,
+    dom,
+    onPositionChange: () => { if (pickupMode) updatePickupOffset(); },
+  });
+
+  let pickupMode = false;
+  let pickupLateral = 0;
+  let pickupVertical = 0;
+  let pickupDepth = 0;
+  const _pickupOffset = new THREE.Vector3();
+  const _pickupRight = new THREE.Vector3();
+  const _pickupUp = new THREE.Vector3();
+  const _pickupForward = new THREE.Vector3();
+  const _pickupPosition = new THREE.Vector3();
+
+  function updatePickupOffset() {
+    camera.getWorldDirection(_pickupForward);
+    _pickupRight.setFromMatrixColumn(camera.matrix, 0);
+    _pickupUp.setFromMatrixColumn(camera.matrix, 1);
+    _pickupOffset.copy(bookGroup.position).sub(camera.position);
+    pickupLateral = _pickupOffset.dot(_pickupRight);
+    pickupVertical = _pickupOffset.dot(_pickupUp);
+    pickupDepth = _pickupOffset.dot(_pickupForward);
+  }
+
+  function setPickupMode(enabled) {
+    if (pickupMode === enabled) return;
+    pickupMode = enabled;
+    const pages = getPages();
+    if (pickupMode) {
+      updatePickupOffset();
+      pages?.setCoverHold('A', pages.coverAngles.A);
+      pages?.setCoverHold('D', pages.coverAngles.D);
+      dom.style.cursor = 'grab';
+    } else {
+      pages?.setCoverHold('A', null);
+      pages?.setCoverHold('D', null);
+      dom.style.cursor = '';
+    }
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'p' && !e.repeat) setPickupMode(!pickupMode);
+  });
+  dom.addEventListener('wheel', (e) => {
+    if (!pickupMode || !e.shiftKey) return;
+    pickupDepth = THREE.MathUtils.clamp(pickupDepth + e.deltaY * 0.005, 0.5, 15);
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, { capture: true, passive: false });
 
   // Rapier's gravity vector lives in PageSimulation's own physics space,
   // which knows nothing about bookGroup's transform -- so without this,
@@ -36,7 +87,26 @@ export function createBookManipulator({ bookGroup, camera, renderer, getPages })
   const _invBookQuat = new THREE.Quaternion();
 
   return {
+    get pickupMode() { return pickupMode; },
+    setPickupMode,
+    refreshPickupHold() {
+      if (!pickupMode) return;
+      updatePickupOffset();
+      const pages = getPages();
+      pages?.setCoverHold('A', pages.coverAngles.A);
+      pages?.setCoverHold('D', pages.coverAngles.D);
+    },
     update() {
+      if (pickupMode) {
+        camera.getWorldDirection(_pickupForward);
+        _pickupRight.setFromMatrixColumn(camera.matrix, 0);
+        _pickupUp.setFromMatrixColumn(camera.matrix, 1);
+        _pickupPosition.copy(camera.position)
+          .addScaledVector(_pickupRight, pickupLateral)
+          .addScaledVector(_pickupUp, pickupVertical)
+          .addScaledVector(_pickupForward, pickupDepth);
+        bookGroup.position.copy(_pickupPosition);
+      }
       _invBookQuat.copy(bookGroup.quaternion).invert();
       _localDown.copy(WORLD_DOWN).applyQuaternion(_invBookQuat);
       getPages().setGravityDirection(_localDown);
@@ -142,7 +212,7 @@ function installArcballRotate({ bookGroup, camera, dom }) {
 // left-drags that hit a page via its own capture listener on the canvas,
 // and OrbitControls claims what is left in the bubble phase. Capture
 // descends window -> document -> canvas, so this runs before both.
-function installScreenPlaneSlide({ bookGroup, camera, dom }) {
+function installScreenPlaneSlide({ bookGroup, camera, dom, onPositionChange }) {
   const _plane = new THREE.Plane();
   const _ray = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
@@ -188,6 +258,7 @@ function installScreenPlaneSlide({ bookGroup, camera, dom }) {
     // The plane is screen-facing, so this is exactly the cursor's own
     // movement carried into world space.
     bookGroup.position.copy(_origin).add(_hit).sub(_grab);
+    onPositionChange?.();
   });
 
   window.addEventListener('pointerup', (e) => {

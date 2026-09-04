@@ -103,6 +103,7 @@ function resetBook() {
   pages.reset();
   bookGroup.quaternion.identity();
   bookGroup.position.set(0, 0, 0); // also undo any shift-drag repositioning
+  bookManipulator.refreshPickupHold();
   refreshFlipLabel();
 }
 
