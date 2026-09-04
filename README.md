@@ -3,6 +3,8 @@
 A 3D reading environment for your ebooks. Athenaeum replaces the flat, scrolling page of a conventional e-reader with a physically simulated book sitting open on a wooden desk under lamplight — something you look *into* rather than just scroll through.
  
 The idea is simple: reading apps today are functional but forgettable, a single rectangle of text competing for attention with every other tab on the screen. Athenaeum instead gives your book a place — its own immersive scene — so the act of reading feels more like sitting down at a desk than checking a notification.
+
+<img width="1427" height="800" alt="Screenshot 2026-09-02 113103" src="https://github.com/user-attachments/assets/f1ca017c-4455-445d-b512-3229fbb3d463" />
  
 ## What it currently does
  
