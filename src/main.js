@@ -54,7 +54,10 @@ const content = createBookContent(getPages);
 // and can swallow a gesture that landed on a board before a page turn
 // starts on whatever lies behind it.
 const dragCover = createDragCover({ getPages, camera, renderer, controls });
-const dragPageTurn = createDragPageTurn({ getPages, camera, renderer, controls, content });
+const dragPageTurn = createDragPageTurn({
+  getPages, camera, renderer, controls, content,
+  onPageTurnSound: () => { console.log('onPageTurnSound fired'); audio.playPageTurn(); },
+});
 const cameraPan = createCameraPan({ camera, controls });
 const bookManipulator = createBookManipulator({ bookGroup, camera, renderer, getPages });
 const debugLabels = createDebugLabels({ scene, camera, renderer, getPages });

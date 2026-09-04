@@ -64,7 +64,7 @@ import {
  * leaf's faces are N+1 and N+2, and N+3 is revealed underneath it.
  */
 export function createDragPageTurn({
-  getPages, camera, renderer, controls, content,
+  getPages, camera, renderer, controls, content, onPageTurnSound,
 }) {
   const dom = renderer.domElement;
   const raycaster = new THREE.Raycaster();
@@ -251,6 +251,7 @@ export function createDragPageTurn({
       mode: commitNow ? 'auto' : 'dragging',
       autoElapsed: 0,
       settleTarget: 0,
+      soundPlayed: false,
       angle0: 0,
       pivotScreen: new THREE.Vector2(),
       // Stagger stacked leaves so two that start in the same frame are
@@ -410,6 +411,7 @@ export function createDragPageTurn({
     if (!pages || !content.canTurn(panel)) return false;
 
     createTurn(panel, pages, { commitNow: true });
+    onPageTurnSound?.();
     return true;
   }
 
@@ -462,6 +464,10 @@ export function createDragPageTurn({
     let delta = angle - dragTurn.angle0;
     delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest signed angular difference
     dragTurn.progress = THREE.MathUtils.clamp((dragTurn.turnSign * delta) / TURN_ANGLE_RANGE, 0, 1);
+    if (!dragTurn.soundPlayed && dragTurn.progress >= 0.5) {
+      dragTurn.soundPlayed = true;
+      onPageTurnSound?.();
+    }
     const pages = getPages();
     if (pages) rebuildLeaf(dragTurn, pages);
   });
