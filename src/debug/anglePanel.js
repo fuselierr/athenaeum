@@ -2,9 +2,9 @@
  * A fixed HTML readout, top-right, of the hinge angles of A, D, P1 and P2,
  * the hardcover boards, and active page turns.
  *
- *   A  / D   -- the real cover PAGES, the freely-swinging bodies
- *   P1 / P2  -- the two spreads' pseudo bodies: the invisible limit the
- *               board rides and that A/D clamp against
+ *   A  / D   -- the real cover pages, the freely-swinging bodies
+ *   P1 / P2  -- the two spreads' pseudo bodies used by page constraints
+ *   covers   -- independent render-only hardcover board angles
  *
  * Toggled with the ` key (same key as the 3D orientation labels -- both
  * are debug overlays and one key is enough). Off by default. Purely a
@@ -69,17 +69,17 @@ export function createAnglePanel({ getPages, getPageTurn }) {
     }
 
     const { A, D, P1, P2 } = pages.panelAngles;
-    const covers = pages.coverAngles;
+    const covers = pages.hardcoverAngles;
     const lines = [
-      'hinge angles',
+      'panel angles',
       `  A   ${fmt(A)}`,
       `  D   ${fmt(D)}`,
       `  P1  ${fmt(P1)}`,
       `  P2  ${fmt(P2)}`,
       '',
-      'cover angles',
-      `  A   ${fmt(covers.A)}`,
-      `  D   ${fmt(covers.D)}`,
+      'hardcover angles',
+      `  H1  ${fmt(covers.H1)}`,
+      `  H2  ${fmt(covers.H2)}`,
     ];
 
     const turns = getPageTurn?.().getDebugState?.() ?? [];

@@ -118,6 +118,7 @@ export const NO_SELF_COLLIDE = (1 << 16) | 0xfffe;
 // PageSimulation._enforceNoCrossingPseudo).
 export const AIR_CUSHION_RANGE = 0.9; // radians of gap where squeezed air starts pushing back
 export const AIR_CUSHION_MAX_RATE = 2.2; // closing rate (rad/s) allowed at the edge of that range
+export const HARDCOVER_AIR_CUSHION_RANGE = 0.1; // hardcover gap where cushioning starts
 
 // The two inner pages start near "hanging straight down" (pi/2, where a
 // page's own Z reach is zero), a few degrees apart — close together but not

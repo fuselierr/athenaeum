@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
-  SPINE_GAP, GRAVITY_MAG, OPEN_LIMIT,
+  SPINE_GAP, PANEL_REACH, GRAVITY_MAG, OPEN_LIMIT,
+  HARDCOVER_AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE,
   BC_MEET_ANGLE, BC_START_GAP, COVER_START_NEAR, COVER_START_FAR, BC_FIXED_ANGLE,
   PSEUDO_REPEL_RATE, PSEUDO_COLLISION_RESTITUTION,
 } from './config.js';
@@ -71,21 +72,25 @@ export class PageSimulation {
     // setBCPosition / setProgress.
     this._bcZ = 0;
 
-    // While a cover is being dragged its angle is dictated, not simulated.
-    // null = that cover is back under gravity's control.
-    this._coverHold = { A: null, D: null };
+    // H1/H2 are independent scalar cover dynamics. They have no Rapier
+    // bodies and never read A, D, P1, or P2.
+    this._hardcoverHold = { H1: null, H2: null };
+    this._hardcoverAngles = { H1: COVER_START_NEAR, H2: COVER_START_FAR };
+    this._hardcoverAngularVelocity = { H1: 0, H2: 0 };
 
     // Covers stay put: A pinned at +SPINE_GAP (front of the block), D at
     // -SPINE_GAP (back). Only the inner leaves' shared hinge (B's far
     // anchor, C's near anchor) moves, between the two.
     this.spreadFront = createSpread(this.world, this.root, {
       anchorNearZ: SPINE_GAP, anchorFarZ: this._bcZ, openLimit: OPEN_LIMIT,
+      hardcoverAngle: () => this._hardcoverAngles.H1,
       colorNear: 0x5b7fff, colorFar: 0xff6f6f, wedgeColor: 0xf2d98a,
       dampingNear: 0.32, dampingFar: 0.5,
       curlPage: 'far', // B molds itself to curve from its hinge to match A
     });
     this.spreadBack = createSpread(this.world, this.root, {
       anchorNearZ: this._bcZ, anchorFarZ: -SPINE_GAP, openLimit: OPEN_LIMIT,
+      hardcoverAngle: () => this._hardcoverAngles.H2,
       colorNear: 0x4fd1c5, colorFar: 0xffa94d, wedgeColor: 0xd9c48a,
       dampingNear: 0.5, dampingFar: 0.32,
       curlPage: 'near', // C molds itself to curve from its hinge to match D
@@ -97,15 +102,13 @@ export class PageSimulation {
     this.spreadFront.setOtherPairGap(this.spreadBack.pairGap);
     this.spreadBack.setOtherPairGap(this.spreadFront.pairGap);
 
-    // Rides the two outer cover pages; built here so it shares the
-    // simulation's lifetime and the dimensions baked in above.
+    // Render-only boards have independent angles and do not ride any page
+    // or pseudo body.
     this.hardcover = createHardcover({
       parent: this.root,
-      // Accessors, not the bodies: drop() has not run yet here, and every
-      // later drop() replaces the pseudo bodies.
-      coverBodies: {
-        front: () => this.spreadFront.pseudoBody,
-        back: () => this.spreadBack.pseudoBody,
+      hardcoverAngles: {
+        H1: () => this._hardcoverAngles.H1,
+        H2: () => this._hardcoverAngles.H2,
       },
     });
 
@@ -297,28 +300,24 @@ export class PageSimulation {
   }
 
   /**
-   * The two cover slots as physics: A is the front spread's near page, D
-   * the back spread's far one. Both hinge on the same axis with the same
-   * angle convention as every other panel.
+   * The two cover hinges remain fixed in the page layout. The render-only
+   * boards use their own angles and do not use these physics bodies.
    */
-  _coverRef(slot) {
-    // The pseudo body IS the hardcover board (hardcover.js draws it there),
-    // so dragging or holding "the cover" moves that, not the cover page.
-    // A and D stay free: enforceNoPassingRef only stops them getting PAST
-    // the board, so they swing on their own and settle against it.
-    const spread = slot === 'A' ? this.spreadFront : this.spreadBack;
-    return { body: spread.pseudoBody, anchor: spread.refAnchor };
+  _hardcoverRef(slot) {
+    const spread = slot === 'H1' ? this.spreadFront : this.spreadBack;
+    return { anchor: spread.refAnchor };
   }
 
   /** Where a cover's hinge sits along the spine. */
-  coverHingeZ(slot) {
-    return this._coverRef(slot).anchor.z;
+  hardcoverHingeZ(slot) {
+    return this._hardcoverRef(slot).anchor.z;
   }
 
   /**
    * Hinge angles for the debug readout: A and D are the real cover PAGES
-   * (freely-swinging bodies), P1 and P2 the two spreads' pseudo bodies --
-   * the invisible limit the board rides and that A/D clamp against.
+  * (freely-swinging bodies), P1 and P2 the two spreads' pseudo bodies.
+  * A/D clamp against the independent H1/H2 hardcover angles: A >= H1
+  * and D <= H2.
    */
   get panelAngles() {
     return {
@@ -329,12 +328,9 @@ export class PageSimulation {
     };
   }
 
-  /** Current swing angle of each cover, 0 = shut, OPEN_LIMIT = laid flat. */
-  get coverAngles() {
-    return {
-      A: pageAngle(this.spreadFront.pseudoBody),
-      D: pageAngle(this.spreadBack.pseudoBody),
-    };
+  /** Current independent swing angle of each hardcover board. */
+  get hardcoverAngles() {
+    return { H1: this._hardcoverAngles.H1, H2: this._hardcoverAngles.H2 };
   }
 
   /**
@@ -345,21 +341,76 @@ export class PageSimulation {
    * which is what still stops a dragged cover being shoved through the
    * page block.
    */
-  setCoverHold(slot, angle) {
-    this._coverHold[slot] = angle == null
-      ? null
-      : Math.max(0, Math.min(OPEN_LIMIT, angle));
+  setHardcoverHold(slot, angle) {
+    if (angle == null) {
+      this._hardcoverHold[slot] = null;
+      return;
+    }
+    let clamped = Math.max(0, Math.min(OPEN_LIMIT, angle));
+    if (slot === 'H1') clamped = Math.min(clamped, this._hardcoverAngles.H2);
+    if (slot === 'H2') clamped = Math.max(clamped, this._hardcoverAngles.H1);
+    this._hardcoverHold[slot] = clamped;
   }
 
-  _applyCoverHold() {
-    for (const slot of ['A', 'D']) {
-      const angle = this._coverHold[slot];
+  _applyHardcoverHold() {
+    for (const slot of ['H1', 'H2']) {
+      const angle = this._hardcoverHold[slot];
       if (angle == null) continue;
-      const { body, anchor } = this._coverRef(slot);
-      const t = pageTransform(anchor, angle);
-      body.setTranslation(t.pos, true);
-      body.setRotation(t.rot, true);
-      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      this._hardcoverAngles[slot] = angle;
+      this._hardcoverAngularVelocity[slot] = 0;
+    }
+  }
+
+  /** Keep the two independent hardcover angles in their physical order. */
+  _enforceHardcoverOrder() {
+    const h1 = this._hardcoverAngles.H1;
+    const h2 = this._hardcoverAngles.H2;
+    if (h1 <= h2) return;
+
+    const mid = (h1 + h2) / 2;
+    this._hardcoverAngles.H1 = mid;
+    this._hardcoverAngles.H2 = mid;
+
+    const v1 = this._hardcoverAngularVelocity.H1;
+    const v2 = this._hardcoverAngularVelocity.H2;
+    const restitution = PSEUDO_COLLISION_RESTITUTION;
+    this._hardcoverAngularVelocity.H1 = ((1 - restitution) * v1 + (1 + restitution) * v2) / 2;
+    this._hardcoverAngularVelocity.H2 = ((1 + restitution) * v1 + (1 - restitution) * v2) / 2;
+  }
+
+  /** Ease H1/H2's closing speed before their hard ordering stop. */
+  _applyHardcoverAirCushion() {
+    const gap = this._hardcoverAngles.H2 - this._hardcoverAngles.H1;
+    if (gap <= 0 || gap >= HARDCOVER_AIR_CUSHION_RANGE) return;
+
+    const v1 = this._hardcoverAngularVelocity.H1;
+    const v2 = this._hardcoverAngularVelocity.H2;
+    const closingRate = v1 - v2;
+    const maxClosingRate = AIR_CUSHION_MAX_RATE * (gap / HARDCOVER_AIR_CUSHION_RANGE);
+    if (closingRate <= maxClosingRate) return;
+
+    const removed = closingRate - maxClosingRate;
+    this._hardcoverAngularVelocity.H1 = v1 - removed / 2;
+    this._hardcoverAngularVelocity.H2 = v2 + removed / 2;
+  }
+
+  /** Advance the independent hardcover angles under the simulation gravity. */
+  _stepHardcoverGravity(dt) {
+    const gravity = this.world.gravity;
+    const gravityScale = 1.5 / PANEL_REACH;
+    const damping = Math.exp(-0.8 * dt);
+
+    for (const slot of ['H1', 'H2']) {
+      const angle = this._hardcoverAngles[slot];
+      // The board's hinge-to-edge direction is (0, -sin(angle), cos(angle)).
+      // Its gravity torque about +X is r_y*g_z - r_z*g_y.
+      const angularAcceleration = gravityScale
+        * (-Math.sin(angle) * gravity.z - Math.cos(angle) * gravity.y);
+      const velocity = (this._hardcoverAngularVelocity[slot] + angularAcceleration * dt) * damping;
+      const next = angle + velocity * dt;
+      const clamped = Math.max(0, Math.min(OPEN_LIMIT, next));
+      this._hardcoverAngles[slot] = clamped;
+      this._hardcoverAngularVelocity[slot] = clamped === next ? velocity : 0;
     }
   }
 
@@ -404,6 +455,10 @@ export class PageSimulation {
    */
   reset() {
     this._bcZ = 0;
+    this._hardcoverAngles.H1 = COVER_START_NEAR;
+    this._hardcoverAngles.H2 = COVER_START_FAR;
+    this._hardcoverAngularVelocity.H1 = 0;
+    this._hardcoverAngularVelocity.H2 = 0;
     this.spreadFront.moveAnchor('far', 0);
     this.spreadBack.moveAnchor('near', 0);
     this.spreadFront.drop(COVER_START_NEAR, BC_MEET_ANGLE - BC_START_GAP / 2);
@@ -485,6 +540,7 @@ export class PageSimulation {
     }
     this.world.timestep = Math.min(dt, 1 / 30);
     this.world.step();
+    this._stepHardcoverGravity(this.world.timestep);
 
     // Both spreads' own corrections, then the cross-spread inner-page stop,
     // all before either spread syncs its meshes — otherwise whichever
@@ -492,24 +548,20 @@ export class PageSimulation {
     this.spreadFront.stepPhysics();
     this.spreadBack.stepPhysics();
     this._enforceNoCrossingBC();
-    // Correction pipeline, in order: (1) P1 cannot cross P2
-    // (_enforceNoCrossingPseudo, touches only the pseudo bodies); (2) a
-    // tiny constant push apart on top of THAT result (_applyPseudoRepulsion
-    // -- deliberately AFTER, see its own comment for why); then (3) A
-    // cannot cross P1 and D cannot cross P2 (enforceNoPassingRef, touches
-    // only the real cover bodies). Steps 1 and 3 only ever move bodies the
-    // OTHER treats as fixed, so neither can undo the other regardless of
-    // order -- see spread.js's enforceNoPassingRef comment for why that
-    // split matters.
+    // Establish the ordered pseudo interval first, then clamp A/D inside it
+    // and against H1/H2. A hardcover correction notifies its matching pseudo
+    // body, which is already inside the same interval.
+    this._applyHardcoverHold();
+    this._applyHardcoverAirCushion();
+    this._enforceHardcoverOrder();
     this._enforceNoCrossingPseudo();
-    this._applyPseudoRepulsion(this.world.timestep); // capped, same effective dt world.step() just used
-    this._applyCoverHold();
     this.spreadFront.enforceNoPassingRef();
     this.spreadBack.enforceNoPassingRef();
+    this._applyPseudoRepulsion(this.world.timestep); // capped, same effective dt world.step() just used
 
     this.spreadFront.sync();
     this.spreadBack.sync();
-    this.hardcover.update(); // boards ride the pseudo bodies, so strictly after the corrections above
+    this.hardcover.update(); // boards use independent angles, after page corrections
   }
 
   // B's and C's own hinge-tangent angle is a fixed constant (BC_FIXED_ANGLE)
@@ -611,11 +663,31 @@ export class PageSimulation {
   _enforceNoCrossingPseudo() {
     const p1 = this.spreadFront.pseudoBody;
     const p2 = this.spreadBack.pseudoBody;
-    const a1 = pageAngle(p1);
-    const a2 = pageAngle(p2);
-    if (a1 <= a2) return;
+    const h1 = this._hardcoverAngles.H1;
+    const h2 = this._hardcoverAngles.H2;
+    const raw1 = pageAngle(p1);
+    const raw2 = pageAngle(p2);
+    const a1 = Math.max(raw1, h1);
+    const a2 = Math.min(raw2, h2);
 
-    const mid = (a1 + a2) / 2;
+    if (a1 < raw1) {
+      const t = pageTransform(this.spreadFront.refAnchor, a1);
+      p1.setTranslation(t.pos, true);
+      p1.setRotation(t.rot, true);
+      p1.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+    if (a2 > raw2) {
+      const t = pageTransform(this.spreadBack.refAnchor, a2);
+      p2.setTranslation(t.pos, true);
+      p2.setRotation(t.rot, true);
+      p2.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+
+    if (a1 <= a2) {
+      return;
+    }
+
+    const mid = Math.max(h1, Math.min(h2, (a1 + a2) / 2));
     const t1 = pageTransform(this.spreadFront.refAnchor, mid);
     p1.setTranslation(t1.pos, true);
     p1.setRotation(t1.rot, true);

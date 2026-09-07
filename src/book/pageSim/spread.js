@@ -29,7 +29,7 @@ import { WEDGE_ROWS, WEDGE_INDEX, fillWedgeSide } from './wedgeGeometry.js';
  */
 export function createSpread(world, parent, opts) {
   const {
-    anchorNearZ, anchorFarZ, openLimit,
+    anchorNearZ, anchorFarZ, openLimit, hardcoverAngle,
     colorNear, colorFar, wedgeColor, dampingNear, dampingFar, curlPage,
   } = opts;
 
@@ -348,45 +348,44 @@ export function createSpread(world, parent, opts) {
     pseudoBody.setAngvel({ x: avPseudo + sign * (removed / 2), y: 0, z: 0 }, true);
   }
 
-  // Hard stop: the real reference/cover body (A or D) must never pass its
-  // own pseudo double -- pipeline step 2 (see PageSimulation.step()), which
-  // runs AFTER step 1 (_enforceNoCrossingPseudo, P1 cannot cross P2). Only
-  // refBody is ever touched here; pseudoBody is left exactly where step 1
-  // settled it. That split -- this function only ever moves refBody, step
-  // 1 only ever moves pseudo bodies -- is deliberate: two corrections that
-  // touch disjoint sets of bodies can never undo each other, however they
-  // get ordered. (An earlier version of this function did the reverse --
-  // clamped pseudoBody against refBody -- which, running after step 1,
-  // could shove a pseudo body right back past its OWN counterpart and
-  // silently re-break step 1's "P1 cannot cross P2" within the same
-  // frame.) Plain angle comparison, no bisection needed (unlike
-  // enforceNoCrossing below) since both bodies live on the exact same
-  // 1-DOF hinge convention.
+  // Hard stop: the real reference/cover body (A or D) must stay between its
+  // independent hardcover angle and its pseudo reference (P1 or P2).
   //
   // "Past" flips with which side this spread's reference sits on: A (this
-  // spread's refBody when refIsNear, i.e. spreadFront) must not EXCEED P1's
-  // angle, but D (refIsNear false, spreadBack) sits on the OTHER side of
-  // the shared B/C hinge and must not fall BELOW P2's -- same physical
-  // rule ("don't overtake your own pseudo"), opposite-signed comparison
-  // because the two ref sides open away from each other. Matches the
-  // relative-order requirement the previous (pseudo-clamping) version of
-  // this function enforced -- only WHICH body gets corrected changed, not
-  // which direction counts as "passed".
+  // spread's refBody when refIsNear, i.e. spreadFront) must not fall BELOW
+  // H1, but D (refIsNear false, spreadBack) sits on the OTHER side of the
+  // shared B/C hinge and must not EXCEED H2.
   function enforceNoPassingRef() {
     const refBody = refIsNear ? bodyNear : bodyFar;
     const angleRef = pageAngle(refBody);
+    const angleHardcover = hardcoverAngle ? hardcoverAngle() : pageAngle(pseudoBody);
     const anglePseudo = pageAngle(pseudoBody);
-    const violated = refIsNear ? angleRef > anglePseudo : angleRef < anglePseudo;
+    const violatesHardcover = refIsNear ? angleRef < angleHardcover : angleRef > angleHardcover;
+    const violatesPseudo = refIsNear ? angleRef > anglePseudo : angleRef < anglePseudo;
+    const violated = violatesHardcover || violatesPseudo;
     if (!violated) return;
 
-    const t = pageTransform(refAnchor, anglePseudo);
+    const target = violatesHardcover ? angleHardcover : anglePseudo;
+    const t = pageTransform(refAnchor, target);
     refBody.setTranslation(t.pos, true);
     refBody.setRotation(t.rot, true);
 
     // Kill only the velocity still driving it further past.
     const av = refBody.angvel().x;
-    const stillDriving = refIsNear ? av > 0 : av < 0;
+    const stillDriving = refIsNear
+      ? (violatesHardcover ? av < 0 : av > 0)
+      : (violatesHardcover ? av > 0 : av < 0);
     if (stillDriving) refBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+
+    if (violatesHardcover) {
+      // Notify the matching pseudo body (P1/P2) of the hardcover correction
+      // so curl geometry sees the same updated reference.
+      const pseudoTransform = pageTransform(refAnchor, target);
+      pseudoBody.setTranslation(pseudoTransform.pos, true);
+      pseudoBody.setRotation(pseudoTransform.rot, true);
+      const refVelocity = refBody.angvel().x;
+      pseudoBody.setAngvel({ x: refVelocity, y: 0, z: 0 }, true);
+    }
   }
 
   // Geometric no-crossing: measure how close the curling page's tip has

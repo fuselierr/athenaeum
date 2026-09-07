@@ -57,12 +57,12 @@ export function createBookManipulator({ bookGroup, camera, renderer, getPages })
     const pages = getPages();
     if (pickupMode) {
       updatePickupOffset();
-      pages?.setCoverHold('A', pages.coverAngles.A);
-      pages?.setCoverHold('D', pages.coverAngles.D);
+      pages?.setHardcoverHold('H1', pages.hardcoverAngles.H1);
+      pages?.setHardcoverHold('H2', pages.hardcoverAngles.H2);
       dom.style.cursor = 'grab';
     } else {
-      pages?.setCoverHold('A', null);
-      pages?.setCoverHold('D', null);
+      pages?.setHardcoverHold('H1', null);
+      pages?.setHardcoverHold('H2', null);
       dom.style.cursor = '';
     }
   }
@@ -93,8 +93,8 @@ export function createBookManipulator({ bookGroup, camera, renderer, getPages })
       if (!pickupMode) return;
       updatePickupOffset();
       const pages = getPages();
-      pages?.setCoverHold('A', pages.coverAngles.A);
-      pages?.setCoverHold('D', pages.coverAngles.D);
+      pages?.setHardcoverHold('H1', pages.hardcoverAngles.H1);
+      pages?.setHardcoverHold('H2', pages.hardcoverAngles.H2);
     },
     update() {
       if (pickupMode) {

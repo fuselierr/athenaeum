@@ -6,15 +6,11 @@ import { OPEN_LIMIT } from '../pageSim/config.js';
  *
  * This is a different mechanism from dragPageTurn, not a variation on it.
  * A page turn bends a throwaway leaf between two curl shapes and never
- * touches physics; a cover is a real simulated body (A is the front
- * spread's near page, D the back spread's far one) hinged on a revolute
- * joint and pulled by gravity. So dragging one just dictates its angle
- * for the length of the gesture and hands it straight back to gravity on
- * release -- the cover falls open or swings shut from wherever it was let
- * go, rather than snapping to either end.
+ * touches physics; H1 and H2 are independent render-only boards. Dragging
+ * one updates its own angle rather than any page or pseudo-body angle.
  *
  * The hold is applied by PageSimulation inside its own correction
- * pipeline (setCoverHold), not from out here, so it lands in the right
+ * pipeline (setHardcoverHold), not from out here, so it lands in the right
  * order relative to everything else -- notably before enforceNoPassingRef,
  * which still stops a cover being dragged down through the page block.
  *
@@ -43,13 +39,13 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
   // sides of the spine, so the same drag has to turn them opposite ways --
   // the same split dragPageTurn makes between B and C. Flip both together
   // if the whole book ever reads mirrored.
-  const SWEEP_SIGN = { A: 1, D: 1 };
+  const SWEEP_SIGN = { H1: 1, H2: 1 };
 
   const _anchorLocal = new THREE.Vector3();
   const _anchorWorld = new THREE.Vector3();
   const pivotScreen = new THREE.Vector2();
 
-  let slot = null; // 'A' | 'D' while dragging
+  let slot = null; // 'H1' | 'H2' while dragging
   let angle0 = 0; // cursor angle at grab
   let startAngle = 0; // the cover's own angle at grab
 
@@ -81,7 +77,7 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
     // visible, the cover pages being tucked underneath them.
     const hc = pages.hardcover;
     const bySlot = new Map([
-      [hc?.frontBoard, 'A'], [hc?.backBoard, 'D'],
+      [hc?.H1, 'H1'], [hc?.H2, 'H2'],
       [pages.pageMeshes.A, 'A'], [pages.pageMeshes.D, 'D'],
       [pages.pageMeshes.B, 'B'], [pages.pageMeshes.C, 'C'],
     ]);
@@ -96,16 +92,16 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
     if (!pages) return;
 
     const hit = pickSlot(pages, e.clientX, e.clientY);
-    if (hit !== 'A' && hit !== 'D') return; // a page, or nothing -- not ours
+    if (hit !== 'H1' && hit !== 'H2') return; // a page, or nothing -- not ours
 
-    _anchorLocal.set(0, 0, pages.coverHingeZ(hit));
+    _anchorLocal.set(0, 0, pages.hardcoverHingeZ(hit));
     _anchorWorld.copy(_anchorLocal).applyMatrix4(pages.root.matrixWorld);
     screenPointFor(_anchorWorld, pivotScreen);
 
     slot = hit;
     angle0 = Math.atan2(e.clientY - pivotScreen.y, e.clientX - pivotScreen.x);
-    startAngle = pages.coverAngles[hit];
-    pages.setCoverHold(hit, startAngle);
+    startAngle = pages.hardcoverAngles[hit];
+    pages.setHardcoverHold(hit, startAngle);
 
     controls.enabled = false;
     dom.style.cursor = 'grabbing';
@@ -125,14 +121,14 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
     let delta = angle - angle0;
     delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest signed difference
     const target = startAngle + SWEEP_SIGN[slot] * delta * COVER_SENSITIVITY;
-    pages.setCoverHold(slot, THREE.MathUtils.clamp(target, 0, OPEN_LIMIT));
+    pages.setHardcoverHold(slot, THREE.MathUtils.clamp(target, 0, OPEN_LIMIT));
   });
 
   function release() {
     if (!slot) return;
     // Hand the cover back to gravity from exactly where it was let go --
     // no snap to either end. It falls open or swings shut on its own.
-    getPages()?.setCoverHold(slot, null);
+    getPages()?.setHardcoverHold(slot, null);
     slot = null;
     controls.enabled = true;
     dom.style.cursor = '';
