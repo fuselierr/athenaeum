@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
   HINGE_LEN, PANEL_REACH, COLLIDER_THICK, PIVOT_TO_NEAR_EDGE,
-  NO_SELF_COLLIDE, AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE,
+  NO_SELF_COLLIDE, AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE, BC_FIXED_ANGLE,
 } from './config.js';
 import {
   pageAngle, pageTransform,
@@ -55,6 +55,27 @@ export function createSpread(world, parent, opts) {
   // read the current separation instead. Floored so a leaf parked right
   // against its cover doesn't collapse the curl/wedge to zero width.
   const pairGap = () => Math.max(Math.abs(anchorFar.z - anchorNear.z), 1e-3);
+
+  // The OTHER spread's pairGap(), wired in by PageSimulation once both
+  // spreads exist (setOtherPairGap). Needed by curlRadius() below.
+  let _otherPairGap = null;
+  function setOtherPairGap(fn) { _otherPairGap = fn; }
+
+  // Radius buildCurlStrip should trace this spread's curl at.
+  //
+  // Normally this spread's own hinge separation (pairGap). But once the
+  // curl's target tangent -- the pseudo body's angle -- has crossed the
+  // meeting plane (BC_FIXED_ANGLE, i.e. straight up), the leaf is bending
+  // OVER onto the other half of the book, and the arc that spans that
+  // reach is set by the OTHER spread's hinge separation, not this one's.
+  // refIsNear picks the sense: spreadFront (curlPage 'far', B) has curled
+  // over when its ref angle is ABOVE the plane; spreadBack (curlPage
+  // 'near', C) when its ref angle is BELOW it.
+  function curlRadius() {
+    const refAngle = _refAngleOverride ?? pageAngle(pseudoBody);
+    const curledOver = refIsNear ? refAngle > BC_FIXED_ANGLE : refAngle < BC_FIXED_ANGLE;
+    return (curledOver && _otherPairGap) ? _otherPairGap() : pairGap();
+  }
 
   function makePage(anchor, startAngle, damping, gravityScale) {
     const t = pageTransform(anchor, startAngle);
@@ -189,7 +210,7 @@ export function createSpread(world, parent, opts) {
     const refAngle = _refAngleOverride ?? pageAngle(pseudoBody);
     buildCurlStrip(
       curlPositions, curlAnchorVec, pageAngle(curlBody), refAngle,
-      pairGap(), PANEL_REACH, halfWidth,
+      curlRadius(), PANEL_REACH, halfWidth,
     );
     curlGeo.attributes.position.needsUpdate = true;
     curlGeo.computeVertexNormals();
@@ -479,6 +500,7 @@ export function createSpread(world, parent, opts) {
   return {
     drop, moveAnchor, stepPhysics, sync, dispose, enforceNoPassingRef,
     curlTip, curlTipAt, curlTipAtRef, straightAngle, setRefAngleClamp,
+    pairGap, curlRadius, setOtherPairGap,
     get bodyNear() { return bodyNear; },
     get bodyFar() { return bodyFar; },
     // pseudoBody: the invisible physics double hinged at refAnchor (see the

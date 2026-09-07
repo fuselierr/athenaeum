@@ -14,6 +14,7 @@ import { createDragPageTurn } from './book/reader/dragPageTurn.js';
 import { createCameraPan } from './input/cameraPan.js';
 import { createBookManipulator } from './input/bookManipulator.js';
 import { createDebugLabels } from './debug/debugLabels.js';
+import { createAnglePanel } from './debug/anglePanel.js';
 import { initBookLoader } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
 
@@ -61,6 +62,7 @@ const dragPageTurn = createDragPageTurn({
 const cameraPan = createCameraPan({ camera, controls });
 const bookManipulator = createBookManipulator({ bookGroup, camera, renderer, getPages });
 const debugLabels = createDebugLabels({ scene, camera, renderer, getPages });
+const anglePanel = createAnglePanel({ getPages });
 
 // --- book loading ---
 // HINGE_LEN/PANEL_REACH/SPINE_GAP are baked into physics bodies and
@@ -144,13 +146,14 @@ renderer.setAnimationLoop(() => {
   controls.update();
   renderer.render(scene, camera);
   debugLabels.update();
+  anglePanel.update();
 });
 
 if (import.meta.env.DEV) {
   // THREE is included so console debugging can build THREE.Box3 etc.
   // against these objects without a separate import.
   window.__athenaeum = {
-    scene, camera, controls, renderer, bookGroup, content, dragPageTurn, dragCover, THREE,
+    scene, camera, controls, renderer, bookGroup, content, dragPageTurn, dragCover, anglePanel, THREE,
     get pages() { return pages; },
   };
 }

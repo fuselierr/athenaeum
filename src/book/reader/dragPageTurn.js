@@ -179,15 +179,18 @@ export function createDragPageTurn({
 
   /**
    * The curl parameters of the panel this leaf leaves and the one it
-   * lands on, as they are RIGHT NOW. `gap` mirrors spread.js's own
-   * pairGap(), including its floor -- that keeps a leaf parked hard
-   * against a cover from collapsing the curl to zero width.
+   * lands on, as they are RIGHT NOW. The gap comes from spread.js's
+   * curlRadius() -- its own hinge separation, floored, and already
+   * swapped for the other spread's when the curl has bent over onto the
+   * far half of the book (see curlRadius). Reading it here rather than
+   * recomputing the raw anchor distance keeps the temp leaf congruent
+   * with the real B/C strips in the over-curl case too.
    */
   function shapeTargets(turn, pages) {
     const refFront = pageAngle(pages.spreadFront.pseudoBody);
     const refBack = pageAngle(pages.spreadBack.pseudoBody);
-    const gapFront = Math.max(Math.abs(pages.spreadFront.anchorFar.z - pages.spreadFront.anchorNear.z), 1e-3);
-    const gapBack = Math.max(Math.abs(pages.spreadBack.anchorFar.z - pages.spreadBack.anchorNear.z), 1e-3);
+    const gapFront = pages.spreadFront.curlRadius();
+    const gapBack = pages.spreadBack.curlRadius();
     return turn.panel === 'B'
       ? { startRef: refFront, endRef: refBack, startGap: gapFront, endGap: gapBack }
       : { startRef: refBack, endRef: refFront, startGap: gapBack, endGap: gapFront };

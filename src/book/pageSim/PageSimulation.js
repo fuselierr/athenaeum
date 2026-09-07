@@ -91,6 +91,12 @@ export class PageSimulation {
       curlPage: 'near', // C molds itself to curve from its hinge to match D
     });
 
+    // Cross-wire each spread to the other's live hinge separation, so a
+    // curl that bends OVER onto the far half of the book traces its arc
+    // with the correct radius (spread.js's curlRadius()).
+    this.spreadFront.setOtherPairGap(this.spreadBack.pairGap);
+    this.spreadBack.setOtherPairGap(this.spreadFront.pairGap);
+
     // Rides the two outer cover pages; built here so it shares the
     // simulation's lifetime and the dimensions baked in above.
     this.hardcover = createHardcover({
@@ -307,6 +313,20 @@ export class PageSimulation {
   /** Where a cover's hinge sits along the spine. */
   coverHingeZ(slot) {
     return this._coverRef(slot).anchor.z;
+  }
+
+  /**
+   * Hinge angles for the debug readout: A and D are the real cover PAGES
+   * (freely-swinging bodies), P1 and P2 the two spreads' pseudo bodies --
+   * the invisible limit the board rides and that A/D clamp against.
+   */
+  get panelAngles() {
+    return {
+      A: pageAngle(this.spreadFront.bodyNear),
+      D: pageAngle(this.spreadBack.bodyFar),
+      P1: pageAngle(this.spreadFront.pseudoBody),
+      P2: pageAngle(this.spreadBack.pseudoBody),
+    };
   }
 
   /** Current swing angle of each cover, 0 = shut, OPEN_LIMIT = laid flat. */
@@ -605,7 +625,7 @@ export class PageSimulation {
     p2.setRotation(t2.rot, true);
 
     const av1 = p1.angvel().x;
-    const av2 = p2.angvel().x;m
+    const av2 = p2.angvel().x;
     const e = PSEUDO_COLLISION_RESTITUTION;
     const newAv1 = ((1 - e) * av1 + (1 + e) * av2) / 2;
     const newAv2 = ((1 + e) * av1 + (1 - e) * av2) / 2;
