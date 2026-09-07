@@ -62,7 +62,7 @@ const dragPageTurn = createDragPageTurn({
 const cameraPan = createCameraPan({ camera, controls });
 const bookManipulator = createBookManipulator({ bookGroup, camera, renderer, getPages });
 const debugLabels = createDebugLabels({ scene, camera, renderer, getPages });
-const anglePanel = createAnglePanel({ getPages });
+const anglePanel = createAnglePanel({ getPages, getPageTurn: () => dragPageTurn });
 
 // --- book loading ---
 // HINGE_LEN/PANEL_REACH/SPINE_GAP are baked into physics bodies and

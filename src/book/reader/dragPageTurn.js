@@ -74,6 +74,8 @@ export function createDragPageTurn({
   // that maps to a full 0->1 turn. Tuned by feel, not derived from
   // anything physical.
   const TURN_ANGLE_RANGE = Math.PI * 0.6;
+  const RADIUS_SWITCH_PROGRESS = 0.5;
+  const RADIUS_PEAK_SCALE = 1;
   const SETTLE_RATE = 8; // 1/s, exponential ease toward whichever end the drag committed to
 
   // A turn that plays itself (playTurn) runs on a fixed duration and an
@@ -187,13 +189,14 @@ export function createDragPageTurn({
    * with the real B/C strips in the over-curl case too.
    */
   function shapeTargets(turn, pages) {
-    const refFront = pageAngle(pages.spreadFront.pseudoBody);
-    const refBack = pageAngle(pages.spreadBack.pseudoBody);
-    const gapFront = pages.spreadFront.curlRadius();
-    const gapBack = pages.spreadBack.curlRadius();
-    return turn.panel === 'B'
-      ? { startRef: refFront, endRef: refBack, startGap: gapFront, endGap: gapBack }
-      : { startRef: refBack, endRef: refFront, startGap: gapBack, endGap: gapFront };
+    const sourceSpread = turn.panel === 'B' ? pages.spreadFront : pages.spreadBack;
+    const targetSpread = turn.panel === 'B' ? pages.spreadBack : pages.spreadFront;
+    return {
+      startRef: pageAngle(sourceSpread.pseudoBody),
+      endRef: pageAngle(targetSpread.pseudoBody),
+      startRadius: sourceSpread.curlRadius(),
+      endRadius: targetSpread.curlRadius(),
+    };
   }
 
   function rebuildLeaf(turn, pages) {
@@ -211,9 +214,29 @@ export function createDragPageTurn({
     // with neither panel by the time it gets there -- worst when the
     // stacks are uneven, since that is when the hinge has furthest to
     // travel mid-turn, and it shows up as the leaf cutting into the book.
-    const { startRef, endRef, startGap, endGap } = shapeTargets(turn, pages);
+    const { startRef, endRef, startRadius, endRadius } = shapeTargets(turn, pages);
     const refAngle = THREE.MathUtils.lerp(startRef, endRef, turn.progress);
-    const gap = THREE.MathUtils.lerp(startGap, endGap, turn.progress);
+    // Before the page crosses the spread, grow its radius to keep the
+    // turning leaf clear of the pages underneath it. The radius peaks at
+    // 90 degrees, then decreases as the leaf settles onto the other spread.
+    const expandedRadius = Math.max(startRadius, endRadius, PANEL_REACH) * RADIUS_PEAK_SCALE;
+    const radius = turn.progress < RADIUS_SWITCH_PROGRESS
+      ? THREE.MathUtils.lerp(startRadius, expandedRadius, turn.progress / RADIUS_SWITCH_PROGRESS)
+      : THREE.MathUtils.lerp(
+        expandedRadius,
+        endRadius,
+        (turn.progress - RADIUS_SWITCH_PROGRESS) / (1 - RADIUS_SWITCH_PROGRESS),
+      );
+    turn.debug = {
+      dragAngle: turn.dragAngle,
+      progress: turn.progress,
+      startRef,
+      refAngle,
+      endRef,
+      startRadius,
+      radius,
+      endRadius,
+    };
     // HINGE_LEN is read live (not cached) -- it's a mutable `let` export
     // that changes when a PDF loads and the book gets resized
     // (setPageDimensions, see main.js's applyPdfDimensions). This module is
@@ -222,7 +245,7 @@ export function createDragPageTurn({
     // startup -- which showed up as the temp page being a different size
     // than B/C and clipping into the cover beside it.
     const halfWidth = HINGE_LEN / 2;
-    buildCurlStrip(turn.positions, _anchorLocal, BC_FIXED_ANGLE, refAngle, gap, PANEL_REACH, halfWidth);
+    buildCurlStrip(turn.positions, _anchorLocal, BC_FIXED_ANGLE, refAngle, radius, PANEL_REACH, halfWidth);
     turn.meshFront.geometry.attributes.position.needsUpdate = true;
     turn.meshBack.geometry.attributes.position.needsUpdate = true;
     turn.meshFront.geometry.computeVertexNormals();
@@ -256,6 +279,7 @@ export function createDragPageTurn({
       settleTarget: 0,
       soundPlayed: false,
       angle0: 0,
+      dragAngle: 0,
       pivotScreen: new THREE.Vector2(),
       // Stagger stacked leaves so two that start in the same frame are
       // never coplanar with each other.
@@ -466,6 +490,7 @@ export function createDragPageTurn({
     const angle = Math.atan2(e.clientY - dragTurn.pivotScreen.y, e.clientX - dragTurn.pivotScreen.x);
     let delta = angle - dragTurn.angle0;
     delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest signed angular difference
+    dragTurn.dragAngle = delta;
     dragTurn.progress = THREE.MathUtils.clamp((dragTurn.turnSign * delta) / TURN_ANGLE_RANGE, 0, 1);
     if (!dragTurn.soundPlayed && dragTurn.progress >= 0.5) {
       dragTurn.soundPlayed = true;
@@ -518,5 +543,27 @@ export function createDragPageTurn({
     }
   }
 
-  return { update, playTurn, get activeTurnCount() { return turns.length; } };
+  function getDebugState() {
+    return turns.map((turn) => ({
+      panel: turn.panel,
+      mode: turn.mode,
+      ...(turn.debug ?? {
+        dragAngle: turn.dragAngle,
+        progress: turn.progress,
+        startRef: 0,
+        refAngle: 0,
+        endRef: 0,
+        startRadius: 0,
+        radius: 0,
+        endRadius: 0,
+      }),
+    }));
+  }
+
+  return {
+    update,
+    playTurn,
+    getDebugState,
+    get activeTurnCount() { return turns.length; },
+  };
 }

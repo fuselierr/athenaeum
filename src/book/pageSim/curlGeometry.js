@@ -105,13 +105,16 @@ export function buildCurlStrip(positions, anchorPoint, curlAngle, refAngle, radi
   const sweep = dirStart.angleTo(dirEnd);
   const axis = _curl.axis.crossVectors(dirStart, dirEnd);
   if (axis.lengthSq() < 1e-10) axis.set(1, 0, 0); else axis.normalize();
-  const arcLen = Math.min(radius * sweep, totalLength);
+  const arcSweep = Math.min(sweep, radius > 1e-10 ? totalLength / radius : 0);
+  const arcLen = radius * arcSweep;
   const straightLen = Math.max(0, totalLength - arcLen);
   // Vector from the (never-materialized) arc centre to the anchor point:
   // rotating it by theta about `axis` and re-adding the anchor keeps the
-  // tangent at theta = 0 exactly dirStart, and at theta = sweep exactly
-  // dirEnd.
+  // tangent at theta = 0 exactly dirStart. When the requested radius would
+  // make the full arc longer than the page, arcSweep stops early and the
+  // remaining length continues along that capped tangent.
   const radialStart = _curl.radialStart.crossVectors(dirStart, axis);
+  dirEnd.copy(dirStart).applyAxisAngle(axis, arcSweep);
 
   const writeRow = (row, center) => {
     const li = row * 3, ri = (CURL_ROWS + row) * 3;
@@ -121,7 +124,7 @@ export function buildCurlStrip(positions, anchorPoint, curlAngle, refAngle, radi
 
   let curveEnd = null;
   for (let i = 0; i <= CURL_SEGS; i++) {
-    const theta = (i / CURL_SEGS) * sweep;
+    const theta = (i / CURL_SEGS) * arcSweep;
     const radial = _curl.radial.copy(radialStart).applyAxisAngle(axis, theta);
     const p = _curl.pos.copy(radial).sub(radialStart).multiplyScalar(radius).add(anchorPoint);
     writeRow(i, p);
@@ -146,10 +149,12 @@ export function curlTipPoint(anchorPoint, curlAngle, refAngle, radius, totalLeng
   const sweep = s.dirStart.angleTo(s.dirEnd);
   s.axis.crossVectors(s.dirStart, s.dirEnd);
   if (s.axis.lengthSq() < 1e-10) s.axis.set(1, 0, 0); else s.axis.normalize();
-  const arcLen = Math.min(radius * sweep, totalLength);
+  const arcSweep = Math.min(sweep, radius > 1e-10 ? totalLength / radius : 0);
+  const arcLen = radius * arcSweep;
   const straightLen = Math.max(0, totalLength - arcLen);
   s.radialStart.crossVectors(s.dirStart, s.axis);
-  s.radialEnd.copy(s.radialStart).applyAxisAngle(s.axis, sweep);
+  s.radialEnd.copy(s.radialStart).applyAxisAngle(s.axis, arcSweep);
+  s.dirEnd.copy(s.dirStart).applyAxisAngle(s.axis, arcSweep);
   out.copy(s.radialEnd).sub(s.radialStart).multiplyScalar(radius).add(anchorPoint);
   s.tmp.copy(s.dirEnd).multiplyScalar(straightLen);
   return out.add(s.tmp);

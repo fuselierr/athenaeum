@@ -13,7 +13,7 @@
  * layered over everything, with pointer-events off so it can't eat a drag
  * meant for the canvas underneath.
  */
-export function createAnglePanel({ getPages }) {
+export function createAnglePanel({ getPages, getPageTurn }) {
   const el = document.createElement('div');
   Object.assign(el.style, {
     position: 'fixed',
@@ -54,6 +54,10 @@ export function createAnglePanel({ getPages }) {
     return `${r} rad  (${d} deg)`;
   }
 
+  function fmtRadius(radius) {
+    return radius.toFixed(3).padStart(6);
+  }
+
   function update() {
     if (!visible) return;
 
@@ -64,13 +68,29 @@ export function createAnglePanel({ getPages }) {
     }
 
     const { A, D, P1, P2 } = pages.panelAngles;
-    el.textContent = [
+    const lines = [
       'hinge angles',
       `  A   ${fmt(A)}`,
       `  D   ${fmt(D)}`,
       `  P1  ${fmt(P1)}`,
       `  P2  ${fmt(P2)}`,
-    ].join('\n');
+    ];
+
+    const turns = getPageTurn?.().getDebugState?.() ?? [];
+    lines.push('', 'page turns');
+    if (turns.length === 0) {
+      lines.push('  (idle)');
+    } else {
+      for (const turn of turns) {
+        lines.push(
+          `  ${turn.panel}   ${turn.mode.padEnd(9)} p ${turn.progress.toFixed(3)}`,
+          `    drag     ${fmt(turn.dragAngle)}`,
+          `    ref      ${fmt(turn.startRef)} -> ${fmt(turn.refAngle)} -> ${fmt(turn.endRef)}`,
+          `    radius   ${fmtRadius(turn.startRadius)} -> ${fmtRadius(turn.radius)} -> ${fmtRadius(turn.endRadius)}`,
+        );
+      }
+    }
+    el.textContent = lines.join('\n');
   }
 
   function dispose() {
