@@ -43,7 +43,7 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
   // sides of the spine, so the same drag has to turn them opposite ways --
   // the same split dragPageTurn makes between B and C. Flip both together
   // if the whole book ever reads mirrored.
-  const SWEEP_SIGN = { A: 1, D: -1 };
+  const SWEEP_SIGN = { A: 1, D: 1 };
 
   const _anchorLocal = new THREE.Vector3();
   const _anchorWorld = new THREE.Vector3();
