@@ -95,7 +95,12 @@ export class PageSimulation {
     // simulation's lifetime and the dimensions baked in above.
     this.hardcover = createHardcover({
       parent: this.root,
-      coverPages: { front: this.spreadFront.flatMesh, back: this.spreadBack.flatMesh },
+      // Accessors, not the bodies: drop() has not run yet here, and every
+      // later drop() replaces the pseudo bodies.
+      coverBodies: {
+        front: () => this.spreadFront.pseudoBody,
+        back: () => this.spreadBack.pseudoBody,
+      },
     });
 
     this.reset();
@@ -291,9 +296,12 @@ export class PageSimulation {
    * angle convention as every other panel.
    */
   _coverRef(slot) {
-    return slot === 'A'
-      ? { body: this.spreadFront.bodyNear, anchor: this.spreadFront.anchorNear }
-      : { body: this.spreadBack.bodyFar, anchor: this.spreadBack.anchorFar };
+    // The pseudo body IS the hardcover board (hardcover.js draws it there),
+    // so dragging or holding "the cover" moves that, not the cover page.
+    // A and D stay free: enforceNoPassingRef only stops them getting PAST
+    // the board, so they swing on their own and settle against it.
+    const spread = slot === 'A' ? this.spreadFront : this.spreadBack;
+    return { body: spread.pseudoBody, anchor: spread.refAnchor };
   }
 
   /** Where a cover's hinge sits along the spine. */
@@ -304,8 +312,8 @@ export class PageSimulation {
   /** Current swing angle of each cover, 0 = shut, OPEN_LIMIT = laid flat. */
   get coverAngles() {
     return {
-      A: pageAngle(this.spreadFront.bodyNear),
-      D: pageAngle(this.spreadBack.bodyFar),
+      A: pageAngle(this.spreadFront.pseudoBody),
+      D: pageAngle(this.spreadBack.pseudoBody),
     };
   }
 
@@ -481,7 +489,7 @@ export class PageSimulation {
 
     this.spreadFront.sync();
     this.spreadBack.sync();
-    this.hardcover.update(); // rides the cover meshes, so strictly after their sync
+    this.hardcover.update(); // boards ride the pseudo bodies, so strictly after the corrections above
   }
 
   // B's and C's own hinge-tangent angle is a fixed constant (BC_FIXED_ANGLE)
@@ -597,7 +605,7 @@ export class PageSimulation {
     p2.setRotation(t2.rot, true);
 
     const av1 = p1.angvel().x;
-    const av2 = p2.angvel().x;
+    const av2 = p2.angvel().x;m
     const e = PSEUDO_COLLISION_RESTITUTION;
     const newAv1 = ((1 - e) * av1 + (1 + e) * av2) / 2;
     const newAv2 = ((1 + e) * av1 + (1 - e) * av2) / 2;

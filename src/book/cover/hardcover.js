@@ -32,10 +32,22 @@ import { sampleBindingColor, renderSpineLabel, toHex, shade, luminance } from '.
  * underside, which is exactly where a real book's covers lie against the
  * table.
  *
- * The boards are render-only -- they carry no rigid bodies and add no
- * constraints. They inherit their motion wholesale from cover pages that
- * are already simulated, so the hardcover cannot perturb the page physics
- * it is drawn around.
+ * WHAT THE BOARDS RIDE. Not the cover PAGES (A and D) -- each spread's
+ * pseudo body. That body is hinged at the very same anchor as its cover
+ * page, is gravity-driven like everything else, and is already the thing
+ * spread.js's enforceNoPassingRef clamps A/D against. So drawing the
+ * board there makes the rendered cover exactly the hard angle limit the
+ * page rests on: A and D swing freely under physics and simply cannot get
+ * past the board.
+ *
+ * Drawing the board on A/D instead -- which is what this did first --
+ * welds the two together, so the cover page can never lift off its board
+ * and the board inherits every twitch of the page rather than the page
+ * settling against the board.
+ *
+ * The boards are still render-only: they add no rigid bodies and no
+ * constraints of their own, they just visualise a body that was already
+ * being simulated, so the hardcover cannot perturb the physics it draws.
  */
 
 // All proportional to the page so a re-sized book (a loaded PDF changes
@@ -65,10 +77,13 @@ const SPINE_TEXT_TOWARD_PLUS_X = false;
  * @param {THREE.Object3D} parent  where the cover meshes are added -- pass
  *   PageSimulation.root so the cover shares the pages' space and its
  *   render flip.
- * @param {{ front: THREE.Mesh, back: THREE.Mesh }} coverPages  the A and D
- *   flat page meshes, already transform-synced each frame by their spread.
+ * @param {{ front: () => object, back: () => object }} coverBodies
+ *   accessors for the two spreads' pseudo bodies. Accessors rather than
+ *   the bodies themselves for two reasons: the hardcover is built before
+ *   the first drop() has created them, and every later drop() replaces
+ *   them, so a captured reference would go stale on the next reset.
  */
-export function createHardcover({ parent, coverPages }) {
+export function createHardcover({ parent, coverBodies }) {
   const square = PANEL_REACH * SQUARE_RATIO;
   const thickness = PANEL_REACH * BOARD_THICKNESS_RATIO;
   const clearance = PANEL_REACH * PAGE_CLEARANCE_RATIO;
@@ -153,6 +168,15 @@ export function createHardcover({ parent, coverPages }) {
   spineMesh.receiveShadow = true;
   parent.add(spineMesh);
 
+  /** Put a board where its pseudo body currently is. */
+  function poseBoard(mesh, body) {
+    const t = body.translation();
+    const r = body.rotation();
+    mesh.position.set(t.x, t.y, t.z);
+    mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    mesh.updateMatrix();
+  }
+
   // Scratch, reused every frame.
   const _hinge = new THREE.Vector3();
   const _out = new THREE.Vector3();
@@ -173,22 +197,25 @@ export function createHardcover({ parent, coverPages }) {
    * its hinge-edge midpoint, its outward normal and its fore-edge
    * direction. `outSign` matches makeBoard's.
    */
-  function readCover(pageMesh, outSign, hinge, out, fore) {
-    hinge.set(0, 0, -PANEL_REACH / 2).applyMatrix4(pageMesh.matrix);
-    out.set(0, outSign, 0).transformDirection(pageMesh.matrix);
-    fore.set(0, 0, 1).transformDirection(pageMesh.matrix);
+  function readCover(boardMesh, outSign, hinge, out, fore) {
+    // The board's own mesh transform IS the cover frame -- its overhang and
+    // thickness live in the geometry, not the transform -- so these are the
+    // same three quantities whichever mesh carries that frame.
+    hinge.set(0, 0, -PANEL_REACH / 2).applyMatrix4(boardMesh.matrix);
+    out.set(0, outSign, 0).transformDirection(boardMesh.matrix);
+    fore.set(0, 0, 1).transformDirection(boardMesh.matrix);
     return hinge;
   }
 
   function updateSpine() {
     // Front cover: hinge edge, lifted to the board's mid-thickness.
-    readCover(coverPages.front, +1, _hinge, _out, _fore);
+    readCover(frontBoard, +1, _hinge, _out, _fore);
     _pA.copy(_hinge).addScaledVector(_out, midOffset);
     _tA.copy(_fore).negate(); // leaves the front board heading away from its fore-edge
 
     // Back cover: same, and the curve ARRIVES travelling into its
     // fore-edge, so the tangent there is +fore rather than -fore.
-    readCover(coverPages.back, -1, _hinge, _out, _fore);
+    readCover(backBoard, -1, _hinge, _out, _fore);
     _pD.copy(_hinge).addScaledVector(_out, midOffset);
     _tD.copy(_fore);
 
@@ -277,17 +304,13 @@ export function createHardcover({ parent, coverPages }) {
       return { binding, hasCover: Boolean(coverUrl) };
     },
 
-    /** Call once per frame, after the cover pages have been synced. */
+    /** Call once per frame, after the physics step. */
     update() {
-      // The boards are rigidly attached to their pages, so riding the
-      // page's transform outright is both exact and free.
-      frontBoard.position.copy(coverPages.front.position);
-      frontBoard.quaternion.copy(coverPages.front.quaternion);
-      backBoard.position.copy(coverPages.back.position);
-      backBoard.quaternion.copy(coverPages.back.quaternion);
-      frontBoard.updateMatrix();
-      backBoard.updateMatrix();
-
+      const front = coverBodies.front();
+      const back = coverBodies.back();
+      if (!front || !back) return; // before the first drop()
+      poseBoard(frontBoard, front);
+      poseBoard(backBoard, back);
       updateSpine();
     },
 
