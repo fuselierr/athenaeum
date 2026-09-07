@@ -1,5 +1,6 @@
 /**
- * A fixed HTML readout, top-right, of the hinge angles of A, D, P1 and P2.
+ * A fixed HTML readout, top-right, of the hinge angles of A, D, P1 and P2,
+ * the hardcover boards, and active page turns.
  *
  *   A  / D   -- the real cover PAGES, the freely-swinging bodies
  *   P1 / P2  -- the two spreads' pseudo bodies: the invisible limit the
@@ -68,12 +69,17 @@ export function createAnglePanel({ getPages, getPageTurn }) {
     }
 
     const { A, D, P1, P2 } = pages.panelAngles;
+    const covers = pages.coverAngles;
     const lines = [
       'hinge angles',
       `  A   ${fmt(A)}`,
       `  D   ${fmt(D)}`,
       `  P1  ${fmt(P1)}`,
       `  P2  ${fmt(P2)}`,
+      '',
+      'cover angles',
+      `  A   ${fmt(covers.A)}`,
+      `  D   ${fmt(covers.D)}`,
     ];
 
     const turns = getPageTurn?.().getDebugState?.() ?? [];
