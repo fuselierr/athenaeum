@@ -90,6 +90,39 @@ export function setPageDimensions(hingeLen, panelReach) {
   PIVOT_TO_NEAR_EDGE = PANEL_REACH / 2;
 }
 
+/**
+ * Tilt of the whole spine, as a signed fraction: -1 .. 0 .. +1.
+ *
+ * Think of the spine as a segment between two hinge endpoints, s1 at the
+ * -X end and s2 at the +X end, HINGE_LEN apart:
+ *
+ *   t = -1   s2 stays on the ground, s1 swings up directly ABOVE it
+ *   t =  0   both endpoints on the ground, HINGE_LEN apart -- flat, the
+ *            book's default pose
+ *   t = +1   s1 stays on the ground, s2 swings up directly ABOVE it
+ *
+ * Whichever endpoint is lower is the pivot and stays pinned; the other
+ * swings around it, so the segment never stretches. Converted to an angle
+ * by spineBeta() below, and turned into actual hinge geometry by math.js's
+ * spineHinge().
+ *
+ * `let`, like the other layout values here: it is meant to be driven at
+ * runtime. NOTE that the revolute joints bake their axis in at creation
+ * (spread.js's makeJoint, called from drop()), so a change only reaches
+ * the physics on the next drop()/PageSimulation rebuild.
+ */
+export let SPINE_ROTATION = 0;
+
+/** See SPINE_ROTATION. Clamped to the -1..1 the geometry is defined over. */
+export function setSpineRotation(t) {
+  SPINE_ROTATION = Math.max(-1, Math.min(1, t));
+}
+
+/** SPINE_ROTATION as radians: -90deg at -1, 0 at 0, +90deg at +1. */
+export function spineBeta() {
+  return SPINE_ROTATION * (Math.PI / 2);
+}
+
 export const GRAVITY_MAG = 9.81;
 
 // Both spreads open the same amount — no built-in asymmetry between front

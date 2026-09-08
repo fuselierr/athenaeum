@@ -7,7 +7,8 @@ export function createAudioManager() {
 	wind.preload = 'auto';
 
 	let started = false;
-	let muted = false;
+	let muted = true;
+	wind.muted = muted;
 	const activeSfx = new Set();
 
 	function startWind() {

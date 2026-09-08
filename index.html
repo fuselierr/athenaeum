@@ -20,6 +20,14 @@
         }
         #hud button:hover { background: #4a5470; }
 
+        #spine-rotation-panel {
+            position: fixed; top: 12px; left: 12px; z-index: 2;
+            color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
+            background: rgba(20, 24, 32, 0.75); padding: 8px 10px; border-radius: 8px; display: none;
+        }
+        #spine-rotation-panel input { width: 150px; vertical-align: middle; }
+        #spine-rotation-value { display: inline-block; min-width: 42px; text-align: right; }
+
         /* Upload panel: POSTs the epub to the server conversion pipeline
            (see src/bookLoader.js) and reports status. */
         #upload-panel {
@@ -33,6 +41,11 @@
     </style>
 </head>
 <body>
+
+    <div id="spine-rotation-panel">
+        <label for="spine-rotation">Spine rotation <span id="spine-rotation-value"></span></label>
+        <input id="spine-rotation" type="range" min="-1" max="1" step="0.01" value="0">
+    </div>
 
     <div id="upload-panel">
         <div>Upload an epub to convert it to page textures.</div>

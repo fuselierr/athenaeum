@@ -5,7 +5,7 @@ import {
   NO_SELF_COLLIDE, AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE, BC_FIXED_ANGLE,
 } from './config.js';
 import {
-  pageAngle, pageTransform,
+  pageAngle, pageTransform, spineHinge,
   LOCAL_PIVOT_L, LOCAL_PIVOT_R, LOCAL_TIP_L, LOCAL_TIP_R,
 } from './math.js';
 import {
@@ -35,8 +35,17 @@ export function createSpread(world, parent, opts) {
 
   const anchorNear = { y: 0, z: anchorNearZ };
   const anchorFar = { y: 0, z: anchorFarZ };
-  const anchorBodyNear = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, anchorNear.y, anchorNear.z));
-  const anchorBodyFar = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, anchorFar.y, anchorFar.z));
+  // Anchor bodies sit at the MIDPOINT of their (possibly tilted) hinge
+  // segment -- see math.js's spineHinge. At SPINE_ROTATION 0 that midpoint
+  // is (0, y, z), exactly where these used to be.
+  const nearHinge = spineHinge(anchorNear.z);
+  const farHinge = spineHinge(anchorFar.z);
+  const anchorBodyNear = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(nearHinge.mid.x, nearHinge.mid.y, nearHinge.mid.z),
+  );
+  const anchorBodyFar = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(farHinge.mid.x, farHinge.mid.y, farHinge.mid.z),
+  );
 
   const anchorNearVec = new THREE.Vector3(0, anchorNear.y, anchorNear.z);
   const anchorFarVec = new THREE.Vector3(0, anchorFar.y, anchorFar.z);
@@ -101,12 +110,14 @@ export function createSpread(world, parent, opts) {
     return body;
   }
 
-  const hingeAxis = { x: 1, y: 0, z: 0 };
+  // Read per joint rather than fixed: the revolute axis has to lie ALONG
+  // the tilted spine, not along world X. Baked in at creation, so a
+  // SPINE_ROTATION change reaches the physics on the next drop().
   const anchorLocalOrigin = { x: 0, y: 0, z: 0 };
   const pageLocalAnchor = { x: 0, y: 0, z: -PIVOT_TO_NEAR_EDGE };
   function makeJoint(anchorBody, pageBody) {
     const j = world.createImpulseJoint(
-      RAPIER.JointData.revolute(anchorLocalOrigin, pageLocalAnchor, hingeAxis),
+      RAPIER.JointData.revolute(anchorLocalOrigin, pageLocalAnchor, spineHinge(0).axis),
       anchorBody, pageBody, true,
     );
     j.setLimits(0, openLimit);
@@ -309,7 +320,9 @@ export function createSpread(world, parent, opts) {
 
     anchor.z = z;
     vec.z = z;
-    anchorBody.setTranslation({ x: 0, y: anchor.y, z }, true);
+    // Same tilted midpoint the body was created at, recomputed for the new z.
+    const hinge = spineHinge(z);
+    anchorBody.setTranslation({ x: hinge.mid.x, y: hinge.mid.y, z: hinge.mid.z }, true);
     if (body) {
       const t = pageTransform(anchor, pageAngle(body));
       body.setTranslation(t.pos, true);

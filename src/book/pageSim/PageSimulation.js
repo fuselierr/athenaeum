@@ -6,7 +6,7 @@ import {
   BC_MEET_ANGLE, BC_START_GAP, COVER_START_NEAR, COVER_START_FAR, BC_FIXED_ANGLE,
   PSEUDO_REPEL_RATE, PSEUDO_COLLISION_RESTITUTION,
 } from './config.js';
-import { pageAngle, pageTransform } from './math.js';
+import { pageAngle, pageTransform, spineHinge } from './math.js';
 import { createSpread } from './spread.js';
 import { createHardcover } from '../cover/hardcover.js';
 
@@ -124,6 +124,23 @@ export class PageSimulation {
 
   get bcZ() {
     return this._bcZ;
+  }
+
+  /** Y/Z coordinates of each spine hinge and its tilted endpoints. */
+  get spineHingePositions() {
+    const read = (z) => {
+      const hinge = spineHinge(z);
+      return {
+        midY: hinge.mid.y, midZ: hinge.mid.z,
+        s1Y: hinge.s1.y, s1Z: hinge.s1.z,
+        s2Y: hinge.s2.y, s2Z: hinge.s2.z,
+      };
+    };
+    return {
+      H1: read(SPINE_GAP),
+      BC: read(this._bcZ),
+      H2: read(-SPINE_GAP),
+    };
   }
 
   /**

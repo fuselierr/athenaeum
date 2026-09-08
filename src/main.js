@@ -5,7 +5,7 @@ import { loadLamp } from './scene/lamp.js';
 import { PageSimulation } from './book/pageSim/PageSimulation.js';
 import {
   setPageDimensions, setSpineGap, spineGapForPageCount,
-  PANEL_REACH as INITIAL_PANEL_REACH,
+  setSpineRotation, SPINE_ROTATION, PANEL_REACH as INITIAL_PANEL_REACH,
 } from './book/pageSim/config.js';
 import { updateLocalCorners } from './book/pageSim/math.js';
 import { createBookContent, RIGHT_HAND_PANEL, LEFT_HAND_PANEL } from './book/reader/bookContent.js';
@@ -93,6 +93,25 @@ async function applyPdfDimensions(pageWidthPts, pageHeightPts, pageCount) {
   refreshFlipLabel();
 }
 
+let rebuildInFlight = false;
+let rebuildRequested = false;
+
+async function rebuildSimulation() {
+  if (rebuildInFlight) {
+    rebuildRequested = true;
+    return;
+  }
+  rebuildInFlight = true;
+  do {
+    rebuildRequested = false;
+    pages.dispose();
+    pages = await PageSimulation.create(bookGroup);
+    applyJacket();
+    refreshFlipLabel();
+  } while (rebuildRequested);
+  rebuildInFlight = false;
+}
+
 initBookLoader({
   onJacket: (j) => { jacket = j; applyJacket(); },
   onDimensions: applyPdfDimensions,
@@ -102,7 +121,23 @@ initBookLoader({
 // --- UI ---
 const flipBtn = document.getElementById('flipBtn');
 const resetBtn = document.getElementById('resetBtn');
+const spineRotationInput = document.getElementById('spine-rotation');
+const spineRotationValue = document.getElementById('spine-rotation-value');
+const spineRotationPanel = document.getElementById('spine-rotation-panel');
 let simulationPaused = false;
+
+function refreshSpineRotationLabel() {
+  if (spineRotationInput) spineRotationInput.value = String(SPINE_ROTATION);
+  if (spineRotationValue) spineRotationValue.textContent = SPINE_ROTATION.toFixed(2);
+}
+
+spineRotationInput?.addEventListener('input', () => {
+  const value = Number(spineRotationInput.value);
+  setSpineRotation(value);
+  refreshSpineRotationLabel();
+  rebuildSimulation();
+});
+refreshSpineRotationLabel();
 
 function refreshFlipLabel() {
   if (flipBtn) flipBtn.textContent = pages.flipped ? 'Flip book back' : 'Flip book over';
@@ -145,6 +180,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min((now - lastFrameTime) / 1000, 1 / 30);
   lastFrameTime = now;
 
+  if (spineRotationPanel) spineRotationPanel.style.display = anglePanel.visible ? 'block' : 'none';
   if (!anglePanel.visible) simulationPaused = false;
 
   cameraPan.update(dt);

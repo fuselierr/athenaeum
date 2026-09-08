@@ -70,6 +70,7 @@ export function createAnglePanel({ getPages, getPageTurn }) {
 
     const { A, D, P1, P2 } = pages.panelAngles;
     const covers = pages.hardcoverAngles;
+    const hinges = pages.spineHingePositions;
     const lines = [
       'panel angles',
       `  A   ${fmt(A)}`,
@@ -80,6 +81,16 @@ export function createAnglePanel({ getPages, getPageTurn }) {
       'hardcover angles',
       `  H1  ${fmt(covers.H1)}`,
       `  H2  ${fmt(covers.H2)}`,
+      '',
+      'spine hinge Y/Z',
+      ...['H1', 'BC', 'H2'].flatMap((name) => {
+        const hinge = hinges[name];
+        return [
+          `  ${name.padEnd(2)} mid  y ${hinge.midY.toFixed(3)}  z ${hinge.midZ.toFixed(3)}`,
+          `      s1   y ${hinge.s1Y.toFixed(3)}  z ${hinge.s1Z.toFixed(3)}`,
+          `      s2   y ${hinge.s2Y.toFixed(3)}  z ${hinge.s2Z.toFixed(3)}`,
+        ];
+      }),
     ];
 
     const turns = getPageTurn?.().getDebugState?.() ?? [];
