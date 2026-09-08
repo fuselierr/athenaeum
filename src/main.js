@@ -93,25 +93,6 @@ async function applyPdfDimensions(pageWidthPts, pageHeightPts, pageCount) {
   refreshFlipLabel();
 }
 
-let rebuildInFlight = false;
-let rebuildRequested = false;
-
-async function rebuildSimulation() {
-  if (rebuildInFlight) {
-    rebuildRequested = true;
-    return;
-  }
-  rebuildInFlight = true;
-  do {
-    rebuildRequested = false;
-    pages.dispose();
-    pages = await PageSimulation.create(bookGroup);
-    applyJacket();
-    refreshFlipLabel();
-  } while (rebuildRequested);
-  rebuildInFlight = false;
-}
-
 initBookLoader({
   onJacket: (j) => { jacket = j; applyJacket(); },
   onDimensions: applyPdfDimensions,
@@ -131,11 +112,13 @@ function refreshSpineRotationLabel() {
   if (spineRotationValue) spineRotationValue.textContent = SPINE_ROTATION.toFixed(2);
 }
 
+// No rebuild: the tilt is a render-root transform plus a gravity rotation
+// (PageSimulation._applySpineTilt), which the next step() picks up on its
+// own. Recreating the simulation here would throw the book's whole state
+// away on every pointer move of the drag.
 spineRotationInput?.addEventListener('input', () => {
-  const value = Number(spineRotationInput.value);
-  setSpineRotation(value);
+  setSpineRotation(Number(spineRotationInput.value));
   refreshSpineRotationLabel();
-  rebuildSimulation();
 });
 refreshSpineRotationLabel();
 

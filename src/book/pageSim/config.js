@@ -103,13 +103,17 @@ export function setPageDimensions(hingeLen, panelReach) {
  *
  * Whichever endpoint is lower is the pivot and stays pinned; the other
  * swings around it, so the segment never stretches. Converted to an angle
- * by spineBeta() below, and turned into actual hinge geometry by math.js's
- * spineHinge().
+ * by spineBeta() below.
+ *
+ * This moves hinge POSITIONS only. It is a deformation of the book, not a
+ * rotation of it: page angles, the revolute joints' axis and gravity are
+ * all left completely alone, because the tilt turns about X and that is
+ * already the axis every one of them is defined around. See math.js's
+ * spineHinge(), which is the single place it is applied.
  *
  * `let`, like the other layout values here: it is meant to be driven at
- * runtime. NOTE that the revolute joints bake their axis in at creation
- * (spread.js's makeJoint, called from drop()), so a change only reaches
- * the physics on the next drop()/PageSimulation rebuild.
+ * runtime, and unlike HINGE_LEN/PANEL_REACH/SPINE_GAP it needs NO rebuild
+ * to take effect -- the next step() picks it up. Nothing is baked in.
  */
 export let SPINE_ROTATION = 0;
 

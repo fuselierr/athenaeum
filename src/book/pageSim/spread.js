@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import {
   HINGE_LEN, PANEL_REACH, COLLIDER_THICK, PIVOT_TO_NEAR_EDGE,
   NO_SELF_COLLIDE, AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE, BC_FIXED_ANGLE,
+  spineBeta,
 } from './config.js';
 import {
   pageAngle, pageTransform, spineHinge,
@@ -35,20 +36,23 @@ export function createSpread(world, parent, opts) {
 
   const anchorNear = { y: 0, z: anchorNearZ };
   const anchorFar = { y: 0, z: anchorFarZ };
-  // Anchor bodies sit at the MIDPOINT of their (possibly tilted) hinge
-  // segment -- see math.js's spineHinge. At SPINE_ROTATION 0 that midpoint
-  // is (0, y, z), exactly where these used to be.
-  const nearHinge = spineHinge(anchorNear.z);
-  const farHinge = spineHinge(anchorFar.z);
+  // Anchor bodies sit wherever SPINE_ROTATION has put their hinge (math.js's
+  // spineHinge) -- at rest that is (0, y, z), exactly where they used to be.
+  // placeAnchor() below is what keeps them there; these two just need a
+  // position to be born at.
+  const nearMid = spineHinge(anchorNear.z).mid;
+  const farMid = spineHinge(anchorFar.z).mid;
   const anchorBodyNear = world.createRigidBody(
-    RAPIER.RigidBodyDesc.fixed().setTranslation(nearHinge.mid.x, nearHinge.mid.y, nearHinge.mid.z),
+    RAPIER.RigidBodyDesc.fixed().setTranslation(0, nearMid.y + anchorNear.y, nearMid.z),
   );
   const anchorBodyFar = world.createRigidBody(
-    RAPIER.RigidBodyDesc.fixed().setTranslation(farHinge.mid.x, farHinge.mid.y, farHinge.mid.z),
+    RAPIER.RigidBodyDesc.fixed().setTranslation(0, farMid.y + anchorFar.y, farMid.z),
   );
 
-  const anchorNearVec = new THREE.Vector3(0, anchorNear.y, anchorNear.z);
-  const anchorFarVec = new THREE.Vector3(0, anchorFar.y, anchorFar.z);
+  // The same two hinge points as Vector3s, for the curl/wedge geometry.
+  // Kept in step with the bodies above by placeAnchor().
+  const anchorNearVec = new THREE.Vector3(0, nearMid.y + anchorNear.y, nearMid.z);
+  const anchorFarVec = new THREE.Vector3(0, farMid.y + anchorFar.y, farMid.z);
   const halfWidth = HINGE_LEN / 2;
   const curlAnchorVec = curlPage === 'near' ? anchorNearVec : anchorFarVec;
   // Ref side = whichever of near/far ISN'T the curl page -- both the real
@@ -110,14 +114,16 @@ export function createSpread(world, parent, opts) {
     return body;
   }
 
-  // Read per joint rather than fixed: the revolute axis has to lie ALONG
-  // the tilted spine, not along world X. Baked in at creation, so a
-  // SPINE_ROTATION change reaches the physics on the next drop().
+  // Every page on every spread hinges about world X. Tilting the spine
+  // rotates ABOUT that same axis, which cannot move itself, so this stays a
+  // constant -- joints never need rebuilding when SPINE_ROTATION changes,
+  // and a live tilt is just the anchor bodies sliding along (placeAnchor).
+  const hingeAxis = { x: 1, y: 0, z: 0 };
   const anchorLocalOrigin = { x: 0, y: 0, z: 0 };
   const pageLocalAnchor = { x: 0, y: 0, z: -PIVOT_TO_NEAR_EDGE };
   function makeJoint(anchorBody, pageBody) {
     const j = world.createImpulseJoint(
-      RAPIER.JointData.revolute(anchorLocalOrigin, pageLocalAnchor, spineHinge(0).axis),
+      RAPIER.JointData.revolute(anchorLocalOrigin, pageLocalAnchor, hingeAxis),
       anchorBody, pageBody, true,
     );
     j.setLimits(0, openLimit);
@@ -312,21 +318,52 @@ export function createSpread(world, parent, opts) {
   // and angular velocity. `pairGap()` picks up the new separation on the
   // next curl/wedge rebuild.
   function moveAnchor(which, z) {
+    const anchor = which === 'near' ? anchorNear : anchorFar;
+    anchor.z = z;
+    placeAnchor(which);
+  }
+
+  // Put one hinge where the spine currently says it belongs -- called both
+  // when the hinge slides along the spine (moveAnchor) and when the spine
+  // itself tilts underneath it (refreshHinges).
+  //
+  // Every body hinged there is moved with it, rather than waiting for the
+  // joint solver to drag them across over the next few frames: each keeps
+  // its own swing angle (pageTransform never touches `angle`) and its
+  // angular velocity, and simply arrives at the new hinge already there.
+  function placeAnchor(which) {
     const isNear = which === 'near';
     const anchor = isNear ? anchorNear : anchorFar;
     const vec = isNear ? anchorNearVec : anchorFarVec;
     const anchorBody = isNear ? anchorBodyNear : anchorBodyFar;
     const body = isNear ? bodyNear : bodyFar;
 
-    anchor.z = z;
-    vec.z = z;
-    // Same tilted midpoint the body was created at, recomputed for the new z.
-    const hinge = spineHinge(z);
-    anchorBody.setTranslation({ x: hinge.mid.x, y: hinge.mid.y, z: hinge.mid.z }, true);
+    const mid = spineHinge(anchor.z).mid;
+    const y = mid.y + anchor.y;
+    anchorBody.setTranslation({ x: 0, y, z: mid.z }, true);
+    vec.set(0, y, mid.z);
+
     if (body) {
       const t = pageTransform(anchor, pageAngle(body));
       body.setTranslation(t.pos, true);
     }
+    // The pseudo body hangs off whichever of the two anchors is the
+    // reference one, so it rides along with exactly that one.
+    if (pseudoBody && isNear === refIsNear) {
+      const t = pageTransform(refAnchor, pageAngle(pseudoBody));
+      pseudoBody.setTranslation(t.pos, true);
+    }
+  }
+
+  // Pick up a SPINE_ROTATION changed since the last frame. Cheap to call
+  // every step: does nothing at all unless the tilt actually moved.
+  let _hingeBeta = spineBeta();
+  function refreshHinges() {
+    const beta = spineBeta();
+    if (beta === _hingeBeta) return;
+    _hingeBeta = beta;
+    placeAnchor('near');
+    placeAnchor('far');
   }
 
   // Cushions the REAL reference/cover body (A or D) against its own pseudo
@@ -512,6 +549,7 @@ export function createSpread(world, parent, opts) {
   // Split so the cross-spread inner-page correction can run after BOTH
   // spreads' own physics corrections but before EITHER syncs its meshes.
   function stepPhysics() {
+    refreshHinges();
     applyAirCushion();
     enforceNoCrossing();
   }

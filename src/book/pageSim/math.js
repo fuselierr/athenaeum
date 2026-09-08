@@ -1,10 +1,27 @@
 import * as THREE from 'three';
-import { HINGE_LEN, PIVOT_TO_NEAR_EDGE, spineBeta } from './config.js';
+import { HINGE_LEN, PIVOT_TO_NEAR_EDGE, SPINE_GAP, spineBeta } from './config.js';
+
+/**
+ * Distance between the spine's two long edges -- i.e. the book's actual
+ * thickness, since cover A's hinge sits at +SPINE_GAP and cover D's at
+ * -SPINE_GAP. This is what spineTilt() rocks the book about, so the pivot
+ * lands ON a spine edge and the book rolls onto its own side rather than
+ * swinging about some line out under a page. Read live, so a re-sized book
+ * (setSpineGap) keeps pivoting on its own edge.
+ */
+function spineTiltSpan() {
+  return 2 * SPINE_GAP;
+}
 
 /**
  * Small shared math helpers for the page simulation. Every page rotates
  * purely about world X, so a lot of this collapses to sin/atan2 of a single
  * angle.
+ *
+ * That "purely about world X" holds even with SPINE_ROTATION engaged,
+ * because tilting the spine is a RIGID rotation of the entire book rather
+ * than a per-hinge deformation -- see spineTilt() below. The simulation
+ * therefore runs, in full, in the flat frame these helpers assume.
  */
 
 // Read-only shared hinge axis. `applyAxisAngle` / `addScaledVector` never
@@ -28,68 +45,95 @@ export function pageAngle(body) {
 
 /**
  * World transform of a page hinged at `anchor` and swung to `angle`.
+ *
  * Rotation is pure X, so the page's own x stays 0; only its offset from the
- * anchor's (y, z) rotates. Shared by spawn logic and every no-crossing
- * correction so they all agree on where a page sits at a given angle.
+ * hinge rotates. Shared by spawn logic and every no-crossing correction so
+ * they all agree on where a page sits at a given angle.
+ *
+ * The hinge itself is wherever SPINE_ROTATION has put it (spineHinge), NOT
+ * the flat (0, anchor.y, anchor.z) -- that is the whole of what tilting the
+ * spine does to a page. Note what it does NOT do: `angle`, and therefore
+ * `rot`, is untouched. A page's swing is measured about X, the tilt rotates
+ * about X, and a rotation cannot move its own axis -- so hinge angles stay
+ * completely independent of spine rotation, and pageAngle() keeps reading
+ * them correctly with no adjustment at all.
+ *
+ * `anchor.y` is layered on top of the hinge's own y rather than replacing
+ * it, so an anchor deliberately offset off the spine keeps that offset.
  */
 const _dir = new THREE.Vector3();
 export function pageTransform(anchor, angle) {
   const dir = _dir.set(0, 0, PIVOT_TO_NEAR_EDGE).applyAxisAngle(AXIS_X, angle);
+  const mid = spineHinge(anchor.z).mid;
   return {
-    pos: { x: 0, y: anchor.y + dir.y, z: anchor.z + dir.z },
+    pos: { x: 0, y: mid.y + anchor.y + dir.y, z: mid.z + dir.z },
     rot: xRotation(angle),
   };
 }
 
 /**
- * Where a single hinge line sits once the spine is tilted by
- * SPINE_ROTATION. Every hinge in the book -- both covers' and both inner
- * leaves' -- is the same segment at a different z, so they all go through
- * here and all tilt together.
+ * Where the hinge at stack position `z` sits once SPINE_ROTATION has
+ * tilted the spine. THE one place the tilt is defined; everything that
+ * places anything -- anchor bodies, page bodies, the pseudo bodies, the
+ * hardcover boards -- goes through here (mostly via pageTransform) so
+ * there is no second opinion about where the spine is.
  *
- * At rest the segment runs along X from (-HINGE_LEN/2, 0, z) to
- * (+HINGE_LEN/2, 0, z). Tilting pins whichever endpoint is LOWER and
- * swings the other up around it, so the segment stays exactly HINGE_LEN
- * long at every angle rather than stretching:
+ * The spine has two long edges, s1 at the -Z end of the stack and s2 at
+ * the +Z end, spineTiltSpan() apart. Tilting lifts one straight up over
+ * the other, in the Z/Y plane:
  *
- *   beta <= 0   s2 (+X end) is the pivot, s1 rises to -HINGE_LEN*sin(beta)
- *   beta >  0   s1 (-X end) is the pivot, s2 rises to  HINGE_LEN*sin(beta)
+ *   t = -1   s2 stays down, s1 lifts directly above it
+ *   t =  0   both edges level, spineTiltSpan() apart -- the flat default
+ *   t = +1   s1 stays down, s2 lifts directly above it
  *
- * At beta = 0 this collapses to exactly the untilted layout -- mid lands
- * on (0, 0, z) and axis on (1, 0, 0) -- which is why leaving
- * SPINE_ROTATION at 0 changes nothing.
+ * Whichever edge is lower is the pivot and stays pinned, so the spine
+ * never stretches. Every hinge in the book -- both covers' and both inner
+ * leaves' -- rides that same line at its own z, so they all move together
+ * and stay correctly spaced.
  *
- * `mid` is the point to hang a revolute joint's anchor body on (the page's
- * own hinge-edge midpoint maps there), and `axis` is that joint's rotation
- * axis. HINGE_LEN is read live, so a resized book re-tilts correctly.
+ * WHAT THIS DOES NOT TOUCH, by construction: the rotation is about X, and
+ * every hinge line in the book already runs along X. A rotation cannot
+ * move its own axis, so `axis` stays (1, 0, 0) forever. That is what keeps
+ * page angles independent of spine rotation -- pageAngle() still reads a
+ * pure-X swing, the revolute joints never need their axis rebuilt, and
+ * gravity never needs recomputing, because none of them can tell the
+ * difference. Only POSITIONS move.
+ *
+ * At beta = 0 mid lands on (0, 0, z), so leaving SPINE_ROTATION at 0 is
+ * bit-for-bit the untilted book.
  *
  * @param {number} z  the hinge's position along the spine stack
  */
 export function spineHinge(z) {
   const beta = spineBeta();
-  const len = HINGE_LEN;
   const cos = Math.cos(beta);
   const sin = Math.sin(beta);
+  const half = HINGE_LEN / 2;
 
-  let s1;
-  let s2;
-  if (beta <= 0) {
-    // s2 pinned at its flat home; s1 swings up around it.
-    s2 = { x: len / 2, y: 0, z };
-    s1 = { x: s2.x - len * cos, y: len * -sin, z };
-  } else {
-    // s1 pinned at its flat home; s2 swings up around it.
-    s1 = { x: -len / 2, y: 0, z };
-    s2 = { x: s1.x + len * cos, y: len * sin, z };
-  }
+  // The spine edge that stays down; the other one swings up around it.
+  // Rotating about a line off the origin is a rotation about X followed by
+  // `pivot - R*pivot`, which is what the pivotZ terms below are.
+  //
+  // NOTE THE SIGN ON y. This is physics space, where DOWN IS +Y -- the
+  // book's render root carries a permanent rotation.x = PI (see
+  // PageSimulation), which is also why gravity here reads (0, +9.81, 0).
+  // So lifting an edge means driving its y NEGATIVE; using +y would tilt
+  // the spine correctly and render it sinking into the desk.
+  const pivotZ = beta > 0 ? -spineTiltSpan() / 2 : spineTiltSpan() / 2;
+  const reach = z - pivotZ; // distance from the pinned edge, along the flat spine
+  const mid = {
+    x: 0,
+    y: -reach * sin,
+    z: reach * cos + pivotZ,
+  };
 
   return {
     beta,
-    s1,
-    s2,
-    mid: { x: (s1.x + s2.x) / 2, y: (s1.y + s2.y) / 2, z },
-    // s2 - s1 normalised. Works out to (cos, sin, 0) on either branch.
-    axis: { x: cos, y: sin, z: 0 },
+    mid,
+    // The hinge line's two ends, along X. Unrotated: see above.
+    s1: { x: -half, y: mid.y, z: mid.z },
+    s2: { x: half, y: mid.y, z: mid.z },
+    axis: { x: 1, y: 0, z: 0 },
   };
 }
 

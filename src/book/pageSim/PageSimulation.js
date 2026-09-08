@@ -41,6 +41,9 @@ export class PageSimulation {
     // turned over visually (rotation.x = PI) without touching the physics —
     // rigid bodies, anchors and the gravity-based flip all stay in their
     // own untouched world coordinates; this is a render-only transform.
+    // SPINE_ROTATION is deliberately NOT part of it: the tilt moves the
+    // hinges themselves (math.js's spineHinge), which is a deformation of
+    // the book, not a rotation of it.
     this.root = new THREE.Group();
     this.root.name = 'PageSimulation';
     this.root.rotation.x = Math.PI;
@@ -533,6 +536,11 @@ export class PageSimulation {
    * and Z (the standard rotate-180-about-X formula with the y/z terms'
    * signs flipped) rather than needing a real matrix inverse. `flipped`
    * layers on top as one more sign flip, same role it always had.
+   *
+   * SPINE_ROTATION never enters this. Tilting the spine moves hinge
+   * POSITIONS and nothing else — no body is re-oriented and no frame is
+   * rotated — so which way down points is simply unaffected, and a tilt
+   * change does not have to touch gravity at all.
    */
   _applyGravity() {
     const d = this._gravityDir;
