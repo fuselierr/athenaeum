@@ -3,7 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import {
   SPINE_GAP, PANEL_REACH, GRAVITY_MAG, OPEN_LIMIT,
   HARDCOVER_AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE,
-  BC_MEET_ANGLE, BC_START_GAP, COVER_START_NEAR, COVER_START_FAR, BC_FIXED_ANGLE,
+  BC_START_GAP, COVER_START_NEAR, COVER_START_FAR, bcFixedAngle,
   PSEUDO_REPEL_RATE, PSEUDO_COLLISION_RESTITUTION,
 } from './config.js';
 import { pageAngle, pageTransform, spineHinge } from './math.js';
@@ -470,7 +470,7 @@ export class PageSimulation {
   /**
    * Re-drop both spreads. Covers (A, D) start splayed a few degrees inside
    * their [0, OPEN_LIMIT] range; the inner pages (B, C) start near
-   * BC_MEET_ANGLE, a small gap apart — splaying them toward their open
+   * the meeting plane, a small gap apart — splaying them toward their open
    * extreme would send them through each other at t = 0.
    */
   reset() {
@@ -481,8 +481,12 @@ export class PageSimulation {
     this._hardcoverAngularVelocity.H2 = 0;
     this.spreadFront.moveAnchor('far', 0);
     this.spreadBack.moveAnchor('near', 0);
-    this.spreadFront.drop(COVER_START_NEAR, BC_MEET_ANGLE - BC_START_GAP / 2);
-    this.spreadBack.drop(BC_MEET_ANGLE + BC_START_GAP / 2, COVER_START_FAR);
+    // Straddling the CURRENT meeting plane, which tilts with the spine --
+    // dropping onto a flat pi/2 while the spine is tilted would just make
+    // _enforceNoCrossingBC snap both leaves square on the first frame.
+    const meet = bcFixedAngle();
+    this.spreadFront.drop(COVER_START_NEAR, meet - BC_START_GAP / 2);
+    this.spreadBack.drop(meet + BC_START_GAP / 2, COVER_START_FAR);
     this.setFlipped(false);
     this._lastStep = 0; // next step() re-bases its delta instead of jumping
   }
@@ -589,7 +593,7 @@ export class PageSimulation {
     this.hardcover.update(); // boards use independent angles, after page corrections
   }
 
-  // B's and C's own hinge-tangent angle is a fixed constant (BC_FIXED_ANGLE)
+  // B's and C's own hinge-tangent angle is fixed relative to the spine (bcFixedAngle())
   // for the entire lifetime of the book. Gravity itself never gets a
   // chance to touch it in the first place -- spread.js's drop() creates
   // both bodyB (spreadFront.bodyFar) and bodyC (spreadBack.bodyNear) with
@@ -619,7 +623,7 @@ export class PageSimulation {
       [bodyC, this.spreadBack.anchorNear],
     ];
     for (const [body, anchor] of pairs) {
-      const t = pageTransform(anchor, BC_FIXED_ANGLE);
+      const t = pageTransform(anchor, bcFixedAngle());
       body.setTranslation(t.pos, true);
       body.setRotation(t.rot, true);
       body.setAngvel({ x: 0, y: 0, z: 0 }, true);
@@ -634,7 +638,7 @@ export class PageSimulation {
    * config.js for why: without this, flipping the book over (setFlipped)
    * can leave gravity pulling P1 and P2 toward the exact same resting
    * angle, an unstable tie that would otherwise show up as the book
-   * reading as collapsed shut (right at BC_FIXED_ANGLE) instead of open to
+   * reading as collapsed shut (right at bcFixedAngle()) instead of open to
    * wherever it was last reading. PSEUDO_REPEL_RATE is small enough that
    * under ordinary gravity it's lost in everything else already moving
    * these bodies -- it only actually decides anything once real gravity

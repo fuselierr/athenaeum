@@ -165,12 +165,35 @@ export const HARDCOVER_AIR_CUSHION_RANGE = 0.1; // hardcover gap where cushionin
 export const BC_MEET_ANGLE = Math.PI / 2;
 export const BC_START_GAP = 0.15; // radians between the two inner pages at t = 0
 
-// B's and C's own hinge-tangent angle, held fixed for the entire lifetime
-// of the book -- see PageSimulation._enforceNoCrossingBC. Only their curl
-// SHAPE (driven by each spread's invisible pseudo body -- see spread.js's
-// drop() -- via straightAngle()) ever changes; the tangent right at the
-// shared hinge never does.
-export const BC_FIXED_ANGLE = BC_MEET_ANGLE;
+/**
+ * B's and C's own hinge-tangent angle, held fixed for the entire lifetime
+ * of the book -- see PageSimulation._enforceNoCrossingBC. Only their curl
+ * SHAPE (driven by each spread's invisible pseudo body -- see spread.js's
+ * drop() -- via straightAngle()) ever changes; the tangent right at the
+ * shared hinge never does.
+ *
+ * "Fixed" means fixed RELATIVE TO THE SPINE, which is why this tracks
+ * spineBeta() rather than being a bare constant. The tangent is meant to
+ * leave the hinge square to the spine, and the reason is geometric, not
+ * cosmetic: the curl arc's centre sits perpendicular to this tangent, one
+ * hinge-separation away (curlGeometry.js's buildCurlStrip), so square-to-
+ * the-spine is exactly the condition that puts that centre ON the
+ * reference page's hinge -- A's for the front spread, D's for the back.
+ * Leave it at a flat pi/2 while the spine tilts and the centre keeps the
+ * old y while A and D move, so the curl detaches from the cover it is
+ * supposed to be wrapping toward.
+ *
+ * Derivation, for anyone checking: the spine runs along
+ * (0, -sin(beta), cos(beta)), a page at angle `a` reaches along
+ * (0, -sin(a), cos(a)), and their dot product is cos(a - beta) -- zero
+ * exactly when a = beta +- pi/2. Hence BC_MEET_ANGLE + beta.
+ *
+ * A function, not a `let`: there is no state to keep in sync, and every
+ * caller reads it fresh, so a live SPINE_ROTATION needs no rebuild.
+ */
+export function bcFixedAngle() {
+  return BC_MEET_ANGLE + spineBeta();
+}
 
 // Fractions of OPEN_LIMIT the outer cover pages splay to at t = 0.
 export const COVER_START_NEAR = OPEN_LIMIT * 0.05;
@@ -185,7 +208,7 @@ export const COVER_START_FAR = OPEN_LIMIT * 0.95;
 // gravity alone would pull P1 and P2 toward the exact same resting
 // angle -- both hinges feel an identical torque with no reason to settle
 // on either side of the other, a real (if unstable) tie. That tie is
-// exactly BC_FIXED_ANGLE, i.e. the book reading as fully collapsed shut
+// exactly bcFixedAngle(), i.e. the book reading as fully collapsed shut
 // rather than splayed open around wherever it was last reading -- this
 // nudge is what breaks the tie so it settles open instead. See
 // PageSimulation._applyPseudoRepulsion.

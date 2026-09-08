@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
   HINGE_LEN, PANEL_REACH, COLLIDER_THICK, PIVOT_TO_NEAR_EDGE,
-  NO_SELF_COLLIDE, AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE, BC_FIXED_ANGLE,
+  NO_SELF_COLLIDE, AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE, bcFixedAngle,
   spineBeta,
 } from './config.js';
 import {
@@ -78,7 +78,7 @@ export function createSpread(world, parent, opts) {
   //
   // Normally this spread's own hinge separation (pairGap). But once the
   // curl's target tangent -- the pseudo body's angle -- has crossed the
-  // meeting plane (BC_FIXED_ANGLE, i.e. straight up), the leaf is bending
+  // meeting plane (bcFixedAngle(), i.e. square to the spine), the leaf is bending
   // OVER onto the other half of the book, and the arc that spans that
   // reach is set by the OTHER spread's hinge separation, not this one's.
   // refIsNear picks the sense: spreadFront (curlPage 'far', B) has curled
@@ -86,7 +86,8 @@ export function createSpread(world, parent, opts) {
   // 'near', C) when its ref angle is BELOW it.
   function curlRadius() {
     const refAngle = _refAngleOverride ?? pageAngle(pseudoBody);
-    const curledOver = refIsNear ? refAngle > BC_FIXED_ANGLE : refAngle < BC_FIXED_ANGLE;
+    const plane = bcFixedAngle();
+    const curledOver = refIsNear ? refAngle > plane : refAngle < plane;
     return (curledOver && _otherPairGap) ? _otherPairGap() : pairGap();
   }
 

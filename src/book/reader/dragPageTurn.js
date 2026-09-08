@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { HINGE_LEN, PANEL_REACH, BC_FIXED_ANGLE } from '../pageSim/config.js';
-import { pageAngle } from '../pageSim/math.js';
+import { HINGE_LEN, PANEL_REACH, bcFixedAngle } from '../pageSim/config.js';
+import { pageAngle, spineHinge } from '../pageSim/math.js';
 import { PageSimulation } from '../pageSim/PageSimulation.js';
 import {
   CURL_ROWS, CURL_INDEX, createCurlUV, writeCurlUV, buildCurlStrip,
@@ -11,7 +11,7 @@ import {
  *
  * B and C are both just buildCurlStrip() calls sharing the exact same
  * anchor point (the shared inner-leaf hinge) and the exact same hinge-
- * tangent angle (BC_FIXED_ANGLE, hard-locked by
+ * tangent angle (bcFixedAngle(), hard-locked by
  * PageSimulation._enforceNoCrossingBC) — they differ only in `refAngle`
  * (B targets spreadFront's pseudoBody, mirroring A; C targets
  * spreadBack's pseudoBody, mirroring D) and `radius` (each spread's own
@@ -92,7 +92,7 @@ export function createDragPageTurn({
   }
 
   // The temp strip and the real panel underneath it both hinge from the
-  // exact same anchor point with the exact same tangent (BC_FIXED_ANGLE)
+  // exact same anchor point with the exact same tangent (bcFixedAngle())
   // -- so right near that anchor, before the two curves have had any room
   // to diverge toward their different refAngle/radius targets, they're
   // nearly coincident. Two coincident curved surfaces z-fight
@@ -203,7 +203,12 @@ export function createDragPageTurn({
     // y = turn.lift, not 0 -- see TEMP_TURN_LIFT above. buildCurlStrip
     // adds this anchor point into every row it writes, so this rigidly
     // lifts the whole strip by a constant offset without distorting it.
-    _anchorLocal.set(0, turn.lift, pages.spreadFront.anchorFar.z); // z == spreadBack.anchorNear.z, the shared B/C hinge
+    // The shared B/C hinge, wherever SPINE_ROTATION has put it -- the same
+    // point the real B/C strips hinge from (z == spreadBack.anchorNear.z).
+    // Reading the flat z here instead would leave the temp leaf hanging off
+    // the untilted spine while the pages it is copying moved.
+    const bcHinge = spineHinge(pages.spreadFront.anchorFar.z).mid;
+    _anchorLocal.set(0, bcHinge.y + turn.lift, bcHinge.z);
     // Read the two shapes this leaf morphs between LIVE, every frame, not
     // from a snapshot taken when the turn began. The real B/C strips are
     // themselves rebuilt every frame from these same two values, and both
@@ -245,7 +250,7 @@ export function createDragPageTurn({
     // startup -- which showed up as the temp page being a different size
     // than B/C and clipping into the cover beside it.
     const halfWidth = HINGE_LEN / 2;
-    buildCurlStrip(turn.positions, _anchorLocal, BC_FIXED_ANGLE, refAngle, radius, PANEL_REACH, halfWidth);
+    buildCurlStrip(turn.positions, _anchorLocal, bcFixedAngle(), refAngle, radius, PANEL_REACH, halfWidth);
     turn.meshFront.geometry.attributes.position.needsUpdate = true;
     turn.meshBack.geometry.attributes.position.needsUpdate = true;
     turn.meshFront.geometry.computeVertexNormals();
@@ -469,7 +474,8 @@ export function createDragPageTurn({
     // Screen-space pivot the drag's angular sweep is measured around --
     // the shared hinge, projected. Pointer-only: a turn that plays itself
     // has no cursor to measure against.
-    _anchorLocal.set(0, 0, pages.spreadFront.anchorFar.z);
+    const bcMid = spineHinge(pages.spreadFront.anchorFar.z).mid;
+    _anchorLocal.set(0, bcMid.y, bcMid.z);
     _anchorWorld.copy(_anchorLocal).applyMatrix4(pages.root.matrixWorld);
     screenPointFor(_anchorWorld, turn.pivotScreen);
     turn.angle0 = Math.atan2(e.clientY - turn.pivotScreen.y, e.clientX - turn.pivotScreen.x);
