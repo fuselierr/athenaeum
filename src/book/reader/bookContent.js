@@ -56,6 +56,32 @@ export function createBookContent(getPages) {
   // inversion -- because RIGHT_HAND_PANEL is C, the panel on cover D's side.
   let readingProgress = 0;
 
+  // A and D are the outer cover PAGES: permanently the book's first and
+  // last leaves. They never turn, so they are painted once per loaded book
+  // rather than per spread.
+  //
+  // They get their OWN texture instances rather than the shared per-page
+  // ones above, because setPageTexture bakes a slot's uv orientation into
+  // the texture object itself (PageSimulation.orientPageTexture, driven by
+  // SLOT_ON_MINUS_Z) and A and D sit on opposite sides of the block. Any
+  // book whose first and last page are the same one -- a single-page pdf --
+  // would otherwise hand both slots the same object and have them fight
+  // over its repeat values, leaving one cover mirrored.
+  const coverTextures = { A: null, D: null };
+
+  function paintCovers() {
+    const pages = getPages();
+    const covers = { A: pageCanvases[0], D: pageCanvases[pageCanvases.length - 1] };
+    for (const slot of ['A', 'D']) {
+      coverTextures[slot]?.dispose();
+      coverTextures[slot] = null;
+      const canvas = covers[slot];
+      if (!canvas) continue;
+      coverTextures[slot] = new THREE.CanvasTexture(canvas);
+      pages.setPageTexture(slot, coverTextures[slot]);
+    }
+  }
+
   function textureForPage(index) {
     if (!pageCanvases[index]) return null;
     if (!pageTextures[index]) {
@@ -115,6 +141,7 @@ export function createBookContent(getPages) {
       pageTextures.length = 0;
       leafStart = 0;
       showLeaf(0);
+      paintCovers();
       // Snap, don't ease, on a fresh book: a rebuilt simulation starts
       // with its hinge centred, and easing from there would look like the
       // book settling from the middle every time one loads.
@@ -122,6 +149,14 @@ export function createBookContent(getPages) {
     },
 
     showLeaf,
+
+    /**
+     * Re-apply the first/last page to covers A and D. Only needed after
+     * the simulation has been rebuilt underneath us (new page dimensions
+     * throw away the old meshes and their materials) -- the normal load
+     * path goes through setCanvases, which already does this.
+     */
+    paintCovers,
 
     /** Ease the hinge toward the spread we're actually on. */
     update(dt) {

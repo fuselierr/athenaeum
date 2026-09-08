@@ -133,13 +133,20 @@ export function spineBeta() {
 // settles rather than snapping the instant a leaf lands. Same exponential
 // form as bookContent's BC_EASE_RATE, and deliberately slower than it: the
 // hinge slides first, the spine follows.
-export const SPINE_ROTATION_EASE_RATE = 3; // 1/s
+export const SPINE_ROTATION_EASE_RATE = 4.5; // 1/s
+
 
 export const GRAVITY_MAG = 9.81;
 
-// Both spreads open the same amount — no built-in asymmetry between front
-// and back.
-export const OPEN_LIMIT = Math.PI * 0.98;
+// How far a cover may swing from closed. Both spreads open the same
+// amount — no built-in asymmetry between front and back.
+//
+// PAST FLAT ON PURPOSE. Math.PI is the cover lying flat in line with the
+// spine; beyond that the binding hyper-extends, the way a paperback folded
+// back on itself or a hardback pressed open past its hinge does. Anything
+// reading this as "the fully open pose" wants Math.PI, not this -- see
+// COVER_START_NEAR/FAR below, which deliberately do not follow it.
+export const OPEN_LIMIT = Math.PI * 1;
 
 // All page colliders share one collision group that excludes itself, so no
 // two pages ever generate contacts with each other — collisions aren't what
@@ -203,9 +210,14 @@ export function bcFixedAngle() {
   return BC_MEET_ANGLE + spineBeta();
 }
 
-// Fractions of OPEN_LIMIT the outer cover pages splay to at t = 0.
-export const COVER_START_NEAR = OPEN_LIMIT * 0.05;
-export const COVER_START_FAR = OPEN_LIMIT * 0.95;
+// Where the outer cover pages splay to at t = 0, as fractions of FLAT
+// (Math.PI) -- NOT of OPEN_LIMIT, which now runs past flat. The reset pose
+// is "lying open on the desk", which is pi; anchoring these to OPEN_LIMIT
+// would have the book reset already hyper-extended every time that limit
+// was raised. Anchored here they stay put, and the values are within a
+// couple of degrees of what they have always been.
+export const COVER_START_NEAR = Math.PI * 0.05;
+export const COVER_START_FAR = Math.PI * 0.95;
 
 // A tiny constant angular push applied to the two pseudo bodies EVERY
 // frame, P1 toward a smaller angle and P2 toward a larger one -- i.e.
@@ -231,4 +243,4 @@ export const PSEUDO_REPEL_RATE = 0.12; // rad/s^2
 // always conserved either way, this only tunes how much of the closing
 // energy comes back out as separating velocity afterward versus being
 // absorbed, like real paper/card would.
-export const PSEUDO_COLLISION_RESTITUTION = 0.4;
+export const PSEUDO_COLLISION_RESTITUTION = 0.7;

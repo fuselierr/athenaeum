@@ -11,6 +11,8 @@ import { CURL_ROWS } from './curlGeometry.js';
  * their shared PANEL_REACH length — so the far edge of the wedge always
  * lands exactly on the curl's real tip, and the surface hugs the curve in
  * between rather than cutting through it.
+ *
+ * It is a tube with the flat-facing side left OPEN -- see WEDGE_INDEX.
  */
 
 export const WEDGE_ROWS = CURL_ROWS;
@@ -27,8 +29,23 @@ export const WEDGE_INDEX = (() => {
     idx.push(flatL(i), curlL(i + 1), curlL(i));
     idx.push(flatR(i), curlR(i + 1), flatR(i + 1));
     idx.push(flatR(i), curlR(i), curlR(i + 1));
-    idx.push(flatL(i), flatR(i), flatR(i + 1));
-    idx.push(flatL(i), flatR(i + 1), flatL(i + 1));
+    // NO flatL<->flatR face here, deliberately. It would span the wedge's
+    // full width along the flat side -- and the flat rails are lerped
+    // between the flat page's OWN corners (spread.js's updateWedge reads
+    // them off flatMesh.matrix), so that face would be exactly coplanar
+    // with the page over its entire area, not merely close to it. Two
+    // coincident surfaces z-fight, and renderOrder cannot save this one:
+    // it only breaks ties at EXACTLY equal depth, while the page and the
+    // wedge reach their depths through different transform paths and so
+    // land a ULP apart in either direction across the surface. That was
+    // the speckled flicker over panels A and D.
+    //
+    // Nothing is lost by dropping it: the face lies underneath the page it
+    // is coincident with, so it was never visible. The page itself (opaque,
+    // DoubleSide) plugs the opening exactly, since the rails are its own
+    // corners -- the wedge is open on that side but never looks it. The
+    // flat rails stay in the buffer; the side walls and end caps still use
+    // them, so the wedge still meets the page's edges with no crack.
     idx.push(curlL(i), curlR(i + 1), curlR(i));
     idx.push(curlL(i), curlL(i + 1), curlR(i + 1));
   }

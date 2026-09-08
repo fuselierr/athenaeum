@@ -2,6 +2,7 @@
   "dependencies": {
     "@dimforge/rapier3d": "^0.20.0",
     "@dimforge/rapier3d-compat": "^0.14.0",
+    "@supabase/supabase-js": "^2.116.0",
     "express": "^5.2.1",
     "fast-xml-parser": "^5.11.1",
     "html2canvas": "^1.4.1",

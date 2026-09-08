@@ -6,7 +6,7 @@ import {
   spineBeta,
 } from './config.js';
 import {
-  pageAngle, pageTransform, spineHinge,
+  clampNum, pageAngle, pageTransform, spineHinge,
   LOCAL_PIVOT_L, LOCAL_PIVOT_R, LOCAL_TIP_L, LOCAL_TIP_R,
 } from './math.js';
 import {
@@ -93,7 +93,7 @@ export function createSpread(world, parent, opts) {
 
   function makePage(anchor, startAngle, damping, gravityScale) {
     const t = pageTransform(anchor, startAngle);
-    // canSleep(false): a page resting against its joint limit would
+    // canSleep(false): a page resting at the end of its range would
     // otherwise be put to sleep by Rapier, and a sleeping body ignores a
     // later gravity flip until something wakes it — which looked like the
     // book "collapsing" when a correction finally teleported both pages to
@@ -122,13 +122,21 @@ export function createSpread(world, parent, opts) {
   const hingeAxis = { x: 1, y: 0, z: 0 };
   const anchorLocalOrigin = { x: 0, y: 0, z: 0 };
   const pageLocalAnchor = { x: 0, y: 0, z: -PIVOT_TO_NEAR_EDGE };
+  // DELIBERATELY UNLIMITED. The obvious thing is j.setLimits(0, openLimit),
+  // and that is what this used to do -- but Rapier measures a revolute
+  // joint's angle with a shortest-arc extraction, which lives in [-pi, pi].
+  // OPEN_LIMIT now runs PAST flat (see config.js), and a cover at 1.2*pi
+  // reads back as roughly -0.8*pi through that measure: not merely over the
+  // maximum but wildly under the minimum, so the solver would slam the
+  // cover shut the moment it passed flat. The range is enforced by
+  // enforceOpenRange() below instead, which reads pageAngle() -- a plain
+  // 2*atan2 that stays single-valued and correct out to +-2*pi -- and so
+  // does not wrap anywhere near where the book actually goes.
   function makeJoint(anchorBody, pageBody) {
-    const j = world.createImpulseJoint(
+    return world.createImpulseJoint(
       RAPIER.JointData.revolute(anchorLocalOrigin, pageLocalAnchor, hingeAxis),
       anchorBody, pageBody, true,
     );
-    j.setLimits(0, openLimit);
-    return j;
   }
 
   // meshes — the reference page (cover) is a plain flat plane; the curling
@@ -549,8 +557,37 @@ export function createSpread(world, parent, opts) {
 
   // Split so the cross-spread inner-page correction can run after BOTH
   // spreads' own physics corrections but before EITHER syncs its meshes.
+  // The [0, openLimit] range the joints used to enforce -- see makeJoint.
+  // Applied to every body hinged on this spread; B/C are separately locked
+  // to bcFixedAngle() by PageSimulation._enforceNoCrossingBC, so for them
+  // this only ever matters as a backstop.
+  function enforceOpenRange() {
+    for (const entry of [
+      [bodyNear, anchorNear],
+      [bodyFar, anchorFar],
+      [pseudoBody, refAnchor],
+    ]) {
+      const [body, anchor] = entry;
+      if (!body) continue;
+      const angle = pageAngle(body);
+      const clamped = clampNum(angle, 0, openLimit);
+      if (clamped === angle) continue;
+
+      const t = pageTransform(anchor, clamped);
+      body.setTranslation(t.pos, true);
+      body.setRotation(t.rot, true);
+      // Kill only the velocity still driving it further out of range, the
+      // same way every other correction here does -- zeroing outright would
+      // also cancel a legitimate swing back toward the middle.
+      const av = body.angvel().x;
+      const drivingOut = clamped === 0 ? av < 0 : av > 0;
+      if (drivingOut) body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
   function stepPhysics() {
     refreshHinges();
+    enforceOpenRange();
     applyAirCushion();
     enforceNoCrossing();
   }
