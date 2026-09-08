@@ -102,6 +102,7 @@ initBookLoader({
 // --- UI ---
 const flipBtn = document.getElementById('flipBtn');
 const resetBtn = document.getElementById('resetBtn');
+let simulationPaused = false;
 
 function refreshFlipLabel() {
   if (flipBtn) flipBtn.textContent = pages.flipped ? 'Flip book back' : 'Flip book over';
@@ -120,6 +121,11 @@ resetBtn?.addEventListener('click', resetBook);
 refreshFlipLabel();
 
 window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && anglePanel.visible) {
+    simulationPaused = !simulationPaused;
+    e.preventDefault();
+    return;
+  }
   if (e.key === 'r' || e.key === 'R') resetBook();
   if (e.key === 'f' || e.key === 'F') { pages.toggleFlip(); refreshFlipLabel(); }
   // Arrow keys play the same physical turn a drag does rather than swapping
@@ -139,11 +145,15 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min((now - lastFrameTime) / 1000, 1 / 30);
   lastFrameTime = now;
 
+  if (!anglePanel.visible) simulationPaused = false;
+
   cameraPan.update(dt);
   bookManipulator.update();
-  content.update(dt);
-  pages.step();
-  dragPageTurn.update(dt);
+  if (!simulationPaused) {
+    content.update(dt);
+    pages.step();
+    dragPageTurn.update(dt);
+  }
   controls.update();
   renderer.render(scene, camera);
   debugLabels.update();

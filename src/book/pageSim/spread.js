@@ -377,6 +377,40 @@ export function createSpread(world, parent, opts) {
       : (violatesHardcover ? av > 0 : av < 0);
     if (stillDriving) refBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
+    // Carrying the pseudo body along with a hardcover correction is only
+    // ever a REPAIR, never the point. This function keeps the reference
+    // body sandwiched -- H1 <= A <= P1 on the front spread, P2 <= D <= H2
+    // on the back -- and clamping A up off H1 can shove it past P1,
+    // breaking the other half of that sandwich. Dragging P1 up to meet it
+    // is what puts the ordering back.
+    //
+    // So if the pseudo is already clear of where the reference just
+    // landed, the sandwich still holds and the pseudo is free: leave it
+    // completely alone. Snapping it regardless is what was destroying its
+    // independent swing every time A merely touched its board.
+    //
+    // The comparison MUST be against `target`, not the `angleRef` captured
+    // at the top of this function -- by here the reference body has already
+    // been moved to `target`, and angleRef is the pre-clamp position it
+    // just left (still on the far side of the hardcover). Testing against
+    // that stale value leaves a band, angleRef < pseudo < target, where the
+    // pseudo really does need to move but is skipped -- and then next
+    // frame violatesPseudo drags the reference back down onto it, the two
+    // corrections fight, and the pair jitters.
+    const pseudoLeftBehind = refIsNear
+      ? anglePseudo < target // front: need P1 >= A, and A is now at target
+      : anglePseudo > target; // back: need P2 <= D, and D is now at target
+
+    if (violatesHardcover && pseudoLeftBehind) {
+      const pseudoTransform = pageTransform(refAnchor, target);
+      pseudoBody.setTranslation(pseudoTransform.pos, true);
+      pseudoBody.setRotation(pseudoTransform.rot, true);
+      // Read AFTER the zeroing above: the two are in contact and moving as
+      // one, so the pseudo inherits whatever the reference is left with.
+      const refVelocity = refBody.angvel().x;
+      pseudoBody.setAngvel({ x: refVelocity, y: 0, z: 0 }, true);
+    }
+
   }
 
   // Geometric no-crossing: measure how close the curling page's tip has
