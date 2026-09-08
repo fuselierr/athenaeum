@@ -3,6 +3,7 @@ import { createScene } from './scene/createScene.js';
 import { loadDesk } from './scene/desk.js';
 import { loadLamp } from './scene/lamp.js';
 import { PageSimulation } from './book/pageSim/PageSimulation.js';
+import { createBookPlacement } from './book/placement/bookPlacement.js';
 import {
   setPageDimensions, setSpineGap, spineGapForPageCount,
   setSpineRotation, SPINE_ROTATION, PANEL_REACH as INITIAL_PANEL_REACH,
@@ -38,7 +39,7 @@ scene.add(bookGroup);
 // rests on, so they stay put in world space when the book itself is moved.
 // Loaded alongside the page simulation since none of the three waits on
 // the others.
-const [pagesInstance] = await Promise.all([
+const [pagesInstance, desk] = await Promise.all([
   PageSimulation.create(bookGroup),
   loadDesk(scene),
   loadLamp(scene, { position: new THREE.Vector3(1.2, 0, -2.6), scale: 4.75 }),
@@ -48,6 +49,12 @@ const [pagesInstance] = await Promise.all([
 // `getPages` closure rather than capturing the instance.
 let pages = pagesInstance;
 const getPages = () => pages;
+
+// The book as a whole is a rigid body now: it falls, lands on the desk and
+// settles on whichever cover is underneath. bookGroup is its render side --
+// driven by the body when the book is loose, and copied INTO the body while
+// a gesture is holding it (see bookManipulator's `grabbed`).
+const placement = await createBookPlacement({ bookGroup, getPages, desk });
 
 const content = createBookContent(getPages);
 // Constructed BEFORE dragPageTurn on purpose: both listen for pointerdown
@@ -112,11 +119,13 @@ function refreshSpineRotationLabel() {
   if (spineRotationValue) spineRotationValue.textContent = SPINE_ROTATION.toFixed(2);
 }
 
-// No rebuild: the tilt is a render-root transform plus a gravity rotation
-// (PageSimulation._applySpineTilt), which the next step() picks up on its
-// own. Recreating the simulation here would throw the book's whole state
-// away on every pointer move of the drag.
+// Touching the slider takes the spine off its own drive (the page block
+// asking for a tilt -- PageSimulation.spineRotationTarget) and hands it to
+// the pointer; otherwise the next step() would ease straight back to
+// whatever the pages want and the slider would look dead. No rebuild: the
+// tilt only moves hinge positions, which the next step() picks up.
 spineRotationInput?.addEventListener('input', () => {
+  pages.setSpineRotationDriven(false);
   setSpineRotation(Number(spineRotationInput.value));
   refreshSpineRotationLabel();
 });
@@ -126,10 +135,16 @@ function refreshFlipLabel() {
   if (flipBtn) flipBtn.textContent = pages.flipped ? 'Flip book back' : 'Flip book over';
 }
 
+const RESET_POSITION = new THREE.Vector3(0, 0.1, 0);
+const RESET_QUATERNION = new THREE.Quaternion();
+
 function resetBook() {
   pages.reset();
-  bookGroup.quaternion.identity();
-  bookGroup.position.set(0, 0.1, 0); // also undo any shift-drag repositioning
+  bookGroup.quaternion.copy(RESET_QUATERNION);
+  bookGroup.position.copy(RESET_POSITION); // also undo any shift-drag repositioning
+  // The body holds the real placement state -- putting bookGroup back
+  // without this would be undone by the next step().
+  placement.reset(RESET_POSITION, RESET_QUATERNION);
   bookManipulator.refreshPickupHold();
   refreshFlipLabel();
 }
@@ -164,6 +179,9 @@ renderer.setAnimationLoop(() => {
   lastFrameTime = now;
 
   if (spineRotationPanel) spineRotationPanel.style.display = anglePanel.visible ? 'block' : 'none';
+  // The pages drive the tilt, so the readout has to follow it rather than
+  // only updating when the slider is dragged.
+  if (pages.spineRotationDriven) refreshSpineRotationLabel();
   if (!anglePanel.visible) simulationPaused = false;
 
   cameraPan.update(dt);
@@ -171,6 +189,9 @@ renderer.setAnimationLoop(() => {
   if (!simulationPaused) {
     content.update(dt);
     pages.step();
+    // After pages.step(), so the cover colliders are posed from the H1/H2
+    // this frame actually rendered rather than last frame's.
+    placement.step(dt, bookManipulator.grabbed);
     dragPageTurn.update(dt);
   }
   controls.update();

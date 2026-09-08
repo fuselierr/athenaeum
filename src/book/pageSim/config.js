@@ -127,6 +127,14 @@ export function spineBeta() {
   return SPINE_ROTATION * (Math.PI / 2);
 }
 
+// How fast SPINE_ROTATION chases the tilt the page block is asking for
+// (PageSimulation.spineRotationTarget). A rate, not a step, so the spine
+// leans into a new reading position over a few frames the way a real book
+// settles rather than snapping the instant a leaf lands. Same exponential
+// form as bookContent's BC_EASE_RATE, and deliberately slower than it: the
+// hinge slides first, the spine follows.
+export const SPINE_ROTATION_EASE_RATE = 3; // 1/s
+
 export const GRAVITY_MAG = 9.81;
 
 // Both spreads open the same amount — no built-in asymmetry between front

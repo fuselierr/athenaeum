@@ -235,6 +235,35 @@ export function createHardcover({ parent, hardcoverAngles }) {
     spineMesh,
 
     /**
+     * The boards as a COLLISION shape, for the physics that drops the book
+     * on the desk (book/placement/bookPlacement.js). Both boards are the
+     * same box; only their transforms differ, and those are already on
+     * H1.matrix / H2.matrix.
+     *
+     * `centerOffset` is the same shift makeBoard() bakes into the geometry
+     * -- a BoxGeometry is centred on its own origin, so translating the
+     * geometry moves the box away from the mesh origin and a collider
+     * copying only the mesh transform would sit in the wrong place. The
+     * two have to stay in step, which is why this is derived here rather
+     * than re-measured by the caller.
+     *
+     * Regenerated on read (cheap, three numbers) so a book re-sized by a
+     * loaded PDF reports its new board size rather than a stale one.
+     */
+    get boardShape() {
+      return {
+        halfExtents: {
+          x: HINGE_LEN / 2 + square,
+          y: thickness / 2,
+          z: (PANEL_REACH + square) / 2,
+        },
+        // outSign is +1 for H1 and -1 for H2 -- see makeBoard.
+        centerOffset: { H1: { x: 0, y: midOffset, z: square / 2 },
+          H2: { x: 0, y: -midOffset, z: square / 2 } },
+      };
+    },
+
+    /**
      * Dress the book in a jacket. The front board takes the epub's own
      * cover image; the spine and back board are SYNTHESIZED from it,
      * because epub carries a front cover and nothing else -- no back and

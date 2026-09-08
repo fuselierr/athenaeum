@@ -41,6 +41,11 @@ const DESK_TOP_Y = 0; // matches the book's spine/hinge line -- see comment abov
 const DEFAULT_DESK_SCALE = 1.2;
 const DEFAULT_DESK_Y_ROTATION = Math.PI / 2;
 
+// Half-thickness of the invisible physics slab standing in for the desk.
+// Nothing ever reaches the underside, so this only needs to be deep enough
+// that a fast-falling book cannot tunnel through the top face in one step.
+const DESK_SLAB_HALF_DEPTH = 2;
+
 export async function loadDesk(scene, options = {}) {
   const {
     yRotation = DEFAULT_DESK_Y_ROTATION,
@@ -79,5 +84,29 @@ export async function loadDesk(scene, options = {}) {
   desk.rotation.y = yRotation;
 
   scene.add(desk);
-  return desk;
+
+  // Measure the FINAL footprint, after scale/rotation/position are set, so
+  // the physics slab matches what is actually drawn rather than the
+  // authored model. Only the top face matters for collision -- the book
+  // never gets under the desk -- so the slab is given an arbitrary depth
+  // downward and its top pinned to DESK_TOP_Y.
+  const finalBox = new THREE.Box3().setFromObject(desk);
+  const finalCenter = finalBox.getCenter(new THREE.Vector3());
+  const finalSize = finalBox.getSize(new THREE.Vector3());
+
+  return {
+    object: desk,
+    /**
+     * The desk as a plain box for the book's placement physics
+     * (book/placement/bookPlacement.js). Half-extents and centre are in
+     * world space; `topY` is the surface the book comes to rest on, which
+     * is also the book's own spine/hinge line at y = 0 (see the module
+     * comment above).
+     */
+    collision: {
+      topY: DESK_TOP_Y,
+      halfExtents: { x: finalSize.x / 2, y: DESK_SLAB_HALF_DEPTH, z: finalSize.z / 2 },
+      center: { x: finalCenter.x, y: DESK_TOP_Y - DESK_SLAB_HALF_DEPTH, z: finalCenter.z },
+    },
+  };
 }

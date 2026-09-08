@@ -23,8 +23,8 @@ export function createBookManipulator({ bookGroup, camera, renderer, getPages })
   const dom = renderer.domElement;
   dom.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  installArcballRotate({ bookGroup, camera, dom });
-  installScreenPlaneSlide({
+  const arcball = installArcballRotate({ bookGroup, camera, dom });
+  const slide = installScreenPlaneSlide({
     bookGroup,
     camera,
     dom,
@@ -88,6 +88,17 @@ export function createBookManipulator({ bookGroup, camera, renderer, getPages })
 
   return {
     get pickupMode() { return pickupMode; },
+
+    /**
+     * True while a gesture is driving bookGroup by hand. The book's
+     * placement physics (book/placement/bookPlacement.js) reads this to
+     * decide who is authoritative: while grabbed its body goes kinematic
+     * and follows bookGroup, and on release it goes dynamic and falls.
+     * Pickup mode counts -- the book is held, just by a key rather than a
+     * held button.
+     */
+    get grabbed() { return pickupMode || arcball.rotating || slide.sliding; },
+
     setPickupMode,
     refreshPickupHold() {
       if (!pickupMode) return;
@@ -188,6 +199,8 @@ function installArcballRotate({ bookGroup, camera, dom }) {
   window.addEventListener('pointerup', (e) => {
     if (e.button === 2) rotating = false;
   });
+
+  return { get rotating() { return rotating; } };
 }
 
 // --- shift + left-drag: slide the book in view --------------------------
@@ -277,4 +290,6 @@ function installScreenPlaneSlide({ bookGroup, camera, dom, onPositionChange }) {
   window.addEventListener('blur', () => {
     if (!sliding) dom.style.cursor = '';
   });
+
+  return { get sliding() { return sliding; } };
 }

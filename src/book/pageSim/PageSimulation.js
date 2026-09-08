@@ -5,8 +5,9 @@ import {
   HARDCOVER_AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE,
   BC_START_GAP, COVER_START_NEAR, COVER_START_FAR, bcFixedAngle,
   PSEUDO_REPEL_RATE, PSEUDO_COLLISION_RESTITUTION,
+  SPINE_ROTATION, setSpineRotation, SPINE_ROTATION_EASE_RATE,
 } from './config.js';
-import { pageAngle, pageTransform, spineHinge } from './math.js';
+import { clampNum, pageAngle, pageTransform, spineHinge } from './math.js';
 import { createSpread } from './spread.js';
 import { createHardcover } from '../cover/hardcover.js';
 
@@ -68,6 +69,11 @@ export class PageSimulation {
 
     this.flipped = false;
     this._lastStep = 0; // timestamp of the previous step(), ms; 0 = not yet stepped
+
+    // Whether the page block drives the spine's tilt (see
+    // spineRotationTarget). On by default; a debug slider that wants to
+    // pose the spine by hand turns it off via setSpineRotationDriven.
+    this._spineDriven = true;
 
     // Z of the shared inner-leaf (B/C) hinge along the spine. 0 = centred
     // between the covers (the flush layout the prototype had); slide it
@@ -533,6 +539,63 @@ export class PageSimulation {
   }
 
   /**
+   * The tilt the page block is currently asking the spine for, in
+   * SPINE_ROTATION units (-1 .. 1).
+   *
+   * Each pseudo body wants the spine PERPENDICULAR to itself. A page at
+   * angle `a` is square to a spine tilted by beta when a = beta + pi/2
+   * (the same identity bcFixedAngle() is built on), so each one's "vote"
+   * is simply its own angle measured from pi/2 -- zero when it is already
+   * square to a flat spine, +1 when it has swung a full quarter turn past,
+   * -1 a quarter turn back.
+   *
+   * The two votes are blended by SPREAD SIZE, which is what makes this
+   * behave like a weight rather than an average: a spread's hinge
+   * separation stands in for how thick that half of the book is, and a
+   * thick half pushes the spine around far more than a thin one can. So
+   * reading toward the back -- CD grown large, AB collapsed -- hands the
+   * decision almost entirely to P2, and with the book open (P2 near pi)
+   * that drives the tilt to +1. Symmetrically, a book open flat and
+   * centred has P1 near 0 and P2 near pi voting exactly opposite each
+   * other at equal weight, which cancels to 0: flat, as it should be.
+   *
+   * Read-only and side-effect free -- _stepSpineRotation is what acts on
+   * it, and a caller is free to just watch this number.
+   */
+  get spineRotationTarget() {
+    const HALF_PI = Math.PI / 2;
+    const voteFront = (pageAngle(this.spreadFront.pseudoBody) - HALF_PI) / HALF_PI;
+    const voteBack = (pageAngle(this.spreadBack.pseudoBody) - HALF_PI) / HALF_PI;
+    const wFront = this.spreadFront.pairGap();
+    const wBack = this.spreadBack.pairGap();
+    const total = wFront + wBack;
+    if (!(total > 0)) return 0;
+    return clampNum((wFront * voteFront + wBack * voteBack) / total, -1, 1);
+  }
+
+  /** See SPINE_ROTATION_EASE_RATE. No-op while hand-posed. */
+  _stepSpineRotation(dt) {
+    if (!this._spineDriven) return;
+    const target = this.spineRotationTarget;
+    const k = Math.min(SPINE_ROTATION_EASE_RATE * dt, 1);
+    setSpineRotation(SPINE_ROTATION + (target - SPINE_ROTATION) * k);
+  }
+
+  /**
+   * Hand the spine's tilt back and forth between the page block and a
+   * caller posing it directly (the debug slider). Turning the drive off
+   * leaves SPINE_ROTATION wherever it currently sits rather than resetting
+   * it, so a slider picks up from the pose the book had settled into.
+   */
+  setSpineRotationDriven(v) {
+    this._spineDriven = v;
+  }
+
+  get spineRotationDriven() {
+    return this._spineDriven;
+  }
+
+  /**
    * Converts _gravityDir (this.root's PARENT's space) into this.root's own
    * local space — the same space the Rapier world's bodies/gravity actually
    * live in — by undoing this.root's fixed rotation.x = PI. That rotation
@@ -568,6 +631,14 @@ export class PageSimulation {
       this._lastStep = now;
     }
     this.world.timestep = Math.min(dt, 1 / 30);
+
+    // Before the step, so the spreads' refreshHinges() (inside
+    // stepPhysics below) moves the anchors to the new tilt in this same
+    // frame. Run it after, and bcFixedAngle() would already be reading the
+    // new beta while the hinges still sat at the old one -- one frame of
+    // curl built against a spine that isn't there.
+    this._stepSpineRotation(this.world.timestep);
+
     this.world.step();
     this._stepHardcoverGravity(this.world.timestep);
 
