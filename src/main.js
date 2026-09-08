@@ -31,6 +31,7 @@ const audio = createAudioManager();
 // without touching PageSimulation.root's own render flip or any physics
 // coordinates -- purely an outer, render-only transform.
 const bookGroup = new THREE.Group();
+bookGroup.position.set(0, 0.1, 0);
 scene.add(bookGroup);
 
 // The desk and lamp go straight under `scene`: they are furniture the book
@@ -109,7 +110,7 @@ function refreshFlipLabel() {
 function resetBook() {
   pages.reset();
   bookGroup.quaternion.identity();
-  bookGroup.position.set(0, 0, 0); // also undo any shift-drag repositioning
+  bookGroup.position.set(0, 0.1, 0); // also undo any shift-drag repositioning
   bookManipulator.refreshPickupHold();
   refreshFlipLabel();
 }

@@ -549,8 +549,7 @@ export class PageSimulation {
     this.spreadBack.stepPhysics();
     this._enforceNoCrossingBC();
     // Establish the ordered pseudo interval first, then clamp A/D inside it
-    // and against H1/H2. A hardcover correction notifies its matching pseudo
-    // body, which is already inside the same interval.
+    // and against H1/H2. A/D corrections never teleport P1/P2.
     this._applyHardcoverHold();
     this._applyHardcoverAirCushion();
     this._enforceHardcoverOrder();

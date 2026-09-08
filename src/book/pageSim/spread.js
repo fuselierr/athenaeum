@@ -377,15 +377,6 @@ export function createSpread(world, parent, opts) {
       : (violatesHardcover ? av > 0 : av < 0);
     if (stillDriving) refBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
-    if (violatesHardcover) {
-      // Notify the matching pseudo body (P1/P2) of the hardcover correction
-      // so curl geometry sees the same updated reference.
-      const pseudoTransform = pageTransform(refAnchor, target);
-      pseudoBody.setTranslation(pseudoTransform.pos, true);
-      pseudoBody.setRotation(pseudoTransform.rot, true);
-      const refVelocity = refBody.angvel().x;
-      pseudoBody.setAngvel({ x: refVelocity, y: 0, z: 0 }, true);
-    }
   }
 
   // Geometric no-crossing: measure how close the curling page's tip has
