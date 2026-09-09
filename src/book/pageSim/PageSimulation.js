@@ -5,7 +5,7 @@ import {
   HARDCOVER_AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE,
   BC_START_GAP, COVER_START_NEAR, COVER_START_FAR, bcFixedAngle,
   PSEUDO_REPEL_RATE, PSEUDO_COLLISION_RESTITUTION,
-  SPINE_ROTATION, setSpineRotation, SPINE_ROTATION_EASE_RATE,
+  SPINE_ROTATION, setSpineRotation, weighSpineTarget, spineEaseRate,
 } from './config.js';
 import { clampNum, pageAngle, pageTransform, spineHinge } from './math.js';
 import { createSpread } from './spread.js';
@@ -559,6 +559,13 @@ export class PageSimulation {
    * centred has P1 near 0 and P2 near pi voting exactly opposite each
    * other at equal weight, which cancels to 0: flat, as it should be.
    *
+   * WEIGHT. What comes out of that blend is the demand; what goes back is
+   * what a book this thick will actually give. A heavy page block absorbs
+   * the first part of any demand outright (see weighSpineTarget), so a
+   * long book sits flat under the same nudge that would tip a slim one
+   * over. Applied here rather than in the step so that this number is the
+   * tilt the spine is really chasing, not one it will never reach.
+   *
    * Read-only and side-effect free -- _stepSpineRotation is what acts on
    * it, and a caller is free to just watch this number.
    */
@@ -570,14 +577,17 @@ export class PageSimulation {
     const wBack = this.spreadBack.pairGap();
     const total = wFront + wBack;
     if (!(total > 0)) return 0;
-    return clampNum((wFront * voteFront + wBack * voteBack) / total, -1, 1);
+    const demand = clampNum((wFront * voteFront + wBack * voteBack) / total, -1, 1);
+    return weighSpineTarget(demand);
   }
 
-  /** See SPINE_ROTATION_EASE_RATE. No-op while hand-posed. */
+  /** See SPINE_ROTATION_EASE_RATE and spineEaseRate. No-op while hand-posed. */
   _stepSpineRotation(dt) {
     if (!this._spineDriven) return;
     const target = this.spineRotationTarget;
-    const k = Math.min(SPINE_ROTATION_EASE_RATE * dt, 1);
+    // Not a fixed rate: the heavier the block, the faster it falls back to
+    // flat and the slower it can be levered off it.
+    const k = Math.min(spineEaseRate(target, SPINE_ROTATION) * dt, 1);
     setSpineRotation(SPINE_ROTATION + (target - SPINE_ROTATION) * k);
   }
 

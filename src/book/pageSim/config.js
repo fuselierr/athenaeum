@@ -135,6 +135,64 @@ export function spineBeta() {
 // hinge slides first, the spine follows.
 export const SPINE_ROTATION_EASE_RATE = 4.5; // 1/s
 
+// --- the weight of the page block on its own spine -------------------------
+// A thick book holds its spine flat. The block is heavy, it sits square on
+// the joint, and a leaf that would lever the spine over has to lift every
+// leaf under it first. A pamphlet has none of that and follows its pages
+// freely. So thickness does two things: it pulls the spine back to flat
+// harder, and it makes flat somewhere the book STAYS rather than a value it
+// passes through.
+//
+// The measure is the book's own thickness -- SPINE_GAP, already derived
+// from the page count by spineGapForPageCount -- normalised over the range
+// that function spans, so 0 is the thinnest book the reader will ever build
+// and 1 the fattest.
+export function spineWeight() {
+  const t = (SPINE_GAP - SPINE_GAP_MIN) / (SPINE_GAP_MAX - SPINE_GAP_MIN);
+  return Math.max(0, Math.min(1, t));
+}
+
+// How much of the pages' demand a full-weight book simply absorbs. Under
+// this much, the spine does not move at all; over it, only the surplus gets
+// through -- rescaled, so a book asking for everything still reaches full
+// tilt however heavy it is. This is the term that makes a thick book SIT at
+// flat instead of drifting off it every time a leaf lands.
+const SPINE_WEIGHT_DEADZONE = 0.45; // at weight 1
+
+// Ease-rate multipliers at full weight. Falling back toward flat is the
+// block's own weight doing the work, so it happens faster; being levered
+// away from flat is work against that weight, so it happens slower.
+const SPINE_WEIGHT_FLATTEN_GAIN = 1.6;
+const SPINE_WEIGHT_RESIST = 1.2;
+
+/**
+ * The tilt a book of this thickness will actually chase, given the raw
+ * demand from the page block. See SPINE_WEIGHT_DEADZONE.
+ *
+ * Continuous and monotonic in `target`: the spine does not jump when the
+ * demand crosses the deadzone, it just starts moving.
+ */
+export function weighSpineTarget(target) {
+  const dead = SPINE_WEIGHT_DEADZONE * spineWeight();
+  const surplus = Math.abs(target) - dead;
+  if (surplus <= 0) return 0;
+  return Math.sign(target) * Math.min(1, surplus / (1 - dead));
+}
+
+/**
+ * The rate the spine chases `target` at, from where it currently is.
+ * Scales SPINE_ROTATION_EASE_RATE by the block's weight, asymmetrically --
+ * which is the whole point: a heavy book returns to flat quickly and leaves
+ * it reluctantly, and a thin one behaves as it always did.
+ */
+export function spineEaseRate(target, current) {
+  const weight = spineWeight();
+  const towardFlat = Math.abs(target) <= Math.abs(current);
+  return SPINE_ROTATION_EASE_RATE * (towardFlat
+    ? 1 + weight * SPINE_WEIGHT_FLATTEN_GAIN
+    : 1 / (1 + weight * SPINE_WEIGHT_RESIST));
+}
+
 
 export const GRAVITY_MAG = 9.81;
 
