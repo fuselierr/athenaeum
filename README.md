@@ -6,6 +6,10 @@ I've used a few ebook readers in the 2 decades I've spent alive. One thing kept 
 
 <img width="1427" height="800" alt="Screenshot 2026-09-02 113103" src="https://github.com/user-attachments/assets/f1ca017c-4455-445d-b512-3229fbb3d463" />
 
+<img width="1912" height="949" alt="image" src="https://github.com/user-attachments/assets/96657f42-4137-4090-9884-89744bf625cc" />
+
+<img width="1299" height="769" alt="Screenshot 2026-09-09 175649" src="https://github.com/user-attachments/assets/4382e9e4-8d42-49c4-9a6b-0ababd104988" />
+
 ## What it currently does
 
 - **Renders a real, physical book.** Pages have thickness, a bendable curl as they turn, and a hardcover with a flat spine, French grooves at the joints and eased board edges. The spine thickens or thins based on how many pages the book actually has.
