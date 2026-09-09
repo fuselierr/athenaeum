@@ -26,7 +26,7 @@ import * as THREE from 'three';
 export const CAMERA_MODE = { ORBIT: 1, WALK: 2, LOOK: 3 };
 
 // Metric world (scene/worldScale.js): these are real metres.
-const EYE_HEIGHT = 1.6;
+const EYE_HEIGHT = 2.0;
 const WALK_SPEED = 1.9;
 const RUN_MULTIPLIER = 2.1;
 const WALK_ACCELERATION = 14;
@@ -35,7 +35,7 @@ const WALK_DAMPING = 11;
 // (scene/floor.js), so without this you can step off it into the void.
 const WALL_MARGIN = 0.15;
 
-const LOOK_SENSITIVITY = 0.0026; // radians per pixel, at the base fov
+const LOOK_SENSITIVITY = 0.0024; // radians per pixel, at the base fov
 const PITCH_LIMIT = Math.PI / 2 - 0.05; // short of straight up/down, which gimbals
 
 const MIN_FOV = 12; // about 4x magnification against the default 50
@@ -131,8 +131,8 @@ export function createCameraModes({
     velocity.set(0, 0, 0);
     looking = null;
 
-    // The zoom belongs to LOOK; leaving it takes the lens back to normal.
-    if (mode !== CAMERA_MODE.LOOK && camera.fov !== baseFov) {
+    // The zoom belongs to the two first-person modes; orbit uses its normal lens.
+    if (mode === CAMERA_MODE.ORBIT && camera.fov !== baseFov) {
       camera.fov = baseFov;
       camera.updateProjectionMatrix();
     }
@@ -183,8 +183,13 @@ export function createCameraModes({
     // Sensitivity tracks the fov, so zooming in makes the drag finer instead
     // of flinging the view across the room.
     const scale = LOOK_SENSITIVITY * (camera.fov / baseFov);
-    yaw += dx * scale;
-    pitch = THREE.MathUtils.clamp(pitch + dy * scale, -PITCH_LIMIT, PITCH_LIMIT);
+    const dragDirection = mode === CAMERA_MODE.LOOK ? 1 : -1;
+    yaw += dragDirection * dx * scale;
+    pitch = THREE.MathUtils.clamp(
+      pitch + dragDirection * dy * scale,
+      -PITCH_LIMIT,
+      PITCH_LIMIT,
+    );
     applyLook();
   });
 
@@ -198,7 +203,7 @@ export function createCameraModes({
   window.addEventListener('blur', () => { endLook(null); held.clear(); });
 
   dom.addEventListener('wheel', (e) => {
-    if (mode !== CAMERA_MODE.LOOK) return;
+    if (mode === CAMERA_MODE.ORBIT) return;
     e.preventDefault();
     e.stopImmediatePropagation(); // bookManipulator wheels the book otherwise
     const fov = camera.fov * (e.deltaY > 0 ? ZOOM_PER_NOTCH : 1 / ZOOM_PER_NOTCH);
