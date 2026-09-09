@@ -4,6 +4,7 @@ import { loadDesk } from './scene/desk.js';
 import { loadLamp } from './scene/lamp.js';
 import { loadBookshelf } from './scene/bookshelf.js';
 import { addFloor } from './scene/floor.js';
+import { populateShelf } from './scene/shelfBooks.js';
 import { PageSimulation } from './book/pageSim/PageSimulation.js';
 import { createBookPlacement } from './book/placement/bookPlacement.js';
 import {
@@ -98,6 +99,11 @@ const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
   const room = deskBox.clone().union(new THREE.Box3().setFromObject(bookshelf));
   addFloor(scene, room);
 }
+
+// After the shelf has been turned and placed: the books measure it in its
+// own frame, which needs its final transform to be settled.
+populateShelf(bookshelf, { count: 10 })
+  .catch((err) => console.error('Shelf books failed to load:', err));
 
 // Reassigned by applyPdfDimensions below, so everything downstream takes a
 // `getPages` closure rather than capturing the instance.
@@ -233,6 +239,10 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key === 'r' || e.key === 'R') resetBook();
   if (e.key === 'f' || e.key === 'F') { pages.toggleFlip(); refreshFlipLabel(); }
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    return;
+  }
   // Arrow keys play the same physical turn a drag does rather than swapping
   // textures underneath you -- playTurn runs dragPageTurn's own animation
   // and commits through content.commitTurn at the end, so page content, the
