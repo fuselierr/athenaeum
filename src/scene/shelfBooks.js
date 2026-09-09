@@ -32,6 +32,15 @@ import { createBookModel } from '../book/cover/bookModel.js';
  * All the fractions are in ONE block at the top -- if the books land in
  * the wrong compartment, they are the only things to move.
  *
+ * TAKING ONE. Clicking a book lifts it out of the row and into the hand:
+ * it holds a fixed pose in CAMERA space, so it rides along wherever the
+ * player looks or walks (see input/cameraModes.js). Escape, or clicking a
+ * different book, sends it back to the exact gap it came out of. There is
+ * no separate held state to keep in sync -- every book carries a 0..1
+ * `hold`, and its pose is the shelf pose and the hand pose blended by it,
+ * so taking, swapping and putting back are all the same animation run in
+ * one direction or the other.
+ *
  * WHY THE BOOKS ARE PARENTED TO THE SHELF. They go inside an anchor that
  * cancels the shelf group's own scale, so their sizes stay in metres while
  * their placement still rides the shelf's rotation and position. That way
@@ -95,6 +104,46 @@ const PULL_FRACTION = 0.78;
 // cursor promptly and settles more slowly, which reads as weight.
 const PULL_RATE = 8;
 const RETURN_RATE = 7;
+
+// --- in hand ---------------------------------------------------------------
+// Where a taken book sits, in CAMERA space -- forward is -Z, so this is a
+// little right of centre, below the eye line and about 40 cm out: roughly
+// where you would hold a book you were deciding whether to read.
+const HOLD_OFFSET = new THREE.Vector3(0.1, -0.07, -0.42);
+// A hand does not present a book square on. Small angles, but enough to
+// let the lamp rake across the boards instead of flattening them.
+const HOLD_TILT = new THREE.Euler(-0.12, 0.3, 0.06);
+// Ease rates, 1/s. Coming to hand is brisk; going back is slower, which
+// reads as being replaced rather than thrown.
+const TAKE_RATE = 7;
+const SHELVE_RATE = 5;
+
+// The held pose, as a matrix in the camera's own space.
+//
+// Book local axes are X = length, Y = thickness (+Y is the front board),
+// Z = spine to fore-edge. In the hand we want the front board facing the
+// player (+Y -> camera +Z, which points back at the eye), the length
+// upright (+X -> camera +Y) and therefore the fore-edge to the right and
+// the spine to the left (+Z -> camera +X). As on the shelf, the basis is
+// built proper and the tilt applied as a rotation, never by negating a
+// column -- a reflection comes back out of setFromRotationMatrix as some
+// unrelated orientation.
+const HOLD_MATRIX = new THREE.Matrix4().compose(
+  HOLD_OFFSET,
+  new THREE.Quaternion()
+    .setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(0, 0, 1),
+      new THREE.Vector3(1, 0, 0),
+    ))
+    .premultiply(new THREE.Quaternion().setFromEuler(HOLD_TILT)),
+  new THREE.Vector3(1, 1, 1),
+);
+
+/** Smoothstep, so the trip to the hand starts and ends still. */
+function ease(t) {
+  return t * t * (3 - 2 * t);
+}
 
 
 // Only reached by a book with no cover art to sample a colour from.
@@ -297,6 +346,7 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
       travel: width * PULL_FRACTION,
       offset: 0,
       target: 0,
+      hold: 0, // 0 shelved, 1 in hand, in between mid-flight
     });
 
     cursor += step * (thickness + GAP);
@@ -309,6 +359,7 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
   let pointerInside = false;
   let onPointerMove = null;
   let onPointerLeave = null;
+  let onKeyDown = null;
 
   const interactive = Boolean(camera && renderer);
   if (interactive) {
@@ -327,31 +378,92 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
     // book it was over would stay stuck out.
     window.addEventListener('pointermove', onPointerMove);
     dom.addEventListener('pointerleave', onPointerLeave);
+    // Escape is handled here rather than by the caller so that the shelf
+    // owns every way a book leaves the hand.
+    onKeyDown = (event) => { if (event.key === 'Escape') held = null; };
+    window.addEventListener('keydown', onKeyDown);
   }
 
   /**
-   * Which book the cursor is over, or null.
+   * The book under a normalised device coordinate, or null.
    *
    * Tested against the book groups rather than the whole scene, so the
    * shelf carcass does not occlude anything -- but each group is a handful
    * of meshes, hence the walk back up to the group a hit belongs to.
    */
-  function hovered() {
-    if (!interactive || !pointerInside) return null;
-    raycaster.setFromCamera(pointer, camera);
+  function bookUnder(ndc) {
+    raycaster.setFromCamera(ndc, camera);
     const hits = raycaster.intersectObjects(anchor.children, true);
     if (hits.length === 0) return null;
     let node = hits[0].object;
     while (node && node.parent !== anchor) node = node.parent;
-    return node;
+    return hovering.find((entry) => entry.group === node) ?? null;
+  }
+
+  function hovered() {
+    if (!interactive || !pointerInside) return null;
+    return bookUnder(pointer);
+  }
+
+  // --- in hand -------------------------------------------------------------
+  let held = null; // the entry the player is holding, or null
+
+  const _pickPointer = new THREE.Vector2();
+  const _handMatrix = new THREE.Matrix4();
+  const _anchorInverse = new THREE.Matrix4();
+  const _handPosition = new THREE.Vector3();
+  const _handQuaternion = new THREE.Quaternion();
+  const _handScale = new THREE.Vector3();
+  const _shelfPosition = new THREE.Vector3();
+
+  /**
+   * The hand pose, expressed in the anchor's space -- which is where the
+   * books' own transforms already live, so holding one needs no reparenting
+   * and the row keeps its single owner. Read fresh every frame: the camera
+   * has usually not had its world matrix rebuilt yet at this point (the
+   * renderer does that), and a frame of lag on something held at arm's
+   * length shows up as shimmer.
+   */
+  function readHandPose() {
+    camera.updateMatrixWorld();
+    _anchorInverse.copy(anchor.matrixWorld).invert();
+    _handMatrix.multiplyMatrices(camera.matrixWorld, HOLD_MATRIX).premultiply(_anchorInverse);
+    _handMatrix.decompose(_handPosition, _handQuaternion, _handScale);
   }
 
   return {
     anchor,
     models,
 
+    /** The group of the book in hand, or null. */
+    get held() { return held?.group ?? null; },
+
     /**
-     * Ease each book toward its target offset. Call once a frame.
+     * Route a click here. Returns whether it landed on a book, so a caller
+     * can tell an interaction from a click on empty room.
+     *
+     * Clicking the held book puts it back, which makes the gesture a
+     * toggle; clicking a different one swaps, since the outgoing book only
+     * has to stop being held for it to fly home on its own.
+     */
+    handleClick(event) {
+      if (!interactive) return false;
+      const rect = renderer.domElement.getBoundingClientRect();
+      _pickPointer.set(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      const picked = bookUnder(_pickPointer);
+      if (!picked) return false; // a click on the room leaves the hand alone
+      held = picked === held ? null : picked;
+      return true;
+    },
+
+    /** Put the held book back, if there is one. What Escape does. */
+    release() { held = null; },
+
+    /**
+     * Ease each book toward its target pose. Call once a frame.
      *
      * The whole row is stepped every frame, not just the one under the
      * cursor: a book that has just been left has to travel back, and it is
@@ -359,22 +471,52 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
      */
     update(dt) {
       const under = hovered();
+      let handRead = false;
+
       for (const book of hovering) {
-        book.target = book.group === under ? book.travel : 0;
+        const inHand = book === held;
+
+        // Hover slide. Suppressed for whatever is in hand: it is not in the
+        // row to be drawn out of.
+        book.target = !inHand && book === under ? book.travel : 0;
         if (Math.abs(book.target - book.offset) < 1e-5) {
           book.offset = book.target;
+        } else {
+          const rate = book.target > book.offset ? PULL_RATE : RETURN_RATE;
+          book.offset += (book.target - book.offset) * Math.min(rate * dt, 1);
+        }
+
+        const holdTarget = inHand ? 1 : 0;
+        if (Math.abs(holdTarget - book.hold) < 1e-4) {
+          book.hold = holdTarget;
+        } else {
+          const rate = holdTarget > book.hold ? TAKE_RATE : SHELVE_RATE;
+          book.hold += (holdTarget - book.hold) * Math.min(rate * dt, 1);
+        }
+
+        _shelfPosition.copy(book.rest).addScaledVector(_slide.copy(book.out), book.offset);
+        if (book.hold <= 0) {
+          book.group.position.copy(_shelfPosition);
+          book.group.quaternion.copy(upright);
           continue;
         }
-        const rate = book.target > book.offset ? PULL_RATE : RETURN_RATE;
-        book.offset += (book.target - book.offset) * Math.min(rate * dt, 1);
-        book.group.position.copy(book.rest)
-          .addScaledVector(_slide.copy(book.out), book.offset);
+
+        // One book can be arriving while another is still on its way back,
+        // but they share a hand, so the pose is read at most once a frame.
+        if (!handRead) {
+          readHandPose();
+          handRead = true;
+        }
+        const t = ease(book.hold);
+        book.group.position.lerpVectors(_shelfPosition, _handPosition, t);
+        book.group.quaternion.copy(upright).slerp(_handQuaternion, t);
       }
     },
 
     dispose() {
       if (onPointerMove) window.removeEventListener('pointermove', onPointerMove);
       if (onPointerLeave) renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      if (onKeyDown) window.removeEventListener('keydown', onKeyDown);
       for (const model of models) model.dispose();
       bookshelf.remove(anchor);
     },

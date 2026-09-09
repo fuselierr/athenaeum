@@ -52,6 +52,9 @@ const ORBIT_HANDOFF_DISTANCE = 1.5;
 
 const WALK_KEYS = new Set(['w', 'a', 's', 'd']);
 
+// How far a press may travel and still count as a click rather than a drag.
+const CLICK_SLOP = 4; // px
+
 /**
  * @param {object} opts
  * @param {THREE.PerspectiveCamera} opts.camera
@@ -59,6 +62,11 @@ const WALK_KEYS = new Set(['w', 'a', 's', 'd']);
  * @param {object} opts.controls  OrbitControls
  * @param {{update(dt: number): void}} opts.cameraPan  ticked in ORBIT only
  * @param {HTMLElement|null} [opts.indicator]  optional readout of the mode
+ * @param {((event: PointerEvent) => void)|null} [opts.onClick]  a press that
+ *   did not travel. Reported from here because the look modes swallow
+ *   pointerdown on the canvas outright -- nothing downstream would ever see
+ *   the click -- and because the rig is the one thing that already knows
+ *   whether a gesture turned into a drag.
  *
  * IMPORTANT: construct this BEFORE dragCover / dragPageTurn /
  * bookManipulator. All four listen for pointerdown on the same canvas, and
@@ -68,6 +76,7 @@ const WALK_KEYS = new Set(['w', 'a', 's', 'd']);
 export function createCameraModes({
   camera, renderer, controls, cameraPan,
   indicator = document.getElementById('camera-mode'),
+  onClick = null,
 }) {
   const dom = renderer.domElement;
   const baseFov = camera.fov;
@@ -159,7 +168,20 @@ export function createCameraModes({
   let lastX = 0;
   let lastY = 0;
 
+  // The press being watched to see whether it becomes a click or a drag.
+  // Tracked in EVERY mode, including ORBIT, where the gesture itself
+  // belongs to OrbitControls and only the verdict is ours.
+  let pressId = null;
+  let pressX = 0;
+  let pressY = 0;
+  let pressMoved = false;
+
   dom.addEventListener('pointerdown', (e) => {
+    pressId = e.pointerId;
+    pressX = e.clientX;
+    pressY = e.clientY;
+    pressMoved = false;
+
     if (mode === CAMERA_MODE.ORBIT) return;
     looking = e.pointerId;
     lastX = e.clientX;
@@ -175,6 +197,10 @@ export function createCameraModes({
   // On window rather than the canvas so a drag that runs off the edge of the
   // viewport keeps steering until the button comes back up.
   window.addEventListener('pointermove', (e) => {
+    if (pressId === e.pointerId && !pressMoved
+      && Math.hypot(e.clientX - pressX, e.clientY - pressY) > CLICK_SLOP) {
+      pressMoved = true;
+    }
     if (looking !== e.pointerId) return;
     const dx = e.clientX - lastX;
     const dy = e.clientY - lastY;
@@ -198,8 +224,17 @@ export function createCameraModes({
     if (e && dom.hasPointerCapture(e.pointerId)) dom.releasePointerCapture(e.pointerId);
     looking = null;
   }
-  window.addEventListener('pointerup', endLook);
-  window.addEventListener('pointercancel', endLook);
+  window.addEventListener('pointerup', (e) => {
+    if (pressId === e.pointerId) {
+      if (!pressMoved && e.button === 0 && onClick) onClick(e);
+      pressId = null;
+    }
+    endLook(e);
+  });
+  window.addEventListener('pointercancel', (e) => {
+    if (pressId === e.pointerId) pressId = null;
+    endLook(e);
+  });
   window.addEventListener('blur', () => { endLook(null); held.clear(); });
 
   dom.addEventListener('wheel', (e) => {

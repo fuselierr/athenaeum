@@ -38,7 +38,15 @@ const audio = createAudioManager();
 // on one element run in registration order.
 const cameraPan = createCameraPan({ camera, controls });
 const cameraModes = createCameraModes({
-  camera, renderer, controls, cameraPan,
+  camera,
+  renderer,
+  controls,
+  cameraPan,
+  // Clicks arrive through the rig rather than a listener of the shelf's
+  // own: in the look modes it swallows pointerdown on the canvas, so a
+  // second listener would never hear one. `shelfBooks` is still loading at
+  // this point, hence reading it through the closure.
+  onClick: (event) => shelfBooks?.handleClick(event),
 });
 
 // The book hangs under its own group rather than directly under `scene` so
@@ -264,7 +272,6 @@ renderer.setAnimationLoop(() => {
   if (!anglePanel.visible) simulationPaused = false;
 
   cameraModes.update(dt);
-  shelfBooks?.update(dt);
   bookManipulator.update();
   if (!simulationPaused) {
     content.update(dt);
@@ -277,6 +284,9 @@ renderer.setAnimationLoop(() => {
   // OrbitControls poses the camera on every update() -- enabled or not --
   // so the modes that steer it directly must not let it run.
   if (cameraModes.mode === CAMERA_MODE.ORBIT) controls.update();
+  // After the camera has finished moving for the frame: a book in hand is
+  // posed from it, and stepping first would leave it a frame behind.
+  shelfBooks?.update(dt);
   renderer.render(scene, camera);
   debugLabels.update();
   anglePanel.update();
