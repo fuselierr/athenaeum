@@ -39,8 +39,18 @@ import { createBookModel } from '../book/cover/bookModel.js';
  */
 
 // --- the slot, as fractions of the bookshelf's own bounding box ----------
-const SLOT_FLOOR = 0.235; // the board over the cabinet doors
-const SLOT_CEILING = 0.381; // underside of the shelf above it
+// Boards, measured off the geometry, as fractions of the unit's height:
+//
+//   0.080  0.226   <- the cabinet. Its doors reach to about 0.355, so BOTH
+//                     of these are behind them; 0.226 looks like a shelf
+//                     and is not one you can see into.
+//   0.381  0.526  0.684  0.845  0.998   <- the open bays
+//
+// The lowest OPEN bay is therefore 0.381 to 0.526. SLOT_FLOOR is only a
+// STARTING HINT -- the real surface is found by raycast below, so this
+// only has to name the right bay, not the exact board face.
+const SLOT_FLOOR = 0.395;
+const SLOT_CEILING = 0.526;
 const SLOT_START = 0.28; // across the width: inside the centre column's left upright
 const SLOT_END = 0.70; // and its right one
 const SLOT_DEPTH = 0.62; // front-to-back centre; > 0.5 sits them forward
@@ -57,15 +67,25 @@ const SPINE_FACING = -1;
 
 // Which end of the shelf counts as the left, i.e. the end the row starts
 // from. Flip if they fill from the wrong side.
-const FILL_FROM_LOW_END = true;
+const FILL_FROM_LOW_END = false;
 
 // --- what the books look like --------------------------------------------
-const MIN_THICKNESS = 0.022;
-const MAX_THICKNESS = 0.048;
-const HEIGHT_FILL = 0.62; // of the slot's clear height; the bays are tall
+const MIN_THICKNESS = 0.028;
+const MAX_THICKNESS = 0.10;
+const HEIGHT_FILL = 0.90; // of the slot's clear height
 const HEIGHT_VARIATION = 0.16; // how much shorter the shortest book is
 const WIDTH_RATIO = 0.66; // fore-edge reach, as a fraction of the height
 const GAP = 0.004; // metres of air between neighbours
+
+// --- hover ----------------------------------------------------------------
+// How far a hovered book slides out, as a fraction of its own fore-edge
+// reach -- so a deep book comes out further than a slim one and they all
+// look like they are being drawn by the same hand.
+const PULL_FRACTION = 0.78;
+// Exponential ease, 1/s. Out is quicker than back: a book answers the
+// cursor promptly and settles more slowly, which reads as weight.
+const PULL_RATE = 8;
+const RETURN_RATE = 7;
 
 const TITLES = [
   ['The Salt Almanac', 'E. Vandermeer'],
@@ -99,8 +119,10 @@ function jitter(i, salt) {
  * @param {THREE.Object3D} bookshelf  the group loadBookshelf returned,
  *   already positioned and rotated
  * @param {number} [count=10]
+ * @param {THREE.Camera} [camera]    both needed for the hover pull-out;
+ * @param {THREE.WebGLRenderer} [renderer]  omit either and it is skipped
  */
-export async function populateShelf(bookshelf, { count = 10 } = {}) {
+export async function populateShelf(bookshelf, { count = 10, camera, renderer } = {}) {
   const scale = bookshelf.scale.x || 1;
   bookshelf.updateMatrixWorld(true);
 
@@ -131,8 +153,7 @@ export async function populateShelf(bookshelf, { count = 10 } = {}) {
   const depthSize = alongWidth ? size.x : size.z;
   const depthMin = alongWidth ? localBox.min.x : localBox.min.z;
 
-  const floorY = localBox.min.y + SLOT_FLOOR * size.y;
-  const clearHeight = (SLOT_CEILING - SLOT_FLOOR) * size.y;
+  const ceilingY = localBox.min.y + SLOT_CEILING * size.y;
   const startAcross = acrossMin + SLOT_START * acrossSize;
   const endAcross = acrossMin + SLOT_END * acrossSize;
   const depthOffset = depthMin + SLOT_DEPTH * depthSize;
@@ -145,6 +166,26 @@ export async function populateShelf(bookshelf, { count = 10 } = {}) {
   anchor.name = 'shelfBooks';
   anchor.scale.setScalar(1 / scale);
   bookshelf.add(anchor);
+  anchor.updateMatrixWorld(true);
+
+  // SEAT THE ROW ON THE ACTUAL BOARD. SLOT_FLOOR is only a hint: a board's
+  // top surface never lands exactly on a round fraction, and being one
+  // percent out on a unit this tall is a three-centimetre gap under every
+  // book. So a ray is dropped down the middle of the bay and the row sits
+  // on whatever it hits. Falls back to the fraction if the bay turns out
+  // to be open underneath.
+  const midAcross = (startAcross + endAcross) / 2;
+  const probeOrigin = anchor.localToWorld(new THREE.Vector3(
+    alongWidth ? depthOffset : midAcross,
+    ceilingY - 0.01 * size.y, // just under the shelf above, not touching it
+    alongWidth ? midAcross : depthOffset,
+  ));
+  const probe = new THREE.Raycaster(probeOrigin, new THREE.Vector3(0, -1, 0));
+  const surface = probe.intersectObject(bookshelf, true)[0];
+
+  let floorY = localBox.min.y + SLOT_FLOOR * size.y;
+  if (surface) floorY = anchor.worldToLocal(surface.point.clone()).y;
+  const clearHeight = Math.max(0, ceilingY - floorY);
 
   // Book local axes are X = length, Y = thickness, Z = width (see
   // bookModel.js). Shelved, those have to become: length up, thickness
@@ -176,6 +217,7 @@ export async function populateShelf(bookshelf, { count = 10 } = {}) {
   }
 
   const models = [];
+  const hovering = [];
   const step = FILL_FROM_LOW_END ? 1 : -1;
   let cursor = FILL_FROM_LOW_END ? startAcross : endAcross;
 
@@ -201,6 +243,11 @@ export async function populateShelf(bookshelf, { count = 10 } = {}) {
     });
 
     model.group.quaternion.copy(upright);
+    // Out of the shelf is the book's own -Z, the side its spine is on (see
+    // bookModel.js), carried through the same orientation it was just
+    // given -- rather than re-deriving a sign from SPINE_FACING, which is
+    // the kind of thing that quietly ends up backwards.
+    const out = new THREE.Vector3(0, 0, -1).applyQuaternion(upright);
     // The model is centred on itself, so it is raised by half its length to
     // stand on the shelf, and advanced by half its thickness to sit against
     // whatever came before it.
@@ -212,14 +259,91 @@ export async function populateShelf(bookshelf, { count = 10 } = {}) {
     );
     anchor.add(model.group);
     models.push(model);
+    hovering.push({
+      group: model.group,
+      rest: model.group.position.clone(),
+      out,
+      travel: width * PULL_FRACTION,
+      offset: 0,
+      target: 0,
+    });
 
     cursor += step * (thickness + GAP);
+  }
+
+  // --- hover pull-out ----------------------------------------------------
+  const pointer = new THREE.Vector2();
+  const raycaster = new THREE.Raycaster();
+  const _slide = new THREE.Vector3();
+  let pointerInside = false;
+  let onPointerMove = null;
+  let onPointerLeave = null;
+
+  const interactive = Boolean(camera && renderer);
+  if (interactive) {
+    const dom = renderer.domElement;
+    onPointerMove = (event) => {
+      const rect = dom.getBoundingClientRect();
+      pointer.set(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      pointerInside = true;
+    };
+    onPointerLeave = () => { pointerInside = false; };
+    // On window, not the canvas: a pointer that leaves over one of the
+    // overlaid UI panels never fires the canvas's own leave event, and the
+    // book it was over would stay stuck out.
+    window.addEventListener('pointermove', onPointerMove);
+    dom.addEventListener('pointerleave', onPointerLeave);
+  }
+
+  /**
+   * Which book the cursor is over, or null.
+   *
+   * Tested against the book groups rather than the whole scene, so the
+   * shelf carcass does not occlude anything -- but each group is a handful
+   * of meshes, hence the walk back up to the group a hit belongs to.
+   */
+  function hovered() {
+    if (!interactive || !pointerInside) return null;
+    raycaster.setFromCamera(pointer, camera);
+    const hits = raycaster.intersectObjects(anchor.children, true);
+    if (hits.length === 0) return null;
+    let node = hits[0].object;
+    while (node && node.parent !== anchor) node = node.parent;
+    return node;
   }
 
   return {
     anchor,
     models,
+
+    /**
+     * Ease each book toward its target offset. Call once a frame.
+     *
+     * The whole row is stepped every frame, not just the one under the
+     * cursor: a book that has just been left has to travel back, and it is
+     * the only thing that still knows it was ever out.
+     */
+    update(dt) {
+      const under = hovered();
+      for (const book of hovering) {
+        book.target = book.group === under ? book.travel : 0;
+        if (Math.abs(book.target - book.offset) < 1e-5) {
+          book.offset = book.target;
+          continue;
+        }
+        const rate = book.target > book.offset ? PULL_RATE : RETURN_RATE;
+        book.offset += (book.target - book.offset) * Math.min(rate * dt, 1);
+        book.group.position.copy(book.rest)
+          .addScaledVector(_slide.copy(book.out), book.offset);
+      }
+    },
+
     dispose() {
+      if (onPointerMove) window.removeEventListener('pointermove', onPointerMove);
+      if (onPointerLeave) renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
       for (const model of models) model.dispose();
       bookshelf.remove(anchor);
     },
