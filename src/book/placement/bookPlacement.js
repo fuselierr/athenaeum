@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GRAVITY_MAG } from '../pageSim/config.js';
-import { BOOK_WORLD_SCALE } from '../../scene/worldScale.js';
 
 /**
  * The book's PLACEMENT physics: where the book as a whole sits, and what
@@ -101,7 +100,10 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
     // world through bookGroup's scale -- but a Rapier body has no scale, so
     // the collider has to be sized in metres itself or the book would
     // collide with the desk as if it were a metre and a half across.
-    const s = BOOK_WORLD_SCALE;
+    // Read off the group rather than the world-scale constant: a book
+    // taken from the shelf adopts that model's size, and colliders sized
+    // from a constant would then no longer be the shape of the book.
+    const s = bookGroup.scale.x;
     const halfExtents = {
       x: shape.halfExtents.x * s,
       y: shape.halfExtents.y * s,
@@ -128,7 +130,9 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
     if (!hardcover) return;
 
     const shape = hardcover.boardShape;
-    const sig = `${shape.halfExtents.x},${shape.halfExtents.y},${shape.halfExtents.z}`;
+    // The scale is part of the signature: changing it changes the
+    // colliders just as surely as re-sizing the boards does.
+    const sig = `${shape.halfExtents.x},${shape.halfExtents.y},${shape.halfExtents.z},${bookGroup.scale.x}`;
     if (sig !== boardSignature) {
       boardSignature = sig;
       rebuildBoards(shape);
@@ -151,7 +155,7 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
       _boardMatrix.decompose(_pos, _quat, _scale);
       // Same conversion as the half-extents above: the matrix chain is all
       // in the page simulation's own units, the body's frame is metres.
-      _pos.multiplyScalar(BOOK_WORLD_SCALE);
+      _pos.multiplyScalar(bookGroup.scale.x);
       boardColliders[i].setTranslationWrtParent({ x: _pos.x, y: _pos.y, z: _pos.z });
       boardColliders[i].setRotationWrtParent({ x: _quat.x, y: _quat.y, z: _quat.z, w: _quat.w });
     }

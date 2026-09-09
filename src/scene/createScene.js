@@ -54,7 +54,7 @@ export async function createScene() {
 // EXR is kept as scene.background for a crisper backdrop than the blurred
 // env map, so only the PMREMGenerator itself is disposed here.
 async function addEnvironment(scene, renderer) {
-  const rawEnv = await new EXRLoader().loadAsync('./public/background.exr');
+  const rawEnv = await new EXRLoader().loadAsync('./backgrounds/background.exr');
   rawEnv.mapping = THREE.EquirectangularReflectionMapping;
 
   const pmrem = new THREE.PMREMGenerator(renderer);

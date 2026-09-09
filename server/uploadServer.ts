@@ -8,13 +8,15 @@
 //   GET  /api/books/:id/meta  -- { title, author, description, coverUrl }
 //   GET  /api/library         -- the raw epubs in src/books, for the shelf
 //   GET  /api/library/:id/cover -- one of those epubs' cover images
+//   POST /api/library/:id/open  -- convert one of them (once) and get
+//                                 back the same shape POST /api/books does
 //
 // Usage: node server/uploadServer.ts
 
 import express from 'express';
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile, readFile, readdir } from 'node:fs/promises';
+import { access, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { epubToPdf } from './epubToPdf.ts';
 import { extractEpubMetadata } from './epubMetadata.ts';
@@ -141,6 +143,92 @@ app.get('/api/library/:id/cover', async (req, res) => {
     return;
   }
   res.type(book.cover.mediaType).send(book.cover.data);
+});
+
+interface OpenedBook extends BookMeta {
+  id: string;
+  pdfUrl: string;
+}
+
+/**
+ * Convert one of the shelf's epubs, or hand back the conversion from last
+ * time.
+ *
+ * The output is stored under the LIBRARY SLUG rather than a fresh uuid,
+ * which is the whole point: a shelf book is the same book every time it is
+ * picked up, so the second visit costs nothing and the reader opens it
+ * immediately. Layout matches what POST /api/books writes, so the existing
+ * pdf / cover / meta routes serve these without knowing the difference.
+ */
+async function openLibraryBook(id: string): Promise<OpenedBook | null> {
+  const book = (await readLibrary(LIBRARY_DIR)).find((b) => b.id === id);
+  if (!book) return null;
+
+  const bookDir = path.join(STORAGE_DIR, id);
+  const pdfPath = path.join(bookDir, 'book.pdf');
+  const meta: OpenedBook = {
+    id,
+    pdfUrl: `/api/books/${id}/pdf`,
+    title: book.title,
+    author: book.author,
+    description: book.description,
+    coverUrl: book.cover ? `/api/books/${id}/cover` : null,
+  };
+
+  try {
+    await access(pdfPath);
+    return meta; // converted on an earlier visit
+  } catch {
+    // Not converted yet; fall through and do the work.
+  }
+
+  await mkdir(bookDir, { recursive: true });
+  try {
+    await epubToPdf(book.file, pdfPath);
+    // The cover was already read out of the epub by readLibrary, so it is
+    // written straight through rather than extracted a second time.
+    if (book.cover) {
+      await writeFile(path.join(bookDir, `cover${book.cover.extension}`), book.cover.data);
+      await writeFile(path.join(bookDir, 'cover.type'), book.cover.mediaType, 'utf-8');
+    }
+    const { id: _id, pdfUrl: _pdfUrl, ...stored } = meta;
+    await writeFile(path.join(bookDir, 'meta.json'), JSON.stringify(stored), 'utf-8');
+  } catch (err) {
+    // A half-written folder would look converted to the check above and
+    // fail forever after, so failure leaves nothing behind.
+    await rm(bookDir, { recursive: true, force: true });
+    throw err;
+  }
+  return meta;
+}
+
+// Conversions in flight, by id. The shelf stays clickable while a book is
+// converting, and a second click on the same spine must join the first
+// rather than race it to the same file.
+const opening = new Map<string, Promise<OpenedBook | null>>();
+
+app.post('/api/library/:id/open', async (req, res) => {
+  const { id } = req.params;
+  let pending = opening.get(id);
+  if (!pending) {
+    pending = openLibraryBook(id);
+    opening.set(id, pending);
+    pending
+      .catch(() => {}) // handled below; this is only to unregister
+      .finally(() => { if (opening.get(id) === pending) opening.delete(id); });
+  }
+
+  try {
+    const book = await pending;
+    if (!book) {
+      res.status(404).json({ error: 'No such book on the shelf' });
+      return;
+    }
+    res.json(book);
+  } catch (err) {
+    console.error(`Conversion failed for library book ${id}:`, err);
+    res.status(422).json({ error: 'Could not convert this book' });
+  }
 });
 
 app.get('/api/books/:id/pdf', (req, res) => {

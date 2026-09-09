@@ -10,6 +10,7 @@ import { createBookPlacement } from './book/placement/bookPlacement.js';
 import {
   setPageDimensions, setSpineGap, spineGapForPageCount,
   setSpineRotation, SPINE_ROTATION, PANEL_REACH as INITIAL_PANEL_REACH,
+  HINGE_LEN,
 } from './book/pageSim/config.js';
 import { updateLocalCorners } from './book/pageSim/math.js';
 import { BOOK_WORLD_SCALE } from './scene/worldScale.js';
@@ -21,7 +22,7 @@ import { createCameraModes, CAMERA_MODE } from './input/cameraModes.js';
 import { createBookManipulator } from './input/bookManipulator.js';
 import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
-import { initBookLoader } from './loader/bookLoader.js';
+import { initBookLoader, openLibraryBook } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
@@ -46,7 +47,10 @@ const cameraModes = createCameraModes({
   // own: in the look modes it swallows pointerdown on the canvas, so a
   // second listener would never hear one. `shelfBooks` is still loading at
   // this point, hence reading it through the closure.
-  onClick: (event) => shelfBooks?.handleClick(event),
+  onClick: (event) => {
+    if (shelfBooks?.handleClick(event)) return;
+    putBookDown(event); // a click past the shelf, holding a book
+  },
 });
 
 // The book hangs under its own group rather than directly under `scene` so
@@ -125,7 +129,14 @@ const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
 // Assigned when the models finish loading; the render loop skips it until
 // then rather than blocking the whole scene on scenery.
 let shelfBooks = null;
-populateShelf(bookshelf, { camera, renderer })
+populateShelf(bookshelf, {
+  camera,
+  renderer,
+  // Taking a book off the shelf is what opens it. The conversion is fired
+  // and forgotten: `openSequence` inside is what makes a book that was put
+  // back mid-render simply never arrive.
+  onTake: (record) => { if (record) openFromShelf(record); else openSequence += 1; },
+})
   .then((result) => { shelfBooks = result; })
   .catch((err) => console.error('Shelf books failed to load:', err));
 
@@ -188,6 +199,103 @@ initBookLoader({
   onDimensions: applyPdfDimensions,
   onPagesReady: (canvases) => content.setCanvases(canvases),
 });
+
+// --- taking a book off the shelf -----------------------------------------
+// One book is readable at a time. The shelf hands over a library record, the
+// loader converts and renders it, and the finished book takes the model's
+// exact place in the hand -- so what you picked up and what you end up
+// holding are the same object as far as the eye is concerned.
+const bookStatus = document.getElementById('upload-status');
+let openSequence = 0; // bumped by anything that abandons a book mid-load
+let handHoldsBook = false; // is the real book the thing in the hand?
+
+function setBookStatus(text) { if (bookStatus) bookStatus.textContent = text; }
+
+async function openFromShelf(record) {
+  const token = (openSequence += 1);
+  try {
+    await openLibraryBook(record.id, {
+      onStatus: setBookStatus,
+      onJacket: (j) => {
+        if (token !== openSequence) return;
+        jacket = j;
+        applyJacket();
+      },
+      onDimensions: async (widthPts, heightPts, pageCount) => {
+        if (token !== openSequence) return;
+        await applyPdfDimensions(widthPts, heightPts, pageCount);
+      },
+      onPagesReady: (canvases) => {
+        if (token !== openSequence) return; // put back while it was rendering
+        content.setCanvases(canvases);
+        swapModelForBook();
+      },
+    });
+  } catch (err) {
+    console.error('Opening a shelf book failed:', err);
+    setBookStatus(`Error: ${err.message}`);
+  }
+}
+
+/**
+ * Replace the model in hand with the real book, in the same place and at
+ * the same size.
+ *
+ * SCALE. The book is scaled so its pages are exactly as tall as the model's
+ * were. The shelf models are built to the same binding proportions as the
+ * readable book (bookModel.js takes its ratios from hardcover.js), so
+ * matching that one dimension is enough for the two to read as the same
+ * object and for the swap to disappear. That scale then stays: it is a
+ * render-only group scale, the page simulation runs in its own units
+ * regardless, and the placement colliders are sized from the group -- so a
+ * short fat book really is shorter and fatter on the desk afterwards.
+ */
+function swapModelForBook() {
+  const size = shelfBooks?.heldSize;
+  if (!size) return;
+  pages.reset();
+  bookGroup.scale.setScalar(size.length / HINGE_LEN);
+  handHoldsBook = shelfBooks.substitute(bookGroup, stowBook);
+}
+
+/** The real book has ridden the model's animation back into the shelf. */
+function stowBook() {
+  handHoldsBook = false;
+  // bookGroup was just posed inside the shelf, where the model has this
+  // instant reappeared. Moving it here as well as in the body keeps the two
+  // from sharing a slot for the one frame before placement drives it again.
+  bookGroup.position.copy(RESET_POSITION);
+  bookGroup.quaternion.copy(RESET_QUATERNION);
+  placement.reset(RESET_POSITION, RESET_QUATERNION);
+}
+
+/**
+ * Set the held book down where it was clicked, if that was the desk.
+ * The model goes back to the shelf; the book stays, and drops the last
+ * couple of centimetres under its own weight.
+ */
+const _placeRay = new THREE.Raycaster();
+const _placeNdc = new THREE.Vector2();
+const _placePosition = new THREE.Vector3();
+
+function putBookDown(event) {
+  if (!handHoldsBook) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  _placeNdc.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  _placeRay.setFromCamera(_placeNdc, camera);
+  const hit = _placeRay.intersectObject(desk.object, true)[0];
+  if (!hit) return; // only the desk will take a book
+
+  shelfBooks.putDown();
+  handHoldsBook = false;
+  _placePosition.copy(hit.point).setY(hit.point.y + 0.02);
+  bookGroup.position.copy(_placePosition);
+  bookGroup.quaternion.copy(RESET_QUATERNION);
+  placement.reset(_placePosition, RESET_QUATERNION);
+}
 
 // --- UI ---
 const flipBtn = document.getElementById('flipBtn');
@@ -278,7 +386,10 @@ renderer.setAnimationLoop(() => {
     pages.step();
     // After pages.step(), so the cover colliders are posed from the H1/H2
     // this frame actually rendered rather than last frame's.
-    placement.step(dt, bookManipulator.grabbed);
+    // A book in hand is carried: the placement body goes kinematic and
+    // follows the pose the shelf is writing onto bookGroup, so setting it
+    // down lands it on the desk like anything else.
+    placement.step(dt, bookManipulator.grabbed || handHoldsBook);
     dragPageTurn.update(dt);
   }
   // OrbitControls poses the camera on every update() -- enabled or not --

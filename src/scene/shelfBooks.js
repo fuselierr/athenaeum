@@ -41,6 +41,14 @@ import { createBookModel } from '../book/cover/bookModel.js';
  * so taking, swapping and putting back are all the same animation run in
  * one direction or the other.
  *
+ * AND THEN THE REAL BOOK. A model is a silhouette; the readable book is a
+ * physics rig that has to be built from the PDF before it can exist. So the
+ * model is what you pick up, and once its book has been converted and
+ * rendered the caller SUBSTITUTES the real one into the same place --
+ * `substitute()` hides the model and mirrors its pose onto the stand-in for
+ * as long as it is out. The trip back to the shelf is the model's own
+ * animation, so the real book rides it home and is handed back at the end.
+ *
  * WHY THE BOOKS ARE PARENTED TO THE SHELF. They go inside an anchor that
  * cancels the shelf group's own scale, so their sizes stay in metres while
  * their placement still rides the shelf's rotation and position. That way
@@ -193,8 +201,13 @@ function jitter(i, salt) {
  * @param {number} [limit=Infinity]  cap on how many library books to show
  * @param {THREE.Camera} [camera]    both needed for the hover pull-out;
  * @param {THREE.WebGLRenderer} [renderer]  omit either and it is skipped
+ * @param {((book: object|null) => void)} [onTake]  the library record of
+ *   whatever just came into the hand, or null when it went back. This is
+ *   what tells the caller to start (or abandon) opening a book.
  */
-export async function populateShelf(bookshelf, { limit = Infinity, camera, renderer } = {}) {
+export async function populateShelf(bookshelf, {
+  limit = Infinity, camera, renderer, onTake,
+} = {}) {
   const library = await fetchLibrary();
   const scale = bookshelf.scale.x || 1;
   bookshelf.updateMatrixWorld(true);
@@ -340,6 +353,8 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
     anchor.add(model.group);
     models.push(model);
     hovering.push({
+      book, // the library record, handed to onTake
+      size: { length, width, thickness },
       group: model.group,
       rest: model.group.position.clone(),
       out,
@@ -380,7 +395,7 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
     dom.addEventListener('pointerleave', onPointerLeave);
     // Escape is handled here rather than by the caller so that the shelf
     // owns every way a book leaves the hand.
-    onKeyDown = (event) => { if (event.key === 'Escape') held = null; };
+    onKeyDown = (event) => { if (event.key === 'Escape') setHeld(null); };
     window.addEventListener('keydown', onKeyDown);
   }
 
@@ -407,6 +422,22 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
 
   // --- in hand -------------------------------------------------------------
   let held = null; // the entry the player is holding, or null
+  // While set, the model of `entry` is hidden and `object` is being posed in
+  // its place: { entry, object, onStow }.
+  let substitution = null;
+
+  function setHeld(entry) {
+    if (entry === held) return;
+    held = entry;
+    onTake?.(held?.book ?? null);
+  }
+
+  function endSubstitution() {
+    const { entry, onStow } = substitution;
+    substitution = null;
+    entry.group.visible = true;
+    onStow?.();
+  }
 
   const _pickPointer = new THREE.Vector2();
   const _handMatrix = new THREE.Matrix4();
@@ -415,6 +446,18 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
   const _handQuaternion = new THREE.Quaternion();
   const _handScale = new THREE.Vector3();
   const _shelfPosition = new THREE.Vector3();
+  const _anchorQuaternion = new THREE.Quaternion();
+
+  /**
+   * Put `object` where the model is, in WORLD space -- the substitute lives
+   * under the scene, not under the shelf, because it is a book in its own
+   * right with its own scale and its own physics.
+   */
+  function mirrorTo(object, position, quaternion) {
+    anchor.getWorldQuaternion(_anchorQuaternion);
+    object.position.copy(position).applyMatrix4(anchor.matrixWorld);
+    object.quaternion.copy(_anchorQuaternion).multiply(quaternion);
+  }
 
   /**
    * The hand pose, expressed in the anchor's space -- which is where the
@@ -455,12 +498,47 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
       );
       const picked = bookUnder(_pickPointer);
       if (!picked) return false; // a click on the room leaves the hand alone
-      held = picked === held ? null : picked;
+      setHeld(picked === held ? null : picked);
       return true;
     },
 
     /** Put the held book back, if there is one. What Escape does. */
-    release() { held = null; },
+    release() { setHeld(null); },
+
+    /** Size of the model in hand, in metres, or null. */
+    get heldSize() { return held?.size ?? null; },
+
+    /**
+     * Stand `object` in for the model in hand: the model is hidden and
+     * `object` takes its pose, in world space, every frame -- including the
+     * whole way back to the shelf, at the end of which the model reappears
+     * and `onStow` fires so the caller can put its object away.
+     *
+     * Returns false if nothing is being held, which is the case when a book
+     * was put back while its pages were still rendering.
+     */
+    substitute(object, onStow) {
+      if (!held) return false;
+      // Only one stand-in at a time: an earlier one is handed back where it
+      // stands rather than being abandoned mid-flight.
+      if (substitution) endSubstitution();
+      substitution = { entry: held, object, onStow };
+      held.group.visible = false;
+      return true;
+    },
+
+    /**
+     * Let go of the substitute where it is. The model goes home on its own
+     * and the stand-in stays put -- what putting a book down on the desk
+     * means, as opposed to shelving it.
+     */
+    putDown() {
+      if (substitution) {
+        substitution.entry.group.visible = true;
+        substitution = null;
+      }
+      setHeld(null);
+    },
 
     /**
      * Ease each book toward its target pose. Call once a frame.
@@ -498,18 +576,24 @@ export async function populateShelf(bookshelf, { limit = Infinity, camera, rende
         if (book.hold <= 0) {
           book.group.position.copy(_shelfPosition);
           book.group.quaternion.copy(upright);
-          continue;
+        } else {
+          // One book can be arriving while another is still on its way back,
+          // but they share a hand, so the pose is read at most once a frame.
+          if (!handRead) {
+            readHandPose();
+            handRead = true;
+          }
+          const t = ease(book.hold);
+          book.group.position.lerpVectors(_shelfPosition, _handPosition, t);
+          book.group.quaternion.copy(upright).slerp(_handQuaternion, t);
         }
 
-        // One book can be arriving while another is still on its way back,
-        // but they share a hand, so the pose is read at most once a frame.
-        if (!handRead) {
-          readHandPose();
-          handRead = true;
+        if (substitution && substitution.entry === book) {
+          mirrorTo(substitution.object, book.group.position, book.group.quaternion);
+          // Back in the row: the model reappears and the stand-in is handed
+          // over to whoever lent it.
+          if (book.hold <= 0) endSubstitution();
         }
-        const t = ease(book.hold);
-        book.group.position.lerpVectors(_shelfPosition, _handPosition, t);
-        book.group.quaternion.copy(upright).slerp(_handQuaternion, t);
       }
     },
 

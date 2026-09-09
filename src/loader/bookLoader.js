@@ -145,6 +145,49 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
 }
 
 /**
+ * Open one of the shelf's books by its library id.
+ *
+ * The same pipeline an upload goes through, entered further along: the
+ * server converts the epub (once -- see POST /api/library/:id/open) and the
+ * pages are rasterized here exactly as they would be for an upload, so a
+ * book reaches the scene by one path however it was chosen.
+ *
+ * @param {string} id  a library id, as listed by GET /api/library
+ * @param {Object} [opts]  onDimensions / onJacket / onPagesReady are as
+ *   documented on initBookLoader; onStatus reports progress as text.
+ */
+export async function openLibraryBook(id, {
+  onDimensions, onJacket, onPagesReady, onStatus,
+} = {}) {
+  const say = (text) => onStatus?.(text);
+
+  say('Converting…');
+  const res = await fetch(`/api/library/${encodeURIComponent(id)}/open`, { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.pdfUrl) {
+    throw new Error(body.error || `Could not open this book (${res.status})`);
+  }
+
+  // Before the pages, as with an upload: the jacket comes from the epub and
+  // has been waiting since the shelf was built.
+  onJacket?.({
+    coverUrl: body.coverUrl ?? null,
+    title: body.title ?? null,
+    author: body.author ?? null,
+    description: body.description ?? null,
+  });
+
+  say('Rendering pages…');
+  const canvases = await renderPdfToCanvases(body.pdfUrl, {
+    onDimensions,
+    onPage: (done, total) => say(`Rendering pages… ${done}/${total}`),
+  });
+  say('');
+  onPagesReady?.(canvases);
+  return canvases;
+}
+
+/**
  * Wires up the #epub-file input and #upload-status element already present
  * in index.html. Call once from main.js.
  *
