@@ -136,6 +136,93 @@ export function renderSpineLabel({ title, author, background, lengthPx = 1024, w
   return canvas;
 }
 
+/**
+ * Draws a back panel: the title, the author, and a blurb beneath them, laid
+ * out portrait the way the back of a jacket reads.
+ *
+ * The auto-generated alternative to supplying a back-cover image. Uses the
+ * same ink/contrast rule as renderSpineLabel so a book with no artwork at
+ * all still reads as one object front to back.
+ */
+export function renderBackPanel({
+  title, author, blurb, background, widthPx = 512, heightPx = 768,
+}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = widthPx;
+  canvas.height = heightPx;
+  const ctx = canvas.getContext('2d');
+
+  const bg = background ?? { r: 74, g: 47, b: 36 };
+  ctx.fillStyle = `rgb(${bg.r},${bg.g},${bg.b})`;
+  ctx.fillRect(0, 0, widthPx, heightPx);
+
+  // A rule inset from the edge, the way a plain back board is usually
+  // blocked. Same trick as the spine's hairlines: it stops the panel
+  // reading as a flat fill.
+  const edge = shade(bg, luminance(bg) > 0.5 ? 0.82 : 1.25);
+  ctx.strokeStyle = `rgba(${edge.r},${edge.g},${edge.b},0.5)`;
+  ctx.lineWidth = Math.max(1, widthPx * 0.006);
+  const inset = widthPx * 0.08;
+  ctx.strokeRect(inset, inset, widthPx - inset * 2, heightPx - inset * 2);
+
+  if (!title && !author && !blurb) return canvas;
+
+  const ink = luminance(bg) > 0.5 ? 'rgba(20,16,14,0.92)' : 'rgba(245,238,225,0.94)';
+  ctx.fillStyle = ink;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const usable = widthPx - inset * 4;
+  let y = heightPx * 0.22;
+
+  if (title) {
+    const size = fitFont(ctx, title, usable, widthPx * 0.11, '600');
+    ctx.font = `600 ${size}px Georgia, 'Times New Roman', serif`;
+    ctx.fillText(title, widthPx / 2, y, usable);
+    y += size * 1.5;
+  }
+  if (author) {
+    const size = fitFont(ctx, author, usable, widthPx * 0.06, '400');
+    ctx.font = `400 ${size}px Georgia, 'Times New Roman', serif`;
+    ctx.globalAlpha = 0.85;
+    ctx.fillText(author, widthPx / 2, y, usable);
+    ctx.globalAlpha = 1;
+    y += size * 2.2;
+  }
+  if (blurb) {
+    const size = widthPx * 0.038;
+    ctx.font = `400 ${size}px Georgia, 'Times New Roman', serif`;
+    ctx.globalAlpha = 0.78;
+    const lineHeight = size * 1.5;
+    const maxY = heightPx - inset * 2;
+    for (const line of wrapLines(ctx, blurb, usable)) {
+      if (y > maxY) break; // a long blurb is cropped, not overflowed
+      ctx.fillText(line, widthPx / 2, y, usable);
+      y += lineHeight;
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  return canvas;
+}
+
+/** Greedy word wrap against the measured width of the current font. */
+function wrapLines(ctx, text, maxWidth) {
+  const lines = [];
+  let line = '';
+  for (const word of String(text).split(/\s+/)) {
+    const next = line ? `${line} ${word}` : word;
+    if (line && ctx.measureText(next).width > maxWidth) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 /** Largest size at or below `maxSize` that fits `text` within `maxWidth`. */
 function fitFont(ctx, text, maxWidth, maxSize, weight) {
   let size = Math.floor(maxSize);

@@ -41,13 +41,13 @@ import { createBoardGeometry, BOARD_FACE_PY, BOARD_FACE_NY } from './boardGeomet
 
 // All proportional to the page so a re-sized book (a loaded PDF changes
 // HINGE_LEN/PANEL_REACH/SPINE_GAP) keeps the same cover proportions.
-const SQUARE_RATIO = 0.025; // overhang past the page, as a fraction of PANEL_REACH
+export const SQUARE_RATIO = 0.025; // overhang past the page, as a fraction of PANEL_REACH
 const BACK_EDGE_EXTENSION_RATIO = 0.015; // extra material behind the hinge toward the spine
-const BOARD_THICKNESS_RATIO = 0.015; // board thickness, likewise
+export const BOARD_THICKNESS_RATIO = 0.015; // board thickness, likewise
 // Gap between the page surface and the board's inner face. Only big enough
 // to keep the two from being coincident: a shut book should look shut, and
 // anything larger reads as the cover hovering off the block.
-const PAGE_CLEARANCE_RATIO = 0.001;
+export const PAGE_CLEARANCE_RATIO = 0.001;
 
 // The spine's cross-section is six rows: a thin strip, a hard step up, the
 // full-thickness slab, a step back down, and the far thin strip. Nothing
@@ -64,7 +64,7 @@ const PAGE_CLEARANCE_RATIO = 0.001;
 const SPINE_SEGMENTS = 5;
 
 // Thickness of the groove strip, as a fraction of the board's.
-const GROOVE_THICKNESS_RATIO = 0.35;
+export const GROOVE_THICKNESS_RATIO = 0.35;
 
 /**
  * The joint -- what bookbinders call a French groove: the channel running
@@ -88,11 +88,11 @@ const GROOVE_THICKNESS_RATIO = 0.35;
  * A fraction of PANEL_REACH like every other cover proportion, but capped
  * against SPINE_GAP: a thin book has very little spine to give away.
  */
-const GROOVE_WIDTH_RATIO = 0.012;
-const GROOVE_MAX_SPINE_FRACTION = 0.25;
+export const GROOVE_WIDTH_RATIO = 0.012;
+export const GROOVE_MAX_SPINE_FRACTION = 0.25;
 
-const BOARD_COLOR = 0x4a2f24; // plain binding, until a jacket is applied
-const SPINE_COLOR = 0x3d2620;
+export const BOARD_COLOR = 0x4a2f24; // plain binding, until a jacket is applied
+export const SPINE_COLOR = 0x3d2620;
 
 // BoxGeometry emits its six faces in this order, so the outward face of
 // a board -- local +Y on the front, -Y on the back -- is the group that
@@ -107,7 +107,7 @@ const FACE_NY = BOARD_FACE_NY;
 //
 // The plan-view CORNERS stay square. The two edge fillets simply run into
 // each other and mitre where they meet, which is what a cut board does.
-const EDGE_FILLET_RATIO = 0.35; // of thickness
+export const EDGE_FILLET_RATIO = 0.35; // of thickness
 
 // Which end of the spine the label's reading direction points at. The
 // book's own 'up the page' is +X (PageSimulation.PAGE_TOP_AT_PLUS_X), so

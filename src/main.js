@@ -21,6 +21,7 @@ import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
 import { initBookLoader } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
+import { createBookModel } from './book/cover/bookModel.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
 // tuned around; a loaded PDF's aspect ratio derives HINGE_LEN from this
@@ -100,6 +101,24 @@ const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
 
 // Reassigned by applyPdfDimensions below, so everything downstream takes a
 // `getPages` closure rather than capturing the instance.
+// A closed book gives the shelf some scale and keeps the static jacket model
+// visible independently of the interactive book on the desk.
+const shelfBook = await createBookModel({
+  length: 0.24,
+  width: 0.16,
+  thickness: 0.035,
+  title: 'Athenaeum',
+  author: 'Collected Works',
+});
+const shelfBox = new THREE.Box3().setFromObject(bookshelf);
+shelfBook.group.rotation.z = -Math.PI / 2;
+shelfBook.group.position.set(
+  shelfBox.max.x - 0.04,
+  shelfBox.min.y + 0.52,
+  (shelfBox.min.z + shelfBox.max.z) / 2,
+);
+scene.add(shelfBook.group);
+
 let pages = pagesInstance;
 const getPages = () => pages;
 
