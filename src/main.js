@@ -4,6 +4,7 @@ import { loadDesk } from './scene/desk.js';
 import { loadLamp } from './scene/lamp.js';
 import { loadBookshelf } from './scene/bookshelf.js';
 import { addFloor } from './scene/floor.js';
+import { addRoom, WINDOW_SILL_PROJECTION } from './scene/room.js';
 import { populateShelf } from './scene/shelfBooks.js';
 import { PageSimulation } from './book/pageSim/PageSimulation.js';
 import { createBookPlacement } from './book/placement/bookPlacement.js';
@@ -100,6 +101,28 @@ const [pagesInstance, desk, , bookshelf] = await Promise.all([
 // its own load time. Measured, not hardcoded, so swapping either .glb (or
 // changing FURNITURE_SCALE) still lands them correctly.
 const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
+// Clear floor past the furniture, on the two sides nothing backs onto.
+// Wider than the bare 0.4 the floor used to take, because it is now the
+// room you stand in as well as the ground the desk is on -- the walls land
+// exactly on this edge.
+//
+// The other two sides get no margin at all: the shelf backs onto one and
+// the desk onto the other, which is what puts them against a wall.
+const ROOM_MARGIN = 1.1;
+// How far a wall stops short of the furniture standing against it. Not a
+// gap -- surfaces that are exactly coplanar z-fight, and a centimetre is
+// under the threshold of anyone noticing while being well over the
+// threshold of the depth buffer.
+const FURNITURE_WALL_CLEARANCE = 0.01;
+// How far the window's sill clears the desk top. The desk is against that
+// wall, so a sill at the usual height would put the bottom of the opening
+// behind it -- this is what keeps the whole window visible above the
+// worktop, which is where you want it when you are sitting at it.
+const SILL_ABOVE_DESK = 0.12;
+// Above the tallest thing in the room. A ceiling that only just clears the
+// bookshelf reads as an attic, hence the floor of 3 metres.
+const CEILING_CLEARANCE = 0.7;
+const MIN_CEILING_HEIGHT = 3;
 
 {
   const deskBox = new THREE.Box3().setFromObject(desk.object);
@@ -127,13 +150,45 @@ const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
   );
   bookshelf.updateMatrixWorld(true);
 
-  // Union AFTER the move, so the floor covers where the shelf ended up. Its
-  // min.y is the lowest foot in the room, which is what the floor sits at.
-  const room = deskBox.clone().union(new THREE.Box3().setFromObject(bookshelf));
-  const floor = addFloor(scene, room);
-  // The floor IS the walkable area, margin included, so the first-person
-  // mode takes its bounds from the mesh rather than recomputing them.
+  // Measured AFTER the move: this is where the shelf actually ended up, and
+  // the back wall is built onto it. The union's min.y is the lowest foot in
+  // the room, which is what the floor sits at.
+  const placedShelf = new THREE.Box3().setFromObject(bookshelf);
+  const room = deskBox.clone().union(placedShelf);
+
+  // The room's footprint. Worked out here rather than left to addFloor's
+  // own margin because that margin is uniform and this one deliberately is
+  // not -- and because the floor and the walls have to agree on it to the
+  // millimetre, the walls being built on the floor's own box.
+  const footprint = room.clone();
+  footprint.min.z -= ROOM_MARGIN;
+  footprint.max.z += ROOM_MARGIN;
+  // Both long walls come to meet their furniture instead of standing off
+  // it. The back wall goes onto the shelf's own back panel; the window wall
+  // comes to the desk, less the depth of the sill -- which overhangs the
+  // room, and would otherwise be sitting on the worktop. Taken from the
+  // window's own measurements so the two cannot drift apart.
+  footprint.min.x = placedShelf.min.x - FURNITURE_WALL_CLEARANCE;
+  footprint.max.x = deskBox.max.x + FURNITURE_WALL_CLEARANCE + WINDOW_SILL_PROJECTION;
+
+  const floor = addFloor(scene, footprint, { margin: 0 });
+  // The floor IS the walkable area, so the first-person mode takes its
+  // bounds from the mesh rather than recomputing them.
   cameraModes.setRoom(new THREE.Box3().setFromObject(floor));
+
+  // Walls and ceiling on that same footprint. The window goes in the wall
+  // opposite the bookshelf -- the shelf stands at -X (see above), so the
+  // wall the desk is pushed up against is +X, and the window is then
+  // directly in front of anyone sitting at it.
+  addRoom(scene, floor, {
+    height: Math.max(MIN_CEILING_HEIGHT, room.max.y - room.min.y + CEILING_CLEARANCE),
+    focus: deskBox.getCenter(new THREE.Vector3()),
+    windowSide: '+x',
+    // Measured from the floor, which is not y = 0: the desk's TOP is the
+    // origin here, and the furniture is scaled, so the drop to the floor is
+    // whatever the model says it is rather than a number written down.
+    sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK,
+  });
 }
 
 // After the shelf has been turned and placed: the books measure it in its
