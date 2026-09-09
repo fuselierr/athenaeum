@@ -104,7 +104,7 @@ const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
 // Assigned when the models finish loading; the render loop skips it until
 // then rather than blocking the whole scene on scenery.
 let shelfBooks = null;
-populateShelf(bookshelf, { count: 10, camera, renderer })
+populateShelf(bookshelf, { camera, renderer })
   .then((result) => { shelfBooks = result; })
   .catch((err) => console.error('Shelf books failed to load:', err));
 

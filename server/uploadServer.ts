@@ -6,18 +6,24 @@
 //                                PDF.js/three.js pipeline reads from)
 //   GET  /api/books/:id/cover -- the epub's own cover image, if it had one
 //   GET  /api/books/:id/meta  -- { title, author, description, coverUrl }
+//   GET  /api/library         -- the raw epubs in src/books, for the shelf
+//   GET  /api/library/:id/cover -- one of those epubs' cover images
 //
 // Usage: node server/uploadServer.ts
 
 import express from 'express';
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { epubToPdf } from './epubToPdf.ts';
 import { extractEpubMetadata } from './epubMetadata.ts';
+import { readLibrary } from './epubLibrary.ts';
 
 const STORAGE_DIR = path.join(process.cwd(), 'books');
+// The shelf's library: raw epubs, never converted. Separate from
+// STORAGE_DIR, which holds books the reader has actually opened.
+const LIBRARY_DIR = path.join(process.cwd(), 'src', 'books');
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100MB -- generous for an epub, adjust to taste
 
 const app = express();
@@ -106,6 +112,36 @@ interface BookMeta {
   description: string | null;
   coverUrl: string | null;
 }
+
+/**
+ * The shelf's library. Cover bytes are stripped -- they go out through the
+ * cover route below rather than as base64 in a listing.
+ */
+app.get('/api/library', async (_req, res) => {
+  try {
+    const books = await readLibrary(LIBRARY_DIR);
+    res.json(books.map(({ id, title, author, description, cover, characters, pages }) => ({
+      id,
+      title,
+      author,
+      description,
+      coverUrl: cover ? `/api/library/${id}/cover` : null,
+      characters,
+      pages,
+    })));
+  } catch {
+    res.status(500).json({ error: 'Could not read the library' });
+  }
+});
+
+app.get('/api/library/:id/cover', async (req, res) => {
+  const book = (await readLibrary(LIBRARY_DIR)).find((b) => b.id === req.params.id);
+  if (!book?.cover) {
+    res.status(404).json({ error: 'This book has no cover image' });
+    return;
+  }
+  res.type(book.cover.mediaType).send(book.cover.data);
+});
 
 app.get('/api/books/:id/pdf', (req, res) => {
   const pdfPath = path.join(STORAGE_DIR, req.params.id, 'book.pdf');

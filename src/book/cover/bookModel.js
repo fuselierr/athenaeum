@@ -91,6 +91,18 @@ export async function createBookModel({
 
   const coverTexture = coverImage ? await loadTexture(coverImage) : null;
 
+  // The board's cap uv runs u along +X -- which is the SPINE, the tall
+  // dimension once the book is stood on a shelf. So cover art arrives lying
+  // on its side. Quarter turn to stand it up.
+  //
+  // Sampling coordinates rotate by -rotation, so the image turns by
+  // +rotation in uv space; and looking at the front board from outside, v
+  // points down the page, which makes a positive angle read clockwise.
+  if (coverTexture) {
+    coverTexture.center.set(0.5, 0.5);
+    coverTexture.rotation = Math.PI * -1 / 2;
+  }
+
   // The binding colour ties the whole object together: sampled from the
   // cover's own border when there is art to sample, so a generated spine
   // and back look like they belong to the same jacket.

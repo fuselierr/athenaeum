@@ -70,8 +70,17 @@ const SPINE_FACING = -1;
 const FILL_FROM_LOW_END = false;
 
 // --- what the books look like --------------------------------------------
+// Thickness now comes from each book's own page count, on the same
+// square-root curve config.js uses for the readable book's spine:
+// thickness really is linear in sheet count, but across the range books
+// actually span a linear map spends its whole output on the extremes.
+// REFERENCE_PAGES is the length that lands mid-range; MIN/MAX are the
+// clamp either side of it.
+const REFERENCE_PAGES = 300;
+const REFERENCE_THICKNESS = 0.055;
 const MIN_THICKNESS = 0.028;
 const MAX_THICKNESS = 0.10;
+const FALLBACK_PAGES = 300; // only for a book whose count could not be read
 const HEIGHT_FILL = 0.90; // of the slot's clear height
 const HEIGHT_VARIATION = 0.16; // how much shorter the shortest book is
 const WIDTH_RATIO = 0.66; // fore-edge reach, as a fraction of the height
@@ -87,23 +96,37 @@ const PULL_FRACTION = 0.78;
 const PULL_RATE = 8;
 const RETURN_RATE = 7;
 
-const TITLES = [
-  ['The Salt Almanac', 'E. Vandermeer'],
-  ['Northing', 'H. Calloway'],
-  ['On Quiet Machines', 'R. Iyer'],
-  ['The Lamplighters', 'M. Osgood'],
-  ['Field Notes', 'T. Brennan'],
-  ['A Theory of Tides', 'S. Okonkwo'],
-  ['The Paper Wing', 'L. Marchetti'],
-  ['Winterlight', 'A. Sorensen'],
-  ['The Glass Orchard', 'J. Ferreira'],
-  ['Endpapers', 'C. Whitlock'],
-];
 
+// Only reached by a book with no cover art to sample a colour from.
 const BINDINGS = [
   0x4a2f24, 0x2f4536, 0x1f3348, 0x5c2b2b, 0x3c3a52,
   0x6b4a1f, 0x2b4a4a, 0x4d3a5a, 0x7a4b2a, 0x33403a,
 ];
+
+/** Spine thickness for a book of `pages` pages. See REFERENCE_PAGES. */
+function thicknessForPages(pages) {
+  const count = Number.isFinite(pages) && pages > 0 ? pages : FALLBACK_PAGES;
+  const scaled = REFERENCE_THICKNESS * Math.sqrt(count / REFERENCE_PAGES);
+  return Math.max(MIN_THICKNESS, Math.min(MAX_THICKNESS, scaled));
+}
+
+/**
+ * The converted books the server is holding.
+ *
+ * Returns an empty list rather than throwing when there is no server: the
+ * shelf is scenery, and running the front end on its own should give an
+ * empty shelf, not a broken scene.
+ */
+async function fetchLibrary() {
+  try {
+    const response = await fetch('/api/library');
+    if (!response.ok) return [];
+    const books = await response.json();
+    return Array.isArray(books) ? books : [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Deterministic 0..1 from an integer. Books should look varied but must
@@ -118,11 +141,12 @@ function jitter(i, salt) {
 /**
  * @param {THREE.Object3D} bookshelf  the group loadBookshelf returned,
  *   already positioned and rotated
- * @param {number} [count=10]
+ * @param {number} [limit=Infinity]  cap on how many library books to show
  * @param {THREE.Camera} [camera]    both needed for the hover pull-out;
  * @param {THREE.WebGLRenderer} [renderer]  omit either and it is skipped
  */
-export async function populateShelf(bookshelf, { count = 10, camera, renderer } = {}) {
+export async function populateShelf(bookshelf, { limit = Infinity, camera, renderer } = {}) {
+  const library = await fetchLibrary();
   const scale = bookshelf.scale.x || 1;
   bookshelf.updateMatrixWorld(true);
 
@@ -221,9 +245,12 @@ export async function populateShelf(bookshelf, { count = 10, camera, renderer } 
   const step = FILL_FROM_LOW_END ? 1 : -1;
   let cursor = FILL_FROM_LOW_END ? startAcross : endAcross;
 
-  for (let i = 0; i < count; i++) {
-    const [title, author] = TITLES[i % TITLES.length];
-    const thickness = MIN_THICKNESS + jitter(i, 1) * (MAX_THICKNESS - MIN_THICKNESS);
+  for (let i = 0; i < Math.min(library.length, limit); i++) {
+    const book = library[i];
+    // Thickness is the book's real length; height and reach still get a
+    // little jitter, because real books vary in trim size and a row of
+    // identically tall spines reads as wallpaper.
+    const thickness = thicknessForPages(book.pages);
     const length = clearHeight * HEIGHT_FILL * (1 - jitter(i, 2) * HEIGHT_VARIATION);
     const width = length * WIDTH_RATIO;
 
@@ -237,9 +264,13 @@ export async function populateShelf(bookshelf, { count = 10, camera, renderer } 
       length,
       width,
       thickness,
-      title,
-      author,
-      bindingColor: BINDINGS[i % BINDINGS.length],
+      title: book.title,
+      author: book.author,
+      blurb: book.description,
+      coverImage: book.coverUrl,
+      // Left null when there IS cover art, so the binding is sampled from
+      // it and the spine and back match the jacket rather than a palette.
+      bindingColor: book.coverUrl ? null : BINDINGS[i % BINDINGS.length],
     });
 
     model.group.quaternion.copy(upright);
