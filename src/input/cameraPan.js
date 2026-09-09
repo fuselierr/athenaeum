@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isBound, matches } from '../state/keybindings.js';
 
 // World units/sec at ~4 units from the target; scales with distance below.
 const PAN_SPEED = 1.4;
@@ -19,13 +20,21 @@ const CAMERA_MOVE_DAMPING = 8;
 export function createCameraPan({ camera, controls }) {
   const held = new Set();
 
+  // The same movement actions the first-person rig uses (see
+  // state/keybindings.js), so one set of keys moves you in every mode --
+  // they just mean "slide the view" here rather than "walk".
+  const PAN_ACTIONS = ['move.forward', 'move.back', 'move.left', 'move.right'];
+
   window.addEventListener('keydown', (e) => {
-    const k = e.key.toLowerCase();
-    if (k === 'w' || k === 'a' || k === 's' || k === 'd' || k === 'arrowup' || k === 'arrowdown') {
-      held.add(k);
-    }
+    for (const action of PAN_ACTIONS) if (matches(action, e)) held.add(action);
+    if (e.key === 'ArrowUp') held.add('arrowup');
+    if (e.key === 'ArrowDown') held.add('arrowdown');
   });
-  window.addEventListener('keyup', (e) => held.delete(e.key.toLowerCase()));
+  window.addEventListener('keyup', (e) => {
+    for (const action of PAN_ACTIONS) if (isBound(action, e.code)) held.delete(action);
+    if (e.key === 'ArrowUp') held.delete('arrowup');
+    if (e.key === 'ArrowDown') held.delete('arrowdown');
+  });
   // Without this a key held while the window loses focus never gets its
   // keyup, and the camera drifts forever after the user tabs back.
   window.addEventListener('blur', () => held.clear());
@@ -49,10 +58,10 @@ export function createCameraPan({ camera, controls }) {
       _up.setFromMatrixColumn(camera.matrix, 1);
       _forward.subVectors(controls.target, camera.position).normalize();
       _offset.set(0, 0, 0);
-      if (held.has('d')) _offset.addScaledVector(_right, speed);
-      if (held.has('a')) _offset.addScaledVector(_right, -speed);
-      if (held.has('w')) _offset.addScaledVector(_up, speed);
-      if (held.has('s')) _offset.addScaledVector(_up, -speed);
+      if (held.has('move.right')) _offset.addScaledVector(_right, speed);
+      if (held.has('move.left')) _offset.addScaledVector(_right, -speed);
+      if (held.has('move.forward')) _offset.addScaledVector(_up, speed);
+      if (held.has('move.back')) _offset.addScaledVector(_up, -speed);
       _offset.addScaledVector(_forward, forwardVelocity * dt);
 
       camera.position.add(_offset);

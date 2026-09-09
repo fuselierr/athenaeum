@@ -23,7 +23,7 @@ export async function createScene() {
   renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
-  await addEnvironment(scene, renderer);
+  const environment = createEnvironment(scene, renderer);
   addLights(scene);
 
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -43,24 +43,50 @@ export async function createScene() {
   });
 
   return {
-    scene, camera, renderer, controls,
+    scene, camera, renderer, controls, environment,
   };
 }
 
-// A background texture is never sampled by the lighting pipeline, so the EXR
-// has to be prefiltered by PMREMGenerator into a radiance map on
-// scene.environment for MeshStandardMaterial to pick it up as image-based
-// lighting. Needs `renderer` (the prefilter is a real render pass). The raw
-// EXR is kept as scene.background for a crisper backdrop than the blurred
-// env map, so only the PMREMGenerator itself is disposed here.
-async function addEnvironment(scene, renderer) {
-  const rawEnv = await new EXRLoader().loadAsync('./backgrounds/background.exr');
-  rawEnv.mapping = THREE.EquirectangularReflectionMapping;
-
+/**
+ * The backdrop, and the room's light -- which are the same object.
+ *
+ * A background texture is never sampled by the lighting pipeline, so the
+ * EXR has to be prefiltered by PMREMGenerator into a radiance map on
+ * scene.environment for MeshStandardMaterial to pick it up as image-based
+ * lighting. The raw EXR is kept as scene.background as well, being a
+ * crisper backdrop than the blurred radiance map.
+ *
+ * The generator is kept alive between switches rather than disposed after
+ * the first load: it is reusable, and rebuilding it per background would
+ * throw away its compiled shader every time the user tried another sky.
+ */
+function createEnvironment(scene, renderer) {
+  const loader = new EXRLoader();
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromEquirectangular(rawEnv).texture;
-  scene.background = rawEnv;
-  pmrem.dispose();
+  pmrem.compileEquirectangularShader();
+
+  let current = null; // { url, raw, radiance }
+
+  return {
+    get url() { return current?.url ?? null; },
+
+    /** Load `url` and make it the room. Resolves once it is actually up. */
+    async set(url) {
+      if (current?.url === url) return;
+      const raw = await loader.loadAsync(url);
+      raw.mapping = THREE.EquirectangularReflectionMapping;
+      const radiance = pmrem.fromEquirectangular(raw).texture;
+
+      // Swap first, dispose second: the outgoing textures are still bound
+      // to the last frame the renderer drew.
+      const previous = current;
+      scene.environment = radiance;
+      scene.background = raw;
+      current = { url, raw, radiance };
+      previous?.raw.dispose();
+      previous?.radiance.dispose();
+    },
+  };
 }
 
 // The EXR drives ambient/reflected light via scene.environment; the

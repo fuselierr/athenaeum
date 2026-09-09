@@ -1,6 +1,14 @@
+import { matches } from '../state/keybindings.js';
+
 const WIND_URL = '/audio/music/wind.mp3';
 const PAGE_TURN_URL = '/audio/sfx/pageturn.mp3';
 
+/**
+ * Two channels -- ambient (the wind loop) and effects (page turns) -- each
+ * scaled by a master. Volume is applied as a NUMBER rather than by muting,
+ * so a slider at 30% is audibly 30% and not just "on"; `muted` stays as a
+ * separate hard off, because that is what the mute key means.
+ */
 export function createAudioManager() {
 	const wind = new Audio(WIND_URL);
 	wind.loop = true;
@@ -10,6 +18,29 @@ export function createAudioManager() {
 	let muted = true;
 	wind.muted = muted;
 	const activeSfx = new Set();
+	const volumes = { master: 0.8, ambient: 0.5, sfx: 0.9 };
+
+	const clamp = (v, fallback) => (
+		Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : fallback
+	);
+
+	const ambientVolume = () => volumes.master * volumes.ambient;
+	const sfxVolume = () => volumes.master * volumes.sfx;
+
+	/**
+	 * Channel levels, 0..1, any subset at a time. Applied to what is
+	 * already playing as well as to what comes next -- the wind is a single
+	 * long loop, so a slider that only affected the next sound would look
+	 * broken.
+	 */
+	function setVolumes(next = {}) {
+		volumes.master = clamp(next.master, volumes.master);
+		volumes.ambient = clamp(next.ambient, volumes.ambient);
+		volumes.sfx = clamp(next.sfx, volumes.sfx);
+		wind.volume = ambientVolume();
+		activeSfx.forEach((sound) => { sound.volume = sfxVolume(); });
+	}
+	wind.volume = ambientVolume();
 
 	function startWind() {
 		if (started) return;
@@ -36,16 +67,19 @@ export function createAudioManager() {
 		window.addEventListener(eventName, startWind, { once: true, passive: true });
 	});
 	window.addEventListener('keydown', (event) => {
-		if (event.key.toLowerCase() === 'm' && !event.repeat) toggleMute();
+		if (matches('audio.mute', event) && !event.repeat) toggleMute();
 	});
 	startWind();
 
 	return {
 		startWind,
+		setVolumes,
+		get volumes() { return { ...volumes }; },
 		playPageTurn() {
             console.log('playPageTurn');
             const pageTurn = new Audio(PAGE_TURN_URL);
 			pageTurn.muted = muted;
+			pageTurn.volume = sfxVolume();
             pageTurn.preload = 'auto';
             pageTurn.addEventListener('error', () => {
                 console.warn('page turn sfx failed to load:', pageTurn.error);

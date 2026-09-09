@@ -150,6 +150,23 @@ export function createBookContent(getPages) {
 
     showLeaf,
 
+    // --- where the reader is, for the menu -------------------------------
+    /** 1-based, the left-hand page of the open spread. */
+    get page() { return leafStart + 1; },
+    get pageCount() { return pageCanvases.length; },
+
+    /**
+     * Open the spread containing `page` (1-based). Spreads start on even
+     * leaf indices, so an odd page and its facing page land on the same
+     * spread -- asking for either shows both, which is what a reader means
+     * by going to a page.
+     */
+    goToPage(page) {
+      if (pageCanvases.length === 0) return;
+      const index = Math.max(0, Math.round(page) - 1);
+      showLeaf(index - (index % 2));
+    },
+
     /**
      * Re-apply the first/last page to covers A and D. Only needed after
      * the simulation has been rebuilt underneath us (new page dimensions

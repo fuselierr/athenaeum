@@ -122,7 +122,9 @@ interface BookMeta {
 app.get('/api/library', async (_req, res) => {
   try {
     const books = await readLibrary(LIBRARY_DIR);
-    res.json(books.map(({ id, title, author, description, cover, characters, pages }) => ({
+    res.json(books.map(({
+      id, title, author, description, cover, characters, pages, chapters,
+    }) => ({
       id,
       title,
       author,
@@ -130,6 +132,7 @@ app.get('/api/library', async (_req, res) => {
       coverUrl: cover ? `/api/library/${id}/cover` : null,
       characters,
       pages,
+      chapters,
     })));
   } catch {
     res.status(500).json({ error: 'Could not read the library' });

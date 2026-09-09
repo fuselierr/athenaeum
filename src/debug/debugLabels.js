@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { matches } from '../state/keybindings.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { HINGE_LEN } from '../book/pageSim/config.js';
 import { CURL_ROWS } from '../book/pageSim/curlGeometry.js';
@@ -70,7 +71,7 @@ export function createDebugLabels({ scene, camera, renderer, getPages }) {
   labelGroup.add(spineTop, spineBottom, labelA, labelB, labelC, labelD);
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === '`') labelGroup.visible = !labelGroup.visible;
+    if (matches('debug.labels', e)) labelGroup.visible = !labelGroup.visible;
   });
 
   const _local = new THREE.Vector3();

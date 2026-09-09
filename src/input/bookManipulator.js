@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { matches } from '../state/keybindings.js';
 
 // >1 = a given drag arc turns the book further than it visually swept.
 const ROTATE_SENSITIVITY = 1.4;
@@ -68,7 +69,7 @@ export function createBookManipulator({ bookGroup, camera, renderer, getPages })
   }
 
   window.addEventListener('keydown', (e) => {
-    if (e.key.toLowerCase() === 'p' && !e.repeat) setPickupMode(!pickupMode);
+    if (matches('book.pickup', e) && !e.repeat) setPickupMode(!pickupMode);
   });
   dom.addEventListener('wheel', (e) => {
     if (!pickupMode || !e.shiftKey) return;

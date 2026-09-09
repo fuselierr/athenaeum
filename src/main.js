@@ -24,13 +24,17 @@ import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
 import { initBookLoader, openLibraryBook } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
+import { mountMenu } from './ui/mountMenu.js';
+import { bindSettings } from './ui/bindSettings.js';
+import { book as bookState } from './state/book.js';
+import { matches } from './state/keybindings.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
 // tuned around; a loaded PDF's aspect ratio derives HINGE_LEN from this
 // rather than rescaling the whole book.
 const BASE_PANEL_REACH = INITIAL_PANEL_REACH;
 
-const { scene, camera, renderer, controls } = await createScene();
+const { scene, camera, renderer, controls, environment } = await createScene();
 const audio = createAudioManager();
 
 // Camera rig first, before anything else claims the canvas: the look
@@ -38,6 +42,14 @@ const audio = createAudioManager();
 // bookManipulator to be able to swallow it, and capture-phase listeners
 // on one element run in registration order.
 const cameraPan = createCameraPan({ camera, controls });
+// Settings reach the room through exactly one file, and the backdrop is
+// loaded here rather than inside createScene: it is a SETTING now, so the
+// stored choice is what decides which one the first frame gets.
+const scenery = bindSettings({
+  audio, camera, renderer, scene, environment,
+});
+await scenery.setBackground(scenery.initialBackground);
+
 const cameraModes = createCameraModes({
   camera,
   renderer,
@@ -135,7 +147,10 @@ populateShelf(bookshelf, {
   // Taking a book off the shelf is what opens it. The conversion is fired
   // and forgotten: `openSequence` inside is what makes a book that was put
   // back mid-render simply never arrive.
-  onTake: (record) => { if (record) openFromShelf(record); else openSequence += 1; },
+  onTake: (record) => {
+    if (record) openFromShelf(record);
+    else openSequence += 1;
+  },
 })
   .then((result) => { shelfBooks = result; })
   .catch((err) => console.error('Shelf books failed to load:', err));
@@ -209,10 +224,21 @@ const bookStatus = document.getElementById('upload-status');
 let openSequence = 0; // bumped by anything that abandons a book mid-load
 let handHoldsBook = false; // is the real book the thing in the hand?
 
-function setBookStatus(text) { if (bookStatus) bookStatus.textContent = text; }
+function setBookStatus(text) {
+  if (bookStatus) bookStatus.textContent = text;
+  bookState.status = text;
+}
 
 async function openFromShelf(record) {
   const token = (openSequence += 1);
+  // Chapters come off the shelf with the book: the library listing already
+  // carries them, so the Book tab is populated the moment you pick it up
+  // rather than when the last page finishes rasterizing.
+  bookState.id = record.id;
+  bookState.title = record.title;
+  bookState.author = record.author;
+  bookState.chapters = Array.isArray(record.chapters) ? record.chapters : [];
+  bookState.loading = true;
   try {
     await openLibraryBook(record.id, {
       onStatus: setBookStatus,
@@ -234,6 +260,8 @@ async function openFromShelf(record) {
   } catch (err) {
     console.error('Opening a shelf book failed:', err);
     setBookStatus(`Error: ${err.message}`);
+  } finally {
+    if (token === openSequence) bookState.loading = false;
   }
 }
 
@@ -345,13 +373,13 @@ resetBtn?.addEventListener('click', resetBook);
 refreshFlipLabel();
 
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space' && anglePanel.visible) {
+  if (matches('debug.pause', e) && anglePanel.visible) {
     simulationPaused = !simulationPaused;
     e.preventDefault();
     return;
   }
-  if (e.key === 'r' || e.key === 'R') resetBook();
-  if (e.key === 'f' || e.key === 'F') { pages.toggleFlip(); refreshFlipLabel(); }
+  if (matches('book.reset', e)) resetBook();
+  if (matches('book.flip', e)) { pages.toggleFlip(); refreshFlipLabel(); }
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault();
     return;
@@ -362,8 +390,27 @@ window.addEventListener('keydown', (e) => {
   // leaf's two faces and the hinge position all move together exactly as
   // they do for a mouse turn. Forward is the right-hand page, same as
   // dragging it.
-  if (e.key === 'ArrowRight') dragPageTurn.playTurn(RIGHT_HAND_PANEL);
-  if (e.key === 'ArrowLeft') dragPageTurn.playTurn(LEFT_HAND_PANEL);
+  if (matches('book.pageForward', e)) dragPageTurn.playTurn(RIGHT_HAND_PANEL);
+  if (matches('book.pageBack', e)) dragPageTurn.playTurn(LEFT_HAND_PANEL);
+});
+
+// --- the menu -------------------------------------------------------------
+// The tabs get a small set of verbs, not the scene. Everything else they
+// need is in the stores (state/), which this file keeps up to date.
+mountMenu({
+  goToPage: (page) => content.goToPage(page),
+  turnPage: (direction) => dragPageTurn.playTurn(
+    direction > 0 ? RIGHT_HAND_PANEL : LEFT_HAND_PANEL,
+  ),
+  setBackground: (id) => scenery.setBackground(id),
+
+  // Escape, innermost meaning first: a book in the hand goes back before
+  // the menu will open. Returning true means the press was spent.
+  escape: () => {
+    if (!shelfBooks?.held) return false;
+    shelfBooks.release();
+    return true;
+  },
 });
 
 // --- render loop ---
@@ -381,6 +428,12 @@ renderer.setAnimationLoop(() => {
 
   cameraModes.update(dt);
   bookManipulator.update();
+
+  // Mirror the reading position for the Book tab. Assigned only on a real
+  // change: writing the same value every frame would wake every watcher
+  // sixty times a second for nothing.
+  if (bookState.page !== content.page) bookState.page = content.page;
+  if (bookState.pageCount !== content.pageCount) bookState.pageCount = content.pageCount;
   if (!simulationPaused) {
     content.update(dt);
     pages.step();

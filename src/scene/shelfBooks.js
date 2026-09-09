@@ -374,7 +374,6 @@ export async function populateShelf(bookshelf, {
   let pointerInside = false;
   let onPointerMove = null;
   let onPointerLeave = null;
-  let onKeyDown = null;
 
   const interactive = Boolean(camera && renderer);
   if (interactive) {
@@ -393,10 +392,6 @@ export async function populateShelf(bookshelf, {
     // book it was over would stay stuck out.
     window.addEventListener('pointermove', onPointerMove);
     dom.addEventListener('pointerleave', onPointerLeave);
-    // Escape is handled here rather than by the caller so that the shelf
-    // owns every way a book leaves the hand.
-    onKeyDown = (event) => { if (event.key === 'Escape') setHeld(null); };
-    window.addEventListener('keydown', onKeyDown);
   }
 
   /**
@@ -502,7 +497,11 @@ export async function populateShelf(bookshelf, {
       return true;
     },
 
-    /** Put the held book back, if there is one. What Escape does. */
+    /**
+     * Put the held book back, if there is one. Escape does this, through
+     * the menu's escape stack (ui/mountMenu.js) rather than a listener
+     * here: one key, one owner, innermost meaning first.
+     */
     release() { setHeld(null); },
 
     /** Size of the model in hand, in metres, or null. */
@@ -600,7 +599,6 @@ export async function populateShelf(bookshelf, {
     dispose() {
       if (onPointerMove) window.removeEventListener('pointermove', onPointerMove);
       if (onPointerLeave) renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
-      if (onKeyDown) window.removeEventListener('keydown', onKeyDown);
       for (const model of models) model.dispose();
       bookshelf.remove(anchor);
     },

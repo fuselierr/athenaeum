@@ -9,6 +9,7 @@ import JSZip from 'jszip';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { extractEpubMetadata, type EpubCover } from './epubMetadata.ts';
+import { readStructure, plainTextLength, type Chapter } from './epubToc.ts';
 
 export interface LibraryBook {
   id: string;
@@ -19,6 +20,8 @@ export interface LibraryBook {
   cover: EpubCover | null;
   characters: number;
   pages: number;
+  /** Where each chapter starts, as 0..1 through the text. See epubToc.ts. */
+  chapters: Chapter[];
 }
 
 // Characters of body text per printed page. A rough constant on purpose:
@@ -30,10 +33,15 @@ const CHARS_PER_PAGE = 1800;
 /**
  * Total characters of readable text in an epub.
  *
- * Measured from the content documents rather than the file size, which is
+ * THE FALLBACK. readStructure measures the same thing over the declared
+ * reading order, which is both more accurate and gives the chapter offsets
+ * for free -- this is what happens when a book has no usable OPF at all:
+ * every content document in the archive, in whatever order the zip lists
+ * them, which is fine for a total.
+ *
+ * Measured from the documents rather than the file size, which is
  * dominated by images -- Gulliver's Travels is 2.5 MB and mostly plates,
- * while Crime and Punishment is 719 KB and far longer to read. Markup is
- * stripped so a verbosely-tagged epub does not read as a longer book.
+ * while Crime and Punishment is 719 KB and far longer to read.
  */
 async function countCharacters(zip: JSZip): Promise<number> {
   const documents = Object.keys(zip.files).filter(
@@ -44,12 +52,7 @@ async function countCharacters(zip: JSZip): Promise<number> {
   for (const name of documents) {
     const html = await zip.file(name)?.async('string');
     if (!html) continue;
-    total += html
-      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&[a-z#0-9]+;/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim().length;
+    total += plainTextLength(html);
   }
   return total;
 }
@@ -90,7 +93,9 @@ export async function readLibrary(dir: string): Promise<LibraryBook[]> {
     const file = path.join(dir, name);
     try {
       const meta = await extractEpubMetadata(file);
-      const characters = await countCharacters(await JSZip.loadAsync(await readFile(file)));
+      const zip = await JSZip.loadAsync(await readFile(file));
+      const structure = await readStructure(zip);
+      const characters = structure.characters || await countCharacters(zip);
 
       // Titles can collide (two editions of one book); ids must not.
       let id = slugify(meta.title ?? name);
@@ -110,6 +115,7 @@ export async function readLibrary(dir: string): Promise<LibraryBook[]> {
         cover: meta.cover,
         characters,
         pages: Math.max(1, Math.round(characters / CHARS_PER_PAGE)),
+        chapters: structure.chapters,
       });
     } catch {
       // One unreadable epub should cost that book, not the whole shelf.

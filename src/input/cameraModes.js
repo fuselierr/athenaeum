@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { isBound, matches } from '../state/keybindings.js';
+import { settings } from '../state/settings.js';
 
 /**
  * The three ways of moving the camera, switched with the 1 / 2 / 3 keys.
@@ -50,7 +52,9 @@ const FOCUS = new THREE.Vector3(0, 0, 0);
 // going back to 1 orbits around the near thing you were facing.
 const ORBIT_HANDOFF_DISTANCE = 1.5;
 
-const WALK_KEYS = new Set(['w', 'a', 's', 'd']);
+// The movement actions, held as ids rather than key codes so a rebind
+// takes effect immediately and nothing has to be re-registered.
+const MOVE_ACTIONS = ['move.forward', 'move.back', 'move.left', 'move.right', 'move.run'];
 
 // How far a press may travel and still count as a click rather than a drag.
 const CLICK_SLOP = 4; // px
@@ -79,7 +83,9 @@ export function createCameraModes({
   onClick = null,
 }) {
   const dom = renderer.domElement;
-  const baseFov = camera.fov;
+  // The fov the scene is framed at, which the look modes zoom in FROM and
+  // never back past -- a setting now, so read rather than captured.
+  const baseFov = () => settings.camera.fov;
 
   let mode = CAMERA_MODE.ORBIT;
   let yaw = 0;
@@ -141,8 +147,8 @@ export function createCameraModes({
     looking = null;
 
     // The zoom belongs to the two first-person modes; orbit uses its normal lens.
-    if (mode === CAMERA_MODE.ORBIT && camera.fov !== baseFov) {
-      camera.fov = baseFov;
+    if (mode === CAMERA_MODE.ORBIT && camera.fov !== baseFov()) {
+      camera.fov = baseFov();
       camera.updateProjectionMatrix();
     }
 
@@ -208,11 +214,13 @@ export function createCameraModes({
     lastY = e.clientY;
     // Sensitivity tracks the fov, so zooming in makes the drag finer instead
     // of flinging the view across the room.
-    const scale = LOOK_SENSITIVITY * (camera.fov / baseFov);
+    // The user's own multiplier rides on top of the fov term.
+    const scale = LOOK_SENSITIVITY * settings.camera.lookSensitivity * (camera.fov / baseFov());
     const dragDirection = mode === CAMERA_MODE.LOOK ? 1 : -1;
+    const vertical = settings.camera.invertY ? -dy : dy;
     yaw += dragDirection * dx * scale;
     pitch = THREE.MathUtils.clamp(
-      pitch + dragDirection * dy * scale,
+      pitch + dragDirection * vertical * scale,
       -PITCH_LIMIT,
       PITCH_LIMIT,
     );
@@ -244,24 +252,22 @@ export function createCameraModes({
     const fov = camera.fov * (e.deltaY > 0 ? ZOOM_PER_NOTCH : 1 / ZOOM_PER_NOTCH);
     // Never wider than the lens the scene was framed for -- zooming out past
     // it would just fisheye the room.
-    camera.fov = THREE.MathUtils.clamp(fov, MIN_FOV, baseFov);
+    camera.fov = THREE.MathUtils.clamp(fov, MIN_FOV, baseFov());
     camera.updateProjectionMatrix();
   }, { capture: true, passive: false });
 
   // --- keys ----------------------------------------------------------------
   window.addEventListener('keydown', (e) => {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    const tag = e.target instanceof HTMLElement ? e.target.tagName : '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-
-    if (e.key === '1') setMode(CAMERA_MODE.ORBIT);
-    else if (e.key === '2') setMode(CAMERA_MODE.WALK);
-    else if (e.key === '3') setMode(CAMERA_MODE.LOOK);
-    else if (e.key === 'Shift') held.add('shift');
-    else if (WALK_KEYS.has(e.key.toLowerCase())) held.add(e.key.toLowerCase());
+    if (matches('camera.orbit', e)) setMode(CAMERA_MODE.ORBIT);
+    else if (matches('camera.walk', e)) setMode(CAMERA_MODE.WALK);
+    else if (matches('camera.look', e)) setMode(CAMERA_MODE.LOOK);
+    for (const action of MOVE_ACTIONS) if (matches(action, e)) held.add(action);
   });
+  // Release is matched on the raw code, without the guards `matches`
+  // applies: a key let go after the menu opened, or after focus moved into
+  // a field, still has to stop the walking it started.
   window.addEventListener('keyup', (e) => {
-    held.delete(e.key === 'Shift' ? 'shift' : e.key.toLowerCase());
+    for (const action of MOVE_ACTIONS) if (isBound(action, e.code)) held.delete(action);
   });
 
   if (indicator) indicator.textContent = `Camera ${LABELS[mode]}`;
@@ -292,14 +298,16 @@ export function createCameraModes({
       _forward.set(-Math.sin(yaw), 0, -Math.cos(yaw));
       _right.set(Math.cos(yaw), 0, -Math.sin(yaw));
 
-      const forwardInput = (held.has('w') ? 1 : 0) - (held.has('s') ? 1 : 0);
-      const strafeInput = (held.has('d') ? 1 : 0) - (held.has('a') ? 1 : 0);
+      const forwardInput = (held.has('move.forward') ? 1 : 0) - (held.has('move.back') ? 1 : 0);
+      const strafeInput = (held.has('move.right') ? 1 : 0) - (held.has('move.left') ? 1 : 0);
       _wish.set(0, 0, 0)
         .addScaledVector(_forward, forwardInput)
         .addScaledVector(_right, strafeInput);
       // Normalised so walking a diagonal is not faster than walking straight.
       if (_wish.lengthSq() > 0) {
-        _wish.normalize().multiplyScalar(WALK_SPEED * (held.has('shift') ? RUN_MULTIPLIER : 1));
+        _wish.normalize().multiplyScalar(
+          WALK_SPEED * (held.has('move.run') ? RUN_MULTIPLIER : 1),
+        );
       }
 
       const response = _wish.lengthSq() > 0 ? WALK_ACCELERATION : WALK_DAMPING;
