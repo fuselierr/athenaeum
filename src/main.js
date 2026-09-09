@@ -17,6 +17,7 @@ import { createBookContent, RIGHT_HAND_PANEL, LEFT_HAND_PANEL } from './book/rea
 import { createDragCover } from './book/reader/dragCover.js';
 import { createDragPageTurn } from './book/reader/dragPageTurn.js';
 import { createCameraPan } from './input/cameraPan.js';
+import { createCameraModes, CAMERA_MODE } from './input/cameraModes.js';
 import { createBookManipulator } from './input/bookManipulator.js';
 import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
@@ -30,6 +31,15 @@ const BASE_PANEL_REACH = INITIAL_PANEL_REACH;
 
 const { scene, camera, renderer, controls } = await createScene();
 const audio = createAudioManager();
+
+// Camera rig first, before anything else claims the canvas: the look
+// modes have to see a pointerdown ahead of dragCover / dragPageTurn /
+// bookManipulator to be able to swallow it, and capture-phase listeners
+// on one element run in registration order.
+const cameraPan = createCameraPan({ camera, controls });
+const cameraModes = createCameraModes({
+  camera, renderer, controls, cameraPan,
+});
 
 // The book hangs under its own group rather than directly under `scene` so
 // it can be rotated and slid as a whole (see input/bookManipulator.js)
@@ -96,7 +106,10 @@ const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
   // Union AFTER the move, so the floor covers where the shelf ended up. Its
   // min.y is the lowest foot in the room, which is what the floor sits at.
   const room = deskBox.clone().union(new THREE.Box3().setFromObject(bookshelf));
-  addFloor(scene, room);
+  const floor = addFloor(scene, room);
+  // The floor IS the walkable area, margin included, so the first-person
+  // mode takes its bounds from the mesh rather than recomputing them.
+  cameraModes.setRoom(new THREE.Box3().setFromObject(floor));
 }
 
 // After the shelf has been turned and placed: the books measure it in its
@@ -130,7 +143,6 @@ const dragPageTurn = createDragPageTurn({
   getPages, camera, renderer, controls, content,
   onPageTurnSound: () => { console.log('onPageTurnSound fired'); audio.playPageTurn(); },
 });
-const cameraPan = createCameraPan({ camera, controls });
 const bookManipulator = createBookManipulator({ bookGroup, camera, renderer, getPages });
 const debugLabels = createDebugLabels({ scene, camera, renderer, getPages });
 const anglePanel = createAnglePanel({ getPages, getPageTurn: () => dragPageTurn });
@@ -251,7 +263,7 @@ renderer.setAnimationLoop(() => {
   if (pages.spineRotationDriven) refreshSpineRotationLabel();
   if (!anglePanel.visible) simulationPaused = false;
 
-  cameraPan.update(dt);
+  cameraModes.update(dt);
   shelfBooks?.update(dt);
   bookManipulator.update();
   if (!simulationPaused) {
@@ -262,7 +274,9 @@ renderer.setAnimationLoop(() => {
     placement.step(dt, bookManipulator.grabbed);
     dragPageTurn.update(dt);
   }
-  controls.update();
+  // OrbitControls poses the camera on every update() -- enabled or not --
+  // so the modes that steer it directly must not let it run.
+  if (cameraModes.mode === CAMERA_MODE.ORBIT) controls.update();
   renderer.render(scene, camera);
   debugLabels.update();
   anglePanel.update();
@@ -272,7 +286,7 @@ if (import.meta.env.DEV) {
   // THREE is included so console debugging can build THREE.Box3 etc.
   // against these objects without a separate import.
   window.__athenaeum = {
-    scene, camera, controls, renderer, bookGroup, content, dragPageTurn, dragCover, anglePanel, THREE,
+    scene, camera, controls, cameraModes, renderer, bookGroup, content, dragPageTurn, dragCover, anglePanel, THREE,
     get pages() { return pages; },
   };
 }

@@ -28,6 +28,14 @@
         #spine-rotation-panel input { width: 150px; vertical-align: middle; }
         #spine-rotation-value { display: inline-block; min-width: 42px; text-align: right; }
 
+        /* Which camera rig has the view; updated by input/cameraModes.js. */
+        #camera-mode {
+            position: fixed; bottom: 12px; left: 12px; z-index: 2;
+            color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
+            background: rgba(20, 24, 32, 0.6); padding: 8px 12px; border-radius: 8px;
+            pointer-events: none;
+        }
+
         /* Upload panel: POSTs the epub to the server conversion pipeline
            (see src/bookLoader.js) and reports status. */
         #upload-panel {
@@ -46,6 +54,8 @@
         <label for="spine-rotation">Spine rotation <span id="spine-rotation-value"></span></label>
         <input id="spine-rotation" type="range" min="-1" max="1" step="0.01" value="0">
     </div>
+
+    <div id="camera-mode"></div>
 
     <div id="upload-panel">
         <div>Upload an epub to convert it to page textures.</div>
