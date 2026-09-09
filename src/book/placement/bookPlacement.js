@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GRAVITY_MAG } from '../pageSim/config.js';
+import { BOOK_WORLD_SCALE } from '../../scene/worldScale.js';
 
 /**
  * The book's PLACEMENT physics: where the book as a whole sits, and what
@@ -42,7 +43,9 @@ const FRICTION = 0.9;
 // A grabbed book is moved by hand, so its velocity has to be measured
 // rather than simulated -- this is what lets you throw it. Capped so a
 // single stuttered frame cannot fling it across the room.
-const MAX_RELEASE_SPEED = 12; // world units/s
+// Metres/second, so this one scales with the world; the spin cap is in
+// radians and does not.
+const MAX_RELEASE_SPEED = 2.5;
 const MAX_RELEASE_SPIN = 12; // rad/s
 
 export async function createBookPlacement({ bookGroup, getPages, desk }) {
@@ -93,7 +96,17 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
     if (boardColliders) {
       for (const c of boardColliders) world.removeCollider(c, false);
     }
-    const { halfExtents } = shape;
+    // Into world units. The board's dimensions come from the page
+    // simulation, which is authored at its own scale and only reaches the
+    // world through bookGroup's scale -- but a Rapier body has no scale, so
+    // the collider has to be sized in metres itself or the book would
+    // collide with the desk as if it were a metre and a half across.
+    const s = BOOK_WORLD_SCALE;
+    const halfExtents = {
+      x: shape.halfExtents.x * s,
+      y: shape.halfExtents.y * s,
+      z: shape.halfExtents.z * s,
+    };
     const make = () => world.createCollider(
       RAPIER.ColliderDesc
         .cuboid(halfExtents.x, halfExtents.y, halfExtents.z)
@@ -136,6 +149,9 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
       _offsetMatrix.makeTranslation(offset.x, offset.y, offset.z);
       _boardMatrix.multiplyMatrices(_rootMatrix, mesh.matrix).multiply(_offsetMatrix);
       _boardMatrix.decompose(_pos, _quat, _scale);
+      // Same conversion as the half-extents above: the matrix chain is all
+      // in the page simulation's own units, the body's frame is metres.
+      _pos.multiplyScalar(BOOK_WORLD_SCALE);
       boardColliders[i].setTranslationWrtParent({ x: _pos.x, y: _pos.y, z: _pos.z });
       boardColliders[i].setRotationWrtParent({ x: _quat.x, y: _quat.y, z: _quat.z, w: _quat.w });
     }

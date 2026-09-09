@@ -41,7 +41,7 @@ export async function loadLamp(scene, options = {}) {
         // bulbHeightFraction below) is above this line it tilts along with
         // the shade, which is what you want.
         shadePivotFraction = 0.35,
-        scale = 1.75,
+        scale = 1,
         // Multiplies whatever emissive intensity the model already carries
         // (either baked in via KHR_materials_emissive_strength, or three.js's
         // default of 1 for a material that just has an emissiveFactor/
@@ -54,8 +54,13 @@ export async function loadLamp(scene, options = {}) {
         glowColor = null,
         // Real light emitted into the scene, positioned near the bulb.
         lightColor = 0xffb347,
-        lightIntensity = 18,
-        lightDistance = 16,
+        // Metric (see scene/worldScale.js). A point light with decay 2
+        // delivers illuminance proportional to intensity / distance^2, so
+        // these do NOT survive a change of world scale unchanged: pulling
+        // the scene in from book-units to metres brought the bulb about
+        // five times closer to the desk, which is ~25x the illuminance.
+        lightIntensity = 0.75,
+        lightDistance = 3.2,
         lightDecay = 2,
         // This model is a single fused mesh (no separate "bulb" node to
         // target by name like the previous lamp.glb had), so the point

@@ -72,7 +72,9 @@ export function createBookManipulator({ bookGroup, camera, renderer, getPages })
   });
   dom.addEventListener('wheel', (e) => {
     if (!pickupMode || !e.shiftKey) return;
-    pickupDepth = THREE.MathUtils.clamp(pickupDepth + e.deltaY * 0.005, 0.5, 15);
+    // Metres from the camera (scene/worldScale.js): arm's length at the
+    // near end, across-the-room at the far.
+    pickupDepth = THREE.MathUtils.clamp(pickupDepth + e.deltaY * 0.0006, 0.12, 3);
     e.preventDefault();
     e.stopImmediatePropagation();
   }, { capture: true, passive: false });

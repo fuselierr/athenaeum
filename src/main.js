@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { createScene } from './scene/createScene.js';
 import { loadDesk } from './scene/desk.js';
 import { loadLamp } from './scene/lamp.js';
+import { loadBookshelf } from './scene/bookshelf.js';
+import { addFloor } from './scene/floor.js';
 import { PageSimulation } from './book/pageSim/PageSimulation.js';
 import { createBookPlacement } from './book/placement/bookPlacement.js';
 import {
@@ -9,6 +11,7 @@ import {
   setSpineRotation, SPINE_ROTATION, PANEL_REACH as INITIAL_PANEL_REACH,
 } from './book/pageSim/config.js';
 import { updateLocalCorners } from './book/pageSim/math.js';
+import { BOOK_WORLD_SCALE } from './scene/worldScale.js';
 import { createBookContent, RIGHT_HAND_PANEL, LEFT_HAND_PANEL } from './book/reader/bookContent.js';
 import { createDragCover } from './book/reader/dragCover.js';
 import { createDragPageTurn } from './book/reader/dragPageTurn.js';
@@ -32,18 +35,68 @@ const audio = createAudioManager();
 // without touching PageSimulation.root's own render flip or any physics
 // coordinates -- purely an outer, render-only transform.
 const bookGroup = new THREE.Group();
-bookGroup.position.set(0, 0.1, 0);
+// The book's page simulation is authored at its own working scale; this is
+// what brings it down to the metric world the desk and lamp live in. See
+// scene/worldScale.js for why it is a group scale and not smaller
+// constants. Everything under here -- meshes, raycasts, the hinge points
+// dragCover/dragPageTurn read through root.matrixWorld -- follows it for
+// free; the one thing that does not is the placement physics, which is
+// told the scale explicitly.
+bookGroup.scale.setScalar(BOOK_WORLD_SCALE);
+bookGroup.position.set(0, 0.02, 0); // 2 cm above the desk, so it settles rather than starting flush
 scene.add(bookGroup);
 
 // The desk and lamp go straight under `scene`: they are furniture the book
 // rests on, so they stay put in world space when the book itself is moved.
 // Loaded alongside the page simulation since none of the three waits on
 // the others.
-const [pagesInstance, desk] = await Promise.all([
+const [pagesInstance, desk, , bookshelf] = await Promise.all([
   PageSimulation.create(bookGroup),
   loadDesk(scene),
-  loadLamp(scene, { position: new THREE.Vector3(1.2, 0, -2.6), scale: 4.75 }),
+  // Lamp stays its authored size; only its position follows the desk's
+  // 1.5, so it keeps the same spot on a bigger surface.
+  loadLamp(scene, { position: new THREE.Vector3(0.33, 0, -0.63) }),
+  loadBookshelf(scene),
 ]);
+
+// --- arrange the room -----------------------------------------------------
+// Done here rather than inside the loaders because it is a RELATIONSHIP
+// between two models, and neither one can know the other's measurements at
+// its own load time. Measured, not hardcoded, so swapping either .glb (or
+// changing FURNITURE_SCALE) still lands them correctly.
+const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
+
+{
+  const deskBox = new THREE.Box3().setFromObject(desk.object);
+
+  // BEHIND IS -X. desk.js rotates the desk by PI/2, so the desk's depth
+  // runs along X rather than Z, and the far side from the viewer is its
+  // -X edge.
+  //
+  // Turn the shelf to match before measuring it: at rotationY 0 its front
+  // faces +Z (which is why its own default position put it at -Z), and
+  // +PI/2 swings that round to +X -- out of the back wall, facing the desk.
+  bookshelf.updateMatrixWorld(true);
+
+  const shelfBox = new THREE.Box3().setFromObject(bookshelf);
+  const shelfDepth = shelfBox.max.x - shelfBox.min.x;
+
+  // loadBookshelf recentres the model horizontally on its own origin and
+  // puts its feet at that origin, so: X places the FRONT face a set gap
+  // past the desk's back edge, Y drops the feet to the floor -- NOT 0,
+  // which is the desk's TOP surface -- and Z lines it up with the desk.
+  bookshelf.position.set(
+    deskBox.min.x - GAP_BEHIND_DESK - shelfDepth / 2,
+    deskBox.min.y,
+    (deskBox.min.z + deskBox.max.z) / 2,
+  );
+  bookshelf.updateMatrixWorld(true);
+
+  // Union AFTER the move, so the floor covers where the shelf ended up. Its
+  // min.y is the lowest foot in the room, which is what the floor sits at.
+  const room = deskBox.clone().union(new THREE.Box3().setFromObject(bookshelf));
+  addFloor(scene, room);
+}
 
 // Reassigned by applyPdfDimensions below, so everything downstream takes a
 // `getPages` closure rather than capturing the instance.
@@ -135,7 +188,7 @@ function refreshFlipLabel() {
   if (flipBtn) flipBtn.textContent = pages.flipped ? 'Flip book back' : 'Flip book over';
 }
 
-const RESET_POSITION = new THREE.Vector3(0, 0.1, 0);
+const RESET_POSITION = new THREE.Vector3(0, 0.02, 0);
 const RESET_QUATERNION = new THREE.Quaternion();
 
 function resetBook() {
