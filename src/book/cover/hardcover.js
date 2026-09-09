@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { HINGE_LEN, PANEL_REACH, SPINE_GAP } from '../pageSim/config.js';
-import { pageTransform } from '../pageSim/math.js';
+import { HINGE_LEN, PANEL_REACH, PIVOT_TO_NEAR_EDGE, SPINE_GAP } from '../pageSim/config.js';
+import { pageTransform, spineHinge } from '../pageSim/math.js';
 import { sampleBindingColor, renderSpineLabel, toHex, shade, luminance } from './jacketArt.js';
+import { createBoardGeometry, BOARD_FACE_PY, BOARD_FACE_NY } from './boardGeometry.js';
 
 /**
  * The book's hardcover: two render-only boards with their own H1/H2 angles,
@@ -24,7 +25,7 @@ import { sampleBindingColor, renderSpineLabel, toHex, shade, luminance } from '.
  * away from the page block. In the page's local frame that is a constant
  * (+Y for the front board, -Y for the back), which is what lets the board
  * simply copy its page's transform. To see why: the four panels only sit
- * face-to-face when the book is closed, which is the pose where every
+ * face-to-face when the book is cslosed, which is the pose where every
  * page angle is BC_MEET_ANGLE (pi/2), and there a page's local +Y maps to
  * world +Z -- the same axis the panels are stacked along, with A at the
  * +Z end of the stack and D at the -Z end. So +Y points out of the stack
@@ -41,10 +42,53 @@ import { sampleBindingColor, renderSpineLabel, toHex, shade, luminance } from '.
 // All proportional to the page so a re-sized book (a loaded PDF changes
 // HINGE_LEN/PANEL_REACH/SPINE_GAP) keeps the same cover proportions.
 const SQUARE_RATIO = 0.025; // overhang past the page, as a fraction of PANEL_REACH
-const BOARD_THICKNESS_RATIO = 0.02; // board thickness, likewise
-const PAGE_CLEARANCE_RATIO = 0.01; // gap between the page surface and the board's inner face
+const BOARD_THICKNESS_RATIO = 0.015; // board thickness, likewise
+// Gap between the page surface and the board's inner face. Only big enough
+// to keep the two from being coincident: a shut book should look shut, and
+// anything larger reads as the cover hovering off the block.
+const PAGE_CLEARANCE_RATIO = 0.001;
 
-const SPINE_SEGMENTS = 24;
+// The spine's cross-section is six rows: a thin strip, a hard step up, the
+// full-thickness slab, a step back down, and the far thin strip. Nothing
+// between those is curved, so there is nothing to subdivide -- but the two
+// steps need a DUPLICATED row each (same position, two thicknesses) or the
+// mesh would ramp between them instead of stepping.
+//
+//   row 0   board edge          thin
+//   row 1   slab starts here    thin   |
+//   row 2   same position       full   |  the step
+//   row 3   slab ends           full
+//   row 4   same position       thin   |  the step
+//   row 5   board edge          thin   |
+const SPINE_SEGMENTS = 5;
+
+// Thickness of the groove strip, as a fraction of the board's.
+const GROOVE_THICKNESS_RATIO = 0.35;
+
+/**
+ * The joint -- what bookbinders call a French groove: the channel running
+ * down each side of the spine, and the line the board actually swings on.
+ *
+ * It is not a notch cut into the board, and it is NOT the board standing
+ * off the block either -- that was tried and it is wrong: a cased board
+ * lies flat against the block when the book is shut, and pushing it out by
+ * the joint leaves a permanent gap you can see down.
+ *
+ * Instead the spine's own slab stops this far short of the block's edge,
+ * and the remaining strip out to the board is carried by a THINNER, flat
+ * extension -- the covering material spanning the channel. So the spine
+ * still reaches the board and the cover is continuous; it just steps down
+ * to a thinner section on the way, and that recess is the joint's shadow
+ * line.
+ *
+ * The board is untouched and stays flush, and its hinge edge is the
+ * groove's outer wall -- the line a real cover swings on.
+ *
+ * A fraction of PANEL_REACH like every other cover proportion, but capped
+ * against SPINE_GAP: a thin book has very little spine to give away.
+ */
+const GROOVE_WIDTH_RATIO = 0.012;
+const GROOVE_MAX_SPINE_FRACTION = 0.25;
 
 const BOARD_COLOR = 0x4a2f24; // plain binding, until a jacket is applied
 const SPINE_COLOR = 0x3d2620;
@@ -52,8 +96,17 @@ const SPINE_COLOR = 0x3d2620;
 // BoxGeometry emits its six faces in this order, so the outward face of
 // a board -- local +Y on the front, -Y on the back -- is the group that
 // takes the cover art.
-const FACE_PY = 2;
-const FACE_NY = 3;
+const FACE_PY = BOARD_FACE_PY;
+const FACE_NY = BOARD_FACE_NY;
+
+// How much is taken off a board's edges. Small on purpose: a real board is
+// eased, not rounded over -- it still reads as a rectangle with a definite
+// edge. A fraction of the board's own thickness, since that is all the
+// material there is to round.
+//
+// The plan-view CORNERS stay square. The two edge fillets simply run into
+// each other and mitre where they meet, which is what a cut board does.
+const EDGE_FILLET_RATIO = 0.35; // of thickness
 
 // Which end of the spine the label's reading direction points at. The
 // book's own 'up the page' is +X (PageSimulation.PAGE_TOP_AT_PLUS_X), so
@@ -72,12 +125,21 @@ export function createHardcover({ parent, hardcoverAngles }) {
   const square = PANEL_REACH * SQUARE_RATIO;
   const thickness = PANEL_REACH * BOARD_THICKNESS_RATIO;
   const clearance = PANEL_REACH * PAGE_CLEARANCE_RATIO;
+  const groove = Math.min(
+    PANEL_REACH * GROOVE_WIDTH_RATIO,
+    SPINE_GAP * GROOVE_MAX_SPINE_FRACTION,
+  );
 
   const halfWidth = HINGE_LEN / 2 + square; // X half-extent, shared by boards and spine
   // Distance from the page plane out to the board's MID-thickness. The
-  // spine curve is sampled at this same distance so its two rails land
-  // flush with the boards' inner and outer faces.
+  // spine is swept at this same distance so its two rails land flush with
+  // the boards' inner and outer faces.
   const midOffset = clearance + thickness / 2;
+
+  // How far a board reaches from its hinge to its fore-edge. The groove
+  // does not enter into this: the board is unchanged, it is the spine that
+  // gives way.
+  const boardReach = PANEL_REACH + square;
 
   // The binding: every face of both boards except the two that face the
   // world, which get their own materials so cover art can go on them
@@ -105,17 +167,23 @@ export function createHardcover({ parent, hardcoverAngles }) {
    * comment): +1 for the front cover, -1 for the back.
    */
   function makeBoard(outSign, faceMaterial, faceIndex) {
-    const geo = new THREE.BoxGeometry(
-      HINGE_LEN + 2 * square, // X: overhangs head and tail
+    // Not a BoxGeometry: the corners and edges are eased (boardGeometry.js),
+    // which also means three material groups instead of six.
+    const geo = createBoardGeometry({
+      width: HINGE_LEN + 2 * square, // X: overhangs head and tail
       thickness, // Y: the board's own thickness
-      PANEL_REACH + square, // Z: overhangs the fore-edge only
-    );
-    // Z: the hinge edge stays put at -PANEL_REACH/2 and the whole square
-    // is spent at the fore-edge, so the span shifts out by half of it.
+      depth: boardReach, // Z: hinge to fore-edge, overhanging only at the fore-edge
+      cornerRadius: 0, // sharp corners; the fillets mitre into each other
+      edgeRadius: thickness * EDGE_FILLET_RATIO,
+    });
+    // Z: put the board's inner edge exactly on its own pivot --
+    // pageTransform sets a mesh's origin PIVOT_TO_NEAR_EDGE out from the
+    // hinge, so local -PIVOT_TO_NEAR_EDGE is the hinge itself and the span
+    // runs outward from there.
     // Y: lift the board clear of the page and onto its outward side.
-    geo.translate(0, outSign * midOffset, square / 2);
+    geo.translate(0, outSign * midOffset, boardReach / 2 - PIVOT_TO_NEAR_EDGE);
 
-    const materials = Array(6).fill(bindingMaterial);
+    const materials = [bindingMaterial, bindingMaterial, bindingMaterial];
     materials[faceIndex] = faceMaterial;
 
     const mesh = new THREE.Mesh(geo, materials);
@@ -126,21 +194,20 @@ export function createHardcover({ parent, hardcoverAngles }) {
   }
 
   // --- spine -----------------------------------------------------------
-  // A swept strip joining the two boards' hinge edges around the outside
-  // of the book. Its cross-section is a cubic Bezier pinned to each
-  // board's hinge edge and leaving it TANGENT to that board, so the cover
-  // reads as one continuous piece however far the book is opened. Control
-  // points sit 2/3 of the chord along those tangents, the standard cubic
-  // approximation to a circular arc: closed (both covers at pi/2, tangents
-  // antiparallel) that traces a half-cylinder of radius ~SPINE_GAP, the
-  // familiar rounded spine; open flat (0 and pi, tangents now parallel and
-  // pointing the same way down the chord) the same formula degenerates to
-  // a straight strip lying between the two boards, which is what a spine
-  // does on a table. Nothing special-cases either pose.
+  // A FLAT back: a straight slab joining the two boards' hinge edges,
+  // with a groove pressed in along each side.
   //
-  // Rebuilt every frame rather than posed, because both endpoints AND both
-  // tangents move with the covers -- there is no rigid transform that
-  // could carry a fixed mesh between those states.
+  // It used to be a cubic Bezier left tangent to both boards, which traced
+  // a half-cylinder when the book was shut and flattened out as it opened
+  // -- a rounded spine. A flat-back binding behaves the other way round:
+  // the spine is a rigid slab that never changes shape, and the boards
+  // swing on the grooves just inside its edges instead. So the section is
+  // now the plain chord, and the only shaping left is the two channels.
+  //
+  // Still rebuilt every frame rather than posed, because the endpoints are
+  // read off the boards and those move; the SHAPE between them no longer
+  // changes, so this is now much closer to a rigid piece being re-placed
+  // than to a surface being re-solved.
   const spineRows = SPINE_SEGMENTS + 1;
   const spinePositions = new Float32Array(spineRows * 4 * 3); // 4 rails: outer L/R, inner L/R
   const spineGeo = new THREE.BufferGeometry();
@@ -153,7 +220,14 @@ export function createHardcover({ parent, hardcoverAngles }) {
   spineMesh.receiveShadow = true;
   parent.add(spineMesh);
 
-  /** Put a board at its fixed hinge and independent cover angle. */
+  /**
+   * Put a board at its hinge and independent cover angle.
+   *
+   * The hinge is the cover page's own -- the block's edge, which is also
+   * the groove's outer wall. Posing it further out along the spine (which
+   * was tried) swings correctly but leaves the shut board standing a
+   * groove-width off the block.
+   */
   function poseBoard(mesh, angle, anchorZ) {
     const t = pageTransform({ y: 0, z: anchorZ }, angle);
     mesh.position.set(t.pos.x, t.pos.y, t.pos.z);
@@ -162,63 +236,91 @@ export function createHardcover({ parent, hardcoverAngles }) {
   }
 
   // Scratch, reused every frame.
-  const _hinge = new THREE.Vector3();
-  const _out = new THREE.Vector3();
-  const _fore = new THREE.Vector3();
+  const _profileDistance = new Float64Array(spineRows);
+  const _profileThickness = new Float64Array(spineRows);
   const _pA = new THREE.Vector3();
-  const _pD = new THREE.Vector3();
-  const _tA = new THREE.Vector3();
-  const _tD = new THREE.Vector3();
-  const _c1 = new THREE.Vector3();
-  const _c2 = new THREE.Vector3();
+  const _axis = new THREE.Vector3();
   const _pt = new THREE.Vector3();
-  const _tan = new THREE.Vector3();
   const _nrm = new THREE.Vector3();
-  const curve = new THREE.CubicBezierCurve3(_pA, _c1, _c2, _pD);
 
-  /**
-  * Reads a board's current transform and returns, in parent space, its
-  * hinge-edge midpoint, its outward normal and its fore-edge direction.
-  * `outSign` matches makeBoard's.
-   */
-  function readCover(boardMesh, outSign, hinge, out, fore) {
-    // The board's own mesh transform IS the cover frame -- its overhang and
-    // thickness live in the geometry, not the transform -- so these are the
-    // same three quantities whichever mesh carries that frame.
-    hinge.set(0, 0, -PANEL_REACH / 2).applyMatrix4(boardMesh.matrix);
-    out.set(0, outSign, 0).transformDirection(boardMesh.matrix);
-    fore.set(0, 0, 1).transformDirection(boardMesh.matrix);
-    return hinge;
-  }
 
   function updateSpine() {
-    // Front cover: hinge edge, lifted to the board's mid-thickness.
-    readCover(H1, +1, _hinge, _out, _fore);
-    _pA.copy(_hinge).addScaledVector(_out, midOffset);
-    _tA.copy(_fore).negate(); // leaves the front board heading away from its fore-edge
+    // Ends taken off the spine line, stopping a groove SHORT of the page
+    // block's edge at each side -- the boards still hinge on the block's
+    // edge, so that shortfall is the joint.
+    //
+    // Read from the block rather than from the boards, which also makes the
+    // slab rigid: its endpoints no longer swing when a cover opens, exactly
+    // as a flat back behaves. Only a change of spine tilt or of book
+    // thickness moves it now.
+    // Ends are the block's own edges -- the same line the boards hinge on,
+    // so the spine reaches all the way to them. Where the joint goes is a
+    // matter of the PROFILE below, not of stopping short.
+    const endA = spineHinge(SPINE_GAP).mid;
+    const endD = spineHinge(-SPINE_GAP).mid;
 
-    // Back cover: same, and the curve ARRIVES travelling into its
-    // fore-edge, so the tangent there is +fore rather than -fore.
-    readCover(H2, -1, _hinge, _out, _fore);
-    _pD.copy(_hinge).addScaledVector(_out, midOffset);
-    _tD.copy(_fore);
+    _axis.set(endD.x - endA.x, endD.y - endA.y, endD.z - endA.z);
+    const span = _axis.length();
+    if (span > 1e-9) _axis.divideScalar(span);
 
-    const chord = _pA.distanceTo(_pD);
-    const handle = (2 / 3) * chord;
-    _c1.copy(_pA).addScaledVector(_tA, handle);
-    _c2.copy(_pD).addScaledVector(_tD, -handle);
+    // The section lies in a plane of constant X, so the outward normal is
+    // the axis turned a quarter turn within it -- and THIS quarter turn is
+    // already the outward one. Going A (+z) to D (-z) makes the axis
+    // (0, sin B, -cos B) for a spine tilt B, so this evaluates to
+    // (0, cos B, sin B): +Y when flat, which is the side the pages are not
+    // on. It must not be "corrected" against a board's own normal -- with
+    // the book shut a board faces along Z while this faces Y, the two are
+    // perpendicular, and the sign test then flips the slab inside the
+    // block, where it shows through the pages.
+    _nrm.set(0, -_axis.z, _axis.y).normalize();
+
+    // The face that lies against the page block. Held CONSTANT across the
+    // whole spine: the groove is a recess in the OUTSIDE of the cover, so
+    // the inside stays flat against the block and continuous with each
+    // board's inner face. A thinner row therefore has to shift its
+    // centreline as well, which is why the offset below adds halfThick
+    // rather than a fixed midOffset.
+    const innerSurface = midOffset - thickness / 2;
+    _pA.set(endA.x, endA.y, endA.z);
+
+    // Six rows: thin strip, step, slab, step, thin strip. Rows 1/2 and 3/4
+    // share a position -- that is the step.
+    const thin = thickness * GROOVE_THICKNESS_RATIO;
+    _profileDistance[0] = 0;
+    _profileDistance[1] = groove;
+    _profileDistance[2] = groove;
+    _profileDistance[3] = span - groove;
+    _profileDistance[4] = span - groove;
+    _profileDistance[5] = span;
+    _profileThickness[0] = thin;
+    _profileThickness[1] = thin;
+    _profileThickness[2] = thickness;
+    _profileThickness[3] = thickness;
+    _profileThickness[4] = thin;
+    _profileThickness[5] = thin;
+
+    const uv = spineGeo.attributes.uv.array;
 
     for (let i = 0; i < spineRows; i++) {
-      const t = i / SPINE_SEGMENTS;
-      curve.getPoint(t, _pt);
-      curve.getTangent(t, _tan);
-      // The whole curve lies in a plane of constant X, so its outward
-      // normal is just the tangent turned a quarter turn within that
-      // plane. Signed so it points out of the book, matching _out above.
-      _nrm.set(0, -_tan.z, _tan.y).normalize();
+      const distance = _profileDistance[i];
+      const halfThick = _profileThickness[i] / 2;
 
-      writeSpineRow(spinePositions, spineRows, i, _pt, _nrm, halfWidth, thickness / 2);
+      _pt.copy(_pA)
+        .addScaledVector(_axis, distance)
+        .addScaledVector(_nrm, innerSurface + halfThick);
+
+      writeSpineRow(spinePositions, spineRows, i, _pt, _nrm, halfWidth, halfThick);
+
+      // v by REAL distance along the spine, not by row index. Two pairs of
+      // rows sit at the same place, so an index-based v would spend a fifth
+      // of the label on each zero-width step and leave the slab -- almost
+      // the whole spine -- with a fifth of it.
+      const v = span > 1e-9 ? distance / span : 0;
+      for (let rail = 0; rail < 4; rail++) {
+        uv[(rail * spineRows + i) * 2 + 1] = v;
+      }
     }
+    spineGeo.attributes.uv.needsUpdate = true;
 
     spineGeo.attributes.position.needsUpdate = true;
     spineGeo.computeVertexNormals();
@@ -240,12 +342,16 @@ export function createHardcover({ parent, hardcoverAngles }) {
      * same box; only their transforms differ, and those are already on
      * H1.matrix / H2.matrix.
      *
+     * Still a plain cuboid, even though the board's own mesh now has eased
+     * corners and edges: that rounding is a millimetre of cosmetics and
+     * squaring it off costs nothing a reader could feel when the book
+     * lands on the desk.
+     *
      * `centerOffset` is the same shift makeBoard() bakes into the geometry
-     * -- a BoxGeometry is centred on its own origin, so translating the
-     * geometry moves the box away from the mesh origin and a collider
-     * copying only the mesh transform would sit in the wrong place. The
-     * two have to stay in step, which is why this is derived here rather
-     * than re-measured by the caller.
+     * -- the board is built centred on its own origin and then translated,
+     * so a collider copying only the mesh transform would sit in the wrong
+     * place. The two have to stay in step, which is why this is derived
+     * here rather than re-measured by the caller.
      *
      * Regenerated on read (cheap, three numbers) so a book re-sized by a
      * loaded PDF reports its new board size rather than a stale one.
@@ -301,7 +407,12 @@ export function createHardcover({ parent, hardcoverAngles }) {
       // The label canvas is laid out along the spine's own proportions --
       // its long axis is the book's height, its short one the thickness --
       // so the arc it wraps onto is not distorted.
-      const aspect = Math.max(0.04, (Math.PI * (SPINE_GAP + midOffset)) / (HINGE_LEN + 2 * square));
+      // Developed width of the spine, over its height. Was PI * radius,
+      // the arc length of the half-cylinder the old rounded spine traced;
+      // a flat back just spans the chord, which is about 2/3 of that, so
+      // leaving it would have stretched the title along the spine.
+      const spineWidth = 2 * (SPINE_GAP + midOffset);
+      const aspect = Math.max(0.04, spineWidth / (HINGE_LEN + 2 * square));
       const labelCanvas = renderSpineLabel({
         title, author, background: binding,
         lengthPx: 1024, widthPx: Math.round(1024 * aspect),
