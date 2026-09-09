@@ -42,6 +42,7 @@ import { createBoardGeometry, BOARD_FACE_PY, BOARD_FACE_NY } from './boardGeomet
 // All proportional to the page so a re-sized book (a loaded PDF changes
 // HINGE_LEN/PANEL_REACH/SPINE_GAP) keeps the same cover proportions.
 const SQUARE_RATIO = 0.025; // overhang past the page, as a fraction of PANEL_REACH
+const BACK_EDGE_EXTENSION_RATIO = 0.015; // extra material behind the hinge toward the spine
 const BOARD_THICKNESS_RATIO = 0.015; // board thickness, likewise
 // Gap between the page surface and the board's inner face. Only big enough
 // to keep the two from being coincident: a shut book should look shut, and
@@ -140,6 +141,8 @@ export function createHardcover({ parent, hardcoverAngles }) {
   // does not enter into this: the board is unchanged, it is the spine that
   // gives way.
   const boardReach = PANEL_REACH + square;
+  const backExtension = PANEL_REACH * BACK_EDGE_EXTENSION_RATIO;
+  const boardDepth = boardReach + backExtension;
 
   // The binding: every face of both boards except the two that face the
   // world, which get their own materials so cover art can go on them
@@ -172,7 +175,7 @@ export function createHardcover({ parent, hardcoverAngles }) {
     const geo = createBoardGeometry({
       width: HINGE_LEN + 2 * square, // X: overhangs head and tail
       thickness, // Y: the board's own thickness
-      depth: boardReach, // Z: hinge to fore-edge, overhanging only at the fore-edge
+      depth: boardDepth, // Z: adds material behind the hinge without moving the fore-edge
       cornerRadius: 0, // sharp corners; the fillets mitre into each other
       edgeRadius: thickness * EDGE_FILLET_RATIO,
     });
@@ -181,7 +184,11 @@ export function createHardcover({ parent, hardcoverAngles }) {
     // hinge, so local -PIVOT_TO_NEAR_EDGE is the hinge itself and the span
     // runs outward from there.
     // Y: lift the board clear of the page and onto its outward side.
-    geo.translate(0, outSign * midOffset, boardReach / 2 - PIVOT_TO_NEAR_EDGE);
+    geo.translate(
+      0,
+      outSign * midOffset,
+      boardReach / 2 - PIVOT_TO_NEAR_EDGE - backExtension / 2,
+    );
 
     const materials = [bindingMaterial, bindingMaterial, bindingMaterial];
     materials[faceIndex] = faceMaterial;
