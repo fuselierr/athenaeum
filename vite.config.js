@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue';
 
 export default defineConfig({
+  plugins: [vue()],
   server: {
     proxy: {
       // Forwards /api/* from the Vite dev server to the Express
