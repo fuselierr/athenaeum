@@ -35,17 +35,6 @@
             background: rgba(20, 24, 32, 0.6); padding: 8px 12px; border-radius: 8px;
             pointer-events: none;
         }
-
-        /* Upload panel: POSTs the epub to the server conversion pipeline
-           (see src/bookLoader.js) and reports status. */
-        #upload-panel {
-            position: fixed; bottom: 12px; right: 12px; z-index: 2; max-width: 260px;
-            color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
-            background: rgba(20, 24, 32, 0.6); padding: 10px 14px; border-radius: 8px;
-        }
-        #upload-status {
-            margin-top: 6px; min-height: 1.4em;
-        }
     </style>
 </head>
 <body>
@@ -60,11 +49,8 @@
 
     <div id="camera-mode"></div>
 
-    <div id="upload-panel">
-        <div>Upload an epub to convert it to page textures.</div>
-        <input id="epub-file" type="file" accept=".epub"/>
-        <div id="upload-status"></div>
-    </div>
+    <!-- The account control mounts here; see src/ui/mountAccount.js -->
+    <div id="account"></div>
 
     <script type="module" src="/src/main.js"></script>
 </body>

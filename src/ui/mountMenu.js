@@ -18,7 +18,8 @@ import { matches } from '../state/keybindings.js';
  * matches, so no handler in the room has to know the menu exists.
  *
  * @param {object} bridge  what the tabs are allowed to do to the room:
- *   goToPage(page), turnPage(direction), setBackground(id), escape().
+ *   goToPage(page), turnPage(direction), setBackground(id),
+ *   uploadBook(file), escape().
  * @returns {{ unmount(): void }}
  */
 export function mountMenu(bridge) {

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 import { book, chapterPage } from '../../state/book.js';
+import UploadSection from './UploadSection.vue';
 
 /**
  * Where you are in the book, and how to be somewhere else.
@@ -44,10 +45,9 @@ function commitScrub() {
 </script>
 
 <template>
-  <div v-if="!has" class="menu-empty">
+  <div v-if="!has" class="menu-empty book-empty">
     <strong>No book open</strong>
-    <span>Take one off the shelf and it will show up here.</span>
-    <span v-if="book.status" class="menu-hint">{{ book.status }}</span>
+    <span>Take one off the shelf, or open a file below.</span>
   </div>
 
   <template v-else>
@@ -112,9 +112,18 @@ function commitScrub() {
       </template>
     </section>
   </template>
+
+  <!-- Both states: with nothing open it is how to open something, and with
+       a book open it is how to open a different one. Its status line also
+       replaces the one the empty state used to carry. -->
+  <UploadSection :bridge="props.bridge" />
 </template>
 
 <style scoped>
+/* The shared empty state fills the whole tab; here it has to leave room
+   for the upload section beneath it. */
+.book-empty { height: auto; padding: 36px 0 30px; }
+
 .chapters { margin: 0 0 10px; padding: 0; list-style: none; }
 
 .chapter {

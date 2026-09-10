@@ -24,9 +24,10 @@ import { createCameraModes, CAMERA_MODE } from './input/cameraModes.js';
 import { createBookManipulator } from './input/bookManipulator.js';
 import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
-import { initBookLoader, openLibraryBook } from './loader/bookLoader.js';
+import { initBookLoader, openLibraryBook, uploadBook } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
 import { mountMenu } from './ui/mountMenu.js';
+import { mountAccount } from './ui/mountAccount.js';
 import { bindSettings } from './ui/bindSettings.js';
 import { book as bookState } from './state/book.js';
 import { matches } from './state/keybindings.js';
@@ -269,10 +270,12 @@ async function applyPdfDimensions(pageWidthPts, pageHeightPts, pageCount) {
   refreshFlipLabel();
 }
 
+// The local-PDF testing shortcut (a .pdf dropped into src/books/). Shelf
+// books and uploads have their own entry points below.
 initBookLoader({
-  onJacket: (j) => { jacket = j; applyJacket(); },
   onDimensions: applyPdfDimensions,
   onPagesReady: (canvases) => content.setCanvases(canvases),
+  onStatus: setBookStatus,
 });
 
 // --- taking a book off the shelf -----------------------------------------
@@ -280,12 +283,11 @@ initBookLoader({
 // loader converts and renders it, and the finished book takes the model's
 // exact place in the hand -- so what you picked up and what you end up
 // holding are the same object as far as the eye is concerned.
-const bookStatus = document.getElementById('upload-status');
 let openSequence = 0; // bumped by anything that abandons a book mid-load
 let handHoldsBook = false; // is the real book the thing in the hand?
 
+// Shown in the Book tab. There is no status panel in the room any more.
 function setBookStatus(text) {
-  if (bookStatus) bookStatus.textContent = text;
   bookState.status = text;
 }
 
@@ -326,6 +328,55 @@ async function openFromShelf(record) {
     setBookStatus(`Error: ${err.message}`);
   } finally {
     if (token === openSequence) bookState.loading = false;
+  }
+}
+
+/**
+ * Open an EPUB the reader picked from their own computer (the Book tab's
+ * "Choose EPUB…"). It lands on the desk rather than in the hand: there is
+ * no shelf model for it to take the place of.
+ *
+ * Guarded by openSequence exactly as a shelf book is, so picking something
+ * off the shelf mid-upload abandons the upload, and the other way round.
+ */
+async function openUploadedFile(file) {
+  // Whatever is in hand goes back first. Putting a shelf book back bumps
+  // openSequence on its own (populateShelf's onTake), abandoning its load.
+  shelfBooks?.release();
+  const token = (openSequence += 1);
+  const current = () => token === openSequence;
+
+  bookState.id = null;
+  bookState.title = file.name.replace(/\.epub$/i, '');
+  bookState.author = null;
+  bookState.chapters = [];
+  bookState.loading = true;
+  try {
+    await uploadBook(file, {
+      onStatus: (text) => { if (current()) setBookStatus(text); },
+      onJacket: (j) => {
+        if (!current()) return;
+        jacket = j;
+        applyJacket();
+        if (j.title) bookState.title = j.title;
+        bookState.author = j.author;
+      },
+      onChapters: (chapters) => {
+        if (current()) bookState.chapters = chapters;
+      },
+      onDimensions: async (widthPts, heightPts, pageCount) => {
+        if (!current()) return;
+        await applyPdfDimensions(widthPts, heightPts, pageCount);
+      },
+      onPagesReady: (canvases) => {
+        if (current()) content.setCanvases(canvases);
+      },
+    });
+  } catch (err) {
+    console.error('Opening an uploaded book failed:', err);
+    if (current()) setBookStatus(`Error: ${err.message}`);
+  } finally {
+    if (current()) bookState.loading = false;
   }
 }
 
@@ -467,6 +518,7 @@ mountMenu({
     direction > 0 ? RIGHT_HAND_PANEL : LEFT_HAND_PANEL,
   ),
   setBackground: (id) => scenery.setBackground(id),
+  uploadBook: (file) => openUploadedFile(file),
 
   // Escape, innermost meaning first: a book in the hand goes back before
   // the menu will open. Returning true means the press was spent.
@@ -476,6 +528,9 @@ mountMenu({
     return true;
   },
 });
+
+// The account control, top right. Independent of the menu and of the room.
+mountAccount();
 
 // --- render loop ---
 let lastFrameTime = performance.now();

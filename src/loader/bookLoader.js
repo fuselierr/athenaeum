@@ -221,8 +221,9 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
  * book reaches the scene by one path however it was chosen.
  *
  * @param {string} id  a library id, as listed by GET /api/library
- * @param {Object} [opts]  onDimensions / onJacket / onPagesReady are as
- *   documented on initBookLoader; onStatus reports progress as text.
+ * @param {Object} [opts]  onDimensions and onPagesReady are as documented
+ *   on initBookLoader, onJacket on uploadBook; onChapters receives the exact
+ *   chapter pages; onStatus reports progress as text.
  */
 export async function openLibraryBook(id, {
   onDimensions, onJacket, onChapters, onPagesReady, onStatus,
@@ -263,8 +264,62 @@ export async function openLibraryBook(id, {
 }
 
 /**
- * Wires up the #epub-file input and #upload-status element already present
- * in index.html. Call once from main.js.
+ * Upload an EPUB from the reader's own computer, and open it.
+ *
+ * The same pipeline a shelf book goes through (openLibraryBook above),
+ * entered at the very beginning: the server converts the file
+ * (POST /api/books) and the pages are rasterized here. Unlike a shelf book
+ * an upload is converted every time -- it has no library id to be cached
+ * under.
+ *
+ * @param {File} file  an .epub
+ * @param {Object} [opts]
+ * @param {(jacket: { coverUrl: string|null, title: string|null,
+ *   author: string|null, description: string|null }) => void} [opts.onJacket]
+ *   Called once the book's jacket material is known, straight after
+ *   conversion and before page rasterization.
+ * @param {(chapters: { title: string, page: number }[]) => void} [opts.onChapters]
+ *   The exact page each chapter starts on, as measured during conversion.
+ * @param {Function} [opts.onDimensions]  see initBookLoader
+ * @param {Function} [opts.onPagesReady]  see initBookLoader
+ * @param {(text: string) => void} [opts.onStatus]  progress, as text
+ */
+export async function uploadBook(file, {
+  onDimensions, onJacket, onChapters, onPagesReady, onStatus,
+} = {}) {
+  const say = (text) => onStatus?.(text);
+
+  say('Uploading and converting…');
+  const book = await uploadEpub(file);
+
+  // Before the pages, as for a shelf book: the jacket comes from the epub
+  // and is ready the moment conversion is.
+  onJacket?.({
+    coverUrl: book.coverUrl ?? null,
+    title: book.title ?? null,
+    author: book.author ?? null,
+    description: book.description ?? null,
+  });
+  if (Array.isArray(book.chapters) && book.chapters.length > 0) onChapters?.(book.chapters);
+
+  say('Rendering pages…');
+  const canvases = await renderPdfToCanvases(book.pdfUrl, {
+    onDimensions,
+    onPage: (done, total) => say(`Rendering pages… ${done}/${total}`),
+  });
+  say('');
+  onPagesReady?.(canvases);
+  return canvases;
+}
+
+/**
+ * The local-PDF testing shortcut. Call once from main.js.
+ *
+ * If a .pdf is already sitting in src/books/, render it immediately on
+ * startup -- no upload, no server. Purely build-time (see LOCAL_BOOK_URLS
+ * above), and a no-op when nothing is there. Opening a real EPUB is
+ * uploadBook's job, reached from the Book tab, and openLibraryBook's for
+ * the shelf.
  *
  * @param {Object} [opts]
  * @param {(pageWidthPts: number, pageHeightPts: number, pageCount: number) => void|Promise<void>} [opts.onDimensions]
@@ -275,74 +330,26 @@ export async function openLibraryBook(id, {
  *   rendering waits for it before continuing (so a caller that disposes
  *   and recreates the whole page simulation here won't race with
  *   onPagesReady firing on the old one).
- * @param {(jacket: { coverUrl: string|null, title: string|null,
- *   author: string|null, description: string|null }) => void} [opts.onJacket]
- *   Called once an uploaded book's jacket material is known, straight after
- *   conversion and before page rasterization. Not fired for the local-PDF
- *   testing shortcut below, which has no epub to read a cover out of.
  * @param {(canvases: HTMLCanvasElement[]) => void} [opts.onPagesReady]
- *   Called once all pages of a successfully-converted book have been
- *   rendered to canvas. Wire this up to build page textures once that
- *   part of the pipeline exists.
+ *   Called once every page has been rendered to canvas.
+ * @param {(text: string) => void} [opts.onStatus]  progress, as text
  */
-export function initBookLoader({ onDimensions, onPagesReady, onJacket } = {}) {
-  const input = document.getElementById('epub-file');
-  const status = document.getElementById('upload-status');
-
-  const setStatus = (text) => { if (status) status.textContent = text; };
-
-  async function loadAndRenderPdf(pdfUrl) {
-    setStatus('Rendering pages…');
-    const canvases = await renderPdfToCanvases(pdfUrl, {
-      onDimensions,
-      onPage: (done, total) => setStatus(`Rendering pages… ${done}/${total}`),
-    });
-    setStatus(`Ready: ${canvases.length} page(s) rendered.`);
-    onPagesReady?.(canvases);
-  }
-
-  input?.addEventListener('change', async () => {
-    const file = input.files?.[0];
-    if (!file) return;
-
-    input.disabled = true;
-    try {
-      setStatus('Uploading and converting…');
-      const book = await uploadEpub(file);
-      // Fired before the pages render: the jacket comes from the epub
-      // itself, so it is ready immediately and there is no reason to make
-      // it wait on PDF.js rasterizing the whole book.
-      onJacket?.({
-        coverUrl: book.coverUrl ?? null,
-        title: book.title ?? null,
-        author: book.author ?? null,
-        description: book.description ?? null,
-      });
-      await loadAndRenderPdf(book.pdfUrl);
-    } catch (err) {
-      console.error('Book upload/conversion failed:', err);
-      setStatus(`Error: ${err.message}`);
-    } finally {
-      input.disabled = false;
-    }
-  });
-
-  // Testing shortcut: if a .pdf is already sitting in src/books/, render it
-  // immediately on startup -- no upload needed. Purely local/build-time
-  // (see LOCAL_BOOK_URLS above), so this doesn't touch the upload server at
-  // all. If nothing's there, this is a no-op and the upload panel just sits
-  // in its normal idle state.
+export function initBookLoader({ onDimensions, onPagesReady, onStatus } = {}) {
   const localUrl = findLocalBookUrl();
-  if (localUrl) {
-    if (input) input.disabled = true;
-    setStatus('Loading local test book…');
-    loadAndRenderPdf(localUrl)
-      .catch((err) => {
-        console.error('Failed to load local test book:', err);
-        setStatus(`Error: ${err.message}`);
-      })
-      .finally(() => {
-        if (input) input.disabled = false;
-      });
-  }
+  if (!localUrl) return;
+
+  const say = (text) => onStatus?.(text);
+  say('Loading local test book…');
+  renderPdfToCanvases(localUrl, {
+    onDimensions,
+    onPage: (done, total) => say(`Rendering pages… ${done}/${total}`),
+  })
+    .then((canvases) => {
+      say('');
+      onPagesReady?.(canvases);
+    })
+    .catch((err) => {
+      console.error('Failed to load local test book:', err);
+      say(`Error: ${err.message}`);
+    });
 }
