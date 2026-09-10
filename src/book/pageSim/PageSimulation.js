@@ -11,6 +11,12 @@ import { clampNum, pageAngle, pageTransform, spineHinge } from './math.js';
 import { createSpread } from './spread.js';
 import { createHardcover } from '../cover/hardcover.js';
 
+// How close the two boards have to be for the book to count as shut, in
+// radians of cover angle. Not zero: the air cushion eases the last few
+// degrees of a closing board, and a book that has visibly come to rest
+// shut should not read as open because a sliver of gap is still settling.
+const CLOSED_GAP = 0.2;
+
 /**
  * PageSimulation
  * --------------
@@ -86,6 +92,12 @@ export class PageSimulation {
     this._hardcoverHold = { H1: null, H2: null };
     this._hardcoverAngles = { H1: COVER_START_NEAR, H2: COVER_START_FAR };
     this._hardcoverAngularVelocity = { H1: 0, H2: 0 };
+
+    // The spreads' equivalent of _hardcoverHold: an angle to pin each
+    // spread's pseudo body at, or null to leave it to gravity. What lifts a
+    // half of the page block back over the spine when a closed book is
+    // opened -- see setSpreadHold and reader/bookOpening.js.
+    this._spreadHold = { front: null, back: null };
 
     // Covers stay put: A pinned at +SPINE_GAP (front of the block), D at
     // -SPINE_GAP (back). Only the inner leaves' shared hinge (B's far
@@ -357,6 +369,72 @@ export class PageSimulation {
   /** Current independent swing angle of each hardcover board. */
   get hardcoverAngles() {
     return { H1: this._hardcoverAngles.H1, H2: this._hardcoverAngles.H2 };
+  }
+
+  /**
+   * Whether the book is shut, and what it needs before a page turn can be
+   * seen.
+   *
+   * Read off the covers and the pseudo bodies, not off SPINE_ROTATION. The
+   * spine does go to -1 or +1 in a shut book, but only as a consequence of
+   * these same angles -- eased, lagging them by a fraction of a second,
+   * and deliberately held back by weighSpineTarget's deadzone on a thick
+   * book. The angles are the thing itself.
+   *
+   * A turn is visible only when the spine has a half of the block either
+   * side of it: dragPageTurn sweeps its leaf from P1's angle to P2's, and
+   * if both lie past the spine on the same side the sweep goes from there
+   * to there. So, with pi/2 as "standing straight up off the spine":
+   *
+   *   closed   the two boards together (CLOSED_GAP). `side` is which way
+   *            the book is folded -- 'front' when everything has swung
+   *            over onto H2's side, i.e. the front board H1 is the one
+   *            that swung and the one that has to swing back.
+   *   needs    'cover'  the board on `side` is past the spine -- open it
+   *            'spread' the board is open but that half of the block is
+   *                     still lying on the other side -- lift it over
+   *            null     readable; turn pages
+   *
+   * P1 <= P2 always (_enforceNoCrossingPseudo), so at most one half of the
+   * block can be on the wrong side at once.
+   */
+  get openState() {
+    const HALF_PI = Math.PI / 2;
+    const { H1, H2 } = this._hardcoverAngles;
+    const closed = H2 - H1 < CLOSED_GAP;
+    if (closed) {
+      return { closed, side: (H1 + H2) / 2 > HALF_PI ? 'front' : 'back', needs: 'cover' };
+    }
+    if (pageAngle(this.spreadFront.pseudoBody) > HALF_PI) {
+      return { closed, side: 'front', needs: H1 > HALF_PI ? 'cover' : 'spread' };
+    }
+    if (pageAngle(this.spreadBack.pseudoBody) < HALF_PI) {
+      return { closed, side: 'back', needs: H2 < HALF_PI ? 'cover' : 'spread' };
+    }
+    return { closed, side: null, needs: null };
+  }
+
+  /**
+   * Pin a spread's pseudo body at `angle` ('front' = P1, 'back' = P2), or
+   * pass null to hand it back to gravity. Applied inside step(), after the
+   * covers settle and BEFORE the pseudo/reference ordering corrections, so
+   * a held spread is still stopped by its board, and the reference page
+   * sandwiched against it (A <= P1, P2 <= D -- spread.js's
+   * enforceNoPassingRef) is carried along with it rather than left behind.
+   */
+  setSpreadHold(side, angle) {
+    this._spreadHold[side] = angle == null ? null : Math.max(0, Math.min(OPEN_LIMIT, angle));
+  }
+
+  _applySpreadHold() {
+    for (const [side, spread] of [['front', this.spreadFront], ['back', this.spreadBack]]) {
+      const angle = this._spreadHold[side];
+      if (angle == null) continue;
+      const t = pageTransform(spread.refAnchor, angle);
+      spread.pseudoBody.setTranslation(t.pos, true);
+      spread.pseudoBody.setRotation(t.rot, true);
+      spread.pseudoBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
   }
 
   /**
@@ -664,6 +742,7 @@ export class PageSimulation {
     this._applyHardcoverHold();
     this._applyHardcoverAirCushion();
     this._enforceHardcoverOrder();
+    this._applySpreadHold();
     this._enforceNoCrossingPseudo();
     this.spreadFront.enforceNoPassingRef();
     this.spreadBack.enforceNoPassingRef();

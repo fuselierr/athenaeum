@@ -17,6 +17,7 @@ import { updateLocalCorners } from './book/pageSim/math.js';
 import { BOOK_WORLD_SCALE } from './scene/worldScale.js';
 import { createBookContent, RIGHT_HAND_PANEL, LEFT_HAND_PANEL } from './book/reader/bookContent.js';
 import { createDragCover } from './book/reader/dragCover.js';
+import { createBookOpening } from './book/reader/bookOpening.js';
 import { createDragPageTurn } from './book/reader/dragPageTurn.js';
 import { createCameraPan } from './input/cameraPan.js';
 import { createCameraModes, CAMERA_MODE } from './input/cameraModes.js';
@@ -232,6 +233,10 @@ const dragPageTurn = createDragPageTurn({
   getPages, camera, renderer, controls, content,
   onPageTurnSound: () => { console.log('onPageTurnSound fired'); audio.playPageTurn(); },
 });
+// Every keyboard and menu turn goes through this rather than straight to
+// playTurn: a shut book has to be opened -- board, then spread -- before a
+// turn has anywhere visible to go.
+const bookOpening = createBookOpening({ getPages, dragCover, dragPageTurn });
 const bookManipulator = createBookManipulator({ bookGroup, camera, renderer, getPages });
 const debugLabels = createDebugLabels({ scene, camera, renderer, getPages });
 const anglePanel = createAnglePanel({ getPages, getPageTurn: () => dragPageTurn });
@@ -448,9 +453,9 @@ window.addEventListener('keydown', (e) => {
   // and commits through content.commitTurn at the end, so page content, the
   // leaf's two faces and the hinge position all move together exactly as
   // they do for a mouse turn. Forward is the right-hand page, same as
-  // dragging it.
-  if (matches('book.pageForward', e)) dragPageTurn.playTurn(RIGHT_HAND_PANEL);
-  if (matches('book.pageBack', e)) dragPageTurn.playTurn(LEFT_HAND_PANEL);
+  // dragging it. A shut book spends the first presses opening instead.
+  if (matches('book.pageForward', e)) bookOpening.turn(RIGHT_HAND_PANEL);
+  if (matches('book.pageBack', e)) bookOpening.turn(LEFT_HAND_PANEL);
 });
 
 // --- the menu -------------------------------------------------------------
@@ -458,7 +463,7 @@ window.addEventListener('keydown', (e) => {
 // need is in the stores (state/), which this file keeps up to date.
 mountMenu({
   goToPage: (page) => content.goToPage(page),
-  turnPage: (direction) => dragPageTurn.playTurn(
+  turnPage: (direction) => bookOpening.turn(
     direction > 0 ? RIGHT_HAND_PANEL : LEFT_HAND_PANEL,
   ),
   setBackground: (id) => scenery.setBackground(id),
@@ -495,6 +500,8 @@ renderer.setAnimationLoop(() => {
   if (bookState.pageCount !== content.pageCount) bookState.pageCount = content.pageCount;
   if (!simulationPaused) {
     content.update(dt);
+    // Before the step: the holds it sets are applied inside step().
+    bookOpening.update(dt);
     pages.step();
     // After pages.step(), so the cover colliders are posed from the H1/H2
     // this frame actually rendered rather than last frame's.

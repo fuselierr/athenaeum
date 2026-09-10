@@ -48,18 +48,29 @@ const FRICTION = 0.9;
 // THAT is on one side: twenty leaves under your left thumb and the other
 // three hundred stacked on the right.
 //
-// So the block's mass is handed to the boards, split by how far through
-// the book you are, by giving each board collider a density. Densities
-// rather than an explicit centre of mass because Rapier then derives the
-// mass, the centre of mass AND the rotational inertia from the colliders
-// it already has posed, all three staying correct as the covers move --
-// which is exactly what a second, hand-maintained mass frame would get
-// wrong the moment the book was flipped.
+// So each half of the block gets a collider of its own that carries
+// weight and nothing else: a page-sized slab that touches nothing, posed
+// every frame wherever that half of the pages actually lies, with a
+// density set by how many pages are in it. Rapier then derives the mass,
+// the centre of mass AND the rotational inertia from those slabs and the
+// boards together, all three staying true as anything moves -- which is
+// exactly what a second, hand-maintained mass frame would get wrong the
+// moment the book was flipped.
+//
+// NOT ON THE BOARDS. It used to be: each board's own density, split by
+// reading position. But a board and the half of the block on its side
+// are not the same thing, and they part company exactly when it matters.
+// Open a shut book's cover and the leaves stay lying on the other board
+// until they are lifted over (see PageSimulation.openState); lift a cover
+// mid-read and its pages do not come with it. Weight welded to the board
+// swung away with it, leaving the book balanced about paper that was no
+// longer there. So a board weighs a board, and the paper weighs where the
+// paper is.
 //
 // The numbers are relative, not physical. Nothing here reads an absolute
 // mass -- gravity does not care and the damping is per-velocity -- so what
-// matters is only how much heavier the block is than a board, and which
-// board is carrying it.
+// matters is only how much heavier the block is than a board, and where
+// each half of it is.
 const BOARD_DENSITY = 1;
 
 // The text block, in board-densities, for the thinnest and thickest book
@@ -109,13 +120,15 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
       .setCcdEnabled(true), // a thin board dropped from a height must not tunnel
   );
 
-  // One collider per board, rebuilt only when the book itself is re-sized
-  // (a loaded PDF changes HINGE_LEN/PANEL_REACH, which changes the boards).
+  // One collider per board and one weight-only slab per half of the text
+  // block, all rebuilt only when the book itself is re-sized (a loaded PDF
+  // changes HINGE_LEN/PANEL_REACH, which changes the boards).
   let boardColliders = null;
+  let pageColliders = null; // [front half, back half]
   let boardSignature = null;
-  // How much of the text block is on the front board, 0..1, as last
+  // How much of the text block is in the front half, 0..1, as last
   // applied. Null when it needs applying whatever it says.
-  let boardShare = null;
+  let pageShare = null;
 
   // pages.root's own transform -- the permanent rotation.x = PI. Board
   // matrices are expressed in root's space, colliders in the body's, and
@@ -126,10 +139,13 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
   const _pos = new THREE.Vector3();
   const _quat = new THREE.Quaternion();
   const _scale = new THREE.Vector3();
+  const _pagePos = new THREE.Vector3();
+  const _pageQuat = new THREE.Quaternion();
+  const _unitScale = new THREE.Vector3(1, 1, 1);
 
   function rebuildBoards(shape) {
     if (boardColliders) {
-      for (const c of boardColliders) world.removeCollider(c, false);
+      for (const c of [...boardColliders, ...pageColliders]) world.removeCollider(c, false);
     }
     // Into world units. The board's dimensions come from the page
     // simulation, which is authored at its own scale and only reaches the
@@ -148,45 +164,60 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
     const make = () => world.createCollider(
       RAPIER.ColliderDesc
         .cuboid(halfExtents.x, halfExtents.y, halfExtents.z)
+        .setDensity(BOARD_DENSITY)
         .setFriction(FRICTION)
         .setRestitution(RESTITUTION),
       bookBody,
     );
     boardColliders = [make(), make()];
-    boardShare = null; // new colliders carry no weight until weighBoards runs
+
+    // Weight without a surface. Collision and solver groups of 0 match
+    // nothing, so these never generate a contact -- the book still lands
+    // on its boards -- but a collider's density counts towards its body's
+    // mass whatever it touches. Board-sized, so a density here compares
+    // directly with BOARD_DENSITY as a ratio of masses.
+    const makeHalf = () => world.createCollider(
+      RAPIER.ColliderDesc
+        .cuboid(halfExtents.x, halfExtents.y, halfExtents.z)
+        .setDensity(0)
+        .setCollisionGroups(0)
+        .setSolverGroups(0),
+      bookBody,
+    );
+    pageColliders = [makeHalf(), makeHalf()];
+    pageShare = null; // new slabs carry no weight until weighPages runs
   }
 
   /**
-   * Put the text block's weight on whichever board is carrying it.
+   * Split the text block's weight between its two halves.
    *
    * `progress` is 0 with the leaves' shared hinge against the front cover
-   * -- page one, nothing read, the whole block still lying on the back
-   * board -- and 1 against the back cover. So it IS the front board's
-   * share of the paper, and the back board's is the rest.
+   * -- page one, nothing read, the whole block in the back half -- and 1
+   * against the back cover. So it IS the front half's share of the paper,
+   * and the back half's is the rest. This says only HOW MUCH each half
+   * weighs; where each half is comes from syncBoards, every frame.
    */
-  function weighBoards(pages) {
+  function weighPages(pages) {
     const share = pages.progress;
-    if (boardShare !== null && Math.abs(share - boardShare) < SHARE_EPSILON) return;
-    boardShare = share;
+    if (pageShare !== null && Math.abs(share - pageShare) < SHARE_EPSILON) return;
+    pageShare = share;
 
     // spineWeight() is 0 for the thinnest book and 1 for the thickest, off
     // the same spine gap the page count already sets -- so a long book is
     // heavier than a short one for the same reason it is fatter.
     const block = PAGE_BLOCK_LIGHTEST
       + (PAGE_BLOCK_HEAVIEST - PAGE_BLOCK_LIGHTEST) * spineWeight();
-    boardColliders[0].setDensity(BOARD_DENSITY + block * share);
-    boardColliders[1].setDensity(BOARD_DENSITY + block * (1 - share));
-    // Rapier would pick this up at the next step anyway; doing it here
-    // keeps the body's centre of mass true for anything that reads it
-    // before then.
-    bookBody.recomputeMassPropertiesFromColliders();
+    pageColliders[0].setDensity(block * share);
+    pageColliders[1].setDensity(block * (1 - share));
   }
 
   /**
-   * Re-pose both board colliders from the hardcover's current H1/H2. The
-   * boards move every frame under their own scalar dynamics, and a
-   * collider that did not follow them would leave the book resting on a
-   * cover that is no longer there.
+   * Re-pose both board colliders from the hardcover's current H1/H2, and
+   * both halves of the text block from where the pages are. The boards
+   * move every frame under their own scalar dynamics, and a collider that
+   * did not follow them would leave the book resting on a cover that is no
+   * longer there; the halves move with the pages, and weight that did not
+   * follow them would balance the book about paper that has gone.
    */
   function syncBoards(pages) {
     const hardcover = pages && pages.hardcover;
@@ -200,7 +231,7 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
       boardSignature = sig;
       rebuildBoards(shape);
     }
-    weighBoards(pages);
+    weighPages(pages);
 
     // Refreshed rather than read as-is: three.js only recomposes an
     // object's local matrix during render, so on the very first frame --
@@ -223,6 +254,30 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
       boardColliders[i].setTranslationWrtParent({ x: _pos.x, y: _pos.y, z: _pos.z });
       boardColliders[i].setRotationWrtParent({ x: _quat.x, y: _quat.y, z: _quat.z, w: _quat.w });
     }
+
+    // Each half of the block lies wherever its spread's pseudo body is --
+    // the same "where this half of the pages is" that the curls are built
+    // from and openState reads. A page body sits at the middle of its page
+    // (spread.js's makePage centres the collider on it), so its pose, in
+    // the page simulation's own frame, IS the slab's centre; the root
+    // matrix takes it into the body's frame exactly as it does a board.
+    const halves = [pages.spreadFront.pseudoBody, pages.spreadBack.pseudoBody];
+    for (let i = 0; i < halves.length; i++) {
+      const t = halves[i].translation();
+      const r = halves[i].rotation();
+      _pagePos.set(t.x, t.y, t.z);
+      _pageQuat.set(r.x, r.y, r.z, r.w);
+      _boardMatrix.compose(_pagePos, _pageQuat, _unitScale).premultiply(_rootMatrix);
+      _boardMatrix.decompose(_pos, _quat, _scale);
+      _pos.multiplyScalar(bookGroup.scale.x);
+      pageColliders[i].setTranslationWrtParent({ x: _pos.x, y: _pos.y, z: _pos.z });
+      pageColliders[i].setRotationWrtParent({ x: _quat.x, y: _quat.y, z: _quat.z, w: _quat.w });
+    }
+
+    // Every frame, not just when the split changes: the weight moves
+    // whenever the pages do, and moving a collider is not guaranteed to
+    // re-derive its body's mass on its own. Four cuboids; cheap.
+    bookBody.recomputeMassPropertiesFromColliders();
   }
 
   // --- grab / release ---------------------------------------------------
