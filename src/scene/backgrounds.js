@@ -42,6 +42,20 @@ export const BACKGROUNDS = [
     note: 'Low sun across a field',
     megabytes: 10,
   },
+  {
+    id: 'forest-lake',
+    name: 'Forest lake',
+    file: 'clouds-green-forest-green-lake_4K_1959a628-5a42-4932-8030-434a47cad034.exr',
+    note: 'Verdant water and wooded haze',
+    megabytes: 27,
+  },
+  {
+    id: 'beech-lane',
+    name: 'Beech lane',
+    file: 'dutch-forest-lane-with-beech-trees_4K_adc60d47-dfb5-4740-8e1d-5dcf3e867500.exr',
+    note: 'A quiet woodland path',
+    megabytes: 26,
+  },
 ];
 
 export const DEFAULT_BACKGROUND = BACKGROUNDS[0].id;
