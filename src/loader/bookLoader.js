@@ -225,7 +225,7 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
  *   documented on initBookLoader; onStatus reports progress as text.
  */
 export async function openLibraryBook(id, {
-  onDimensions, onJacket, onPagesReady, onStatus,
+  onDimensions, onJacket, onChapters, onPagesReady, onStatus,
 } = {}) {
   const say = (text) => onStatus?.(text);
 
@@ -244,6 +244,13 @@ export async function openLibraryBook(id, {
     author: body.author ?? null,
     description: body.description ?? null,
   });
+
+  // Where the chapters really fall in this PDF, worked out when the book
+  // was converted (server/epubToPdf.ts) rather than estimated from the
+  // epub's text. The shelf's estimate has been standing in since pickup;
+  // this replaces it. Absent for books converted before the numbering
+  // existed, in which case the estimate simply stays.
+  if (Array.isArray(body.chapters) && body.chapters.length > 0) onChapters?.(body.chapters);
 
   say('Rendering pages…');
   const canvases = await renderPdfToCanvases(body.pdfUrl, {

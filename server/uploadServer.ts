@@ -18,13 +18,20 @@ import multer from 'multer';
 import { randomUUID } from 'node:crypto';
 import { access, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { epubToPdf } from './epubToPdf.ts';
+import { epubToPdf, type PdfChapter } from './epubToPdf.ts';
 import { extractEpubMetadata } from './epubMetadata.ts';
 import { readLibrary } from './epubLibrary.ts';
 
 const STORAGE_DIR = path.join(process.cwd(), 'books');
 // The shelf's library: raw epubs, never converted. Separate from
 // STORAGE_DIR, which holds books the reader has actually opened.
+// Bumped whenever a change here alters what a converted PDF LOOKS like --
+// the contents page, the chapter headings, the page numbering. A book
+// converted under an older number is converted again the next time it is
+// opened, so a cache that exists to make the second visit free does not
+// also freeze every book in the shape it had the first time.
+const CONVERSION_VERSION = 2;
+
 const LIBRARY_DIR = path.join(process.cwd(), 'src', 'books');
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100MB -- generous for an epub, adjust to taste
 
@@ -70,14 +77,17 @@ app.post('/api/books', upload.single('epub'), async (req, res) => {
 
   try {
     await mkdir(bookDir, { recursive: true });
-    await epubToPdf(req.file.path, pdfPath);
+    const converted = await epubToPdf(req.file.path, pdfPath);
 
     // Jacket material, pulled straight from the epub rather than from the
     // rendered PDF: the cover is usually absent from the reading order
     // epubToPdf walks, so the PDF's first page is not reliably the cover.
     // Non-fatal -- a book with no cover image still converts fine, it just
     // gets a plain board in the viewer.
-    let meta: BookMeta = { title: null, author: null, description: null, coverUrl: null };
+    let meta: BookMeta = {
+      title: null, author: null, description: null, coverUrl: null,
+      chapters: converted.chapters,
+    };
     try {
       const extracted = await extractEpubMetadata(req.file.path);
       if (extracted.cover) {
@@ -91,7 +101,11 @@ app.post('/api/books', upload.single('epub'), async (req, res) => {
     } catch (metaErr) {
       console.error(`Cover/metadata extraction failed for ${req.file.originalname} (continuing):`, metaErr);
     }
-    await writeFile(path.join(bookDir, 'meta.json'), JSON.stringify(meta), 'utf-8');
+    await writeFile(
+      path.join(bookDir, 'meta.json'),
+      JSON.stringify({ ...meta, conversion: CONVERSION_VERSION }),
+      'utf-8',
+    );
 
     res.status(201).json({ id, pdfUrl: `/api/books/${id}/pdf`, ...meta });
   } catch (err) {
@@ -113,6 +127,14 @@ interface BookMeta {
   author: string | null;
   description: string | null;
   coverUrl: string | null;
+  /**
+   * [{ title, page }] -- where the chapters actually fall in THIS PDF,
+   * measured during conversion rather than estimated from the epub's text.
+   * The shelf listing carries an estimate (see server/epubToc.ts) so the
+   * Book tab has something the moment a book is picked up; these replace
+   * it as soon as the book opens, and are exact.
+   */
+  chapters: PdfChapter[];
 }
 
 /**
@@ -176,18 +198,27 @@ async function openLibraryBook(id: string): Promise<OpenedBook | null> {
     author: book.author,
     description: book.description,
     coverUrl: book.cover ? `/api/books/${id}/cover` : null,
+    chapters: [],
   };
 
   try {
     await access(pdfPath);
-    return meta; // converted on an earlier visit
+    // Converted on an earlier visit -- so the exact chapter pages were
+    // worked out then and written down, and re-reading them is the whole
+    // reason a second visit is free.
+    const stored = JSON.parse(await readFile(path.join(bookDir, 'meta.json'), 'utf-8'));
+    if (stored?.conversion === CONVERSION_VERSION) {
+      if (Array.isArray(stored.chapters)) meta.chapters = stored.chapters;
+      return meta;
+    }
   } catch {
-    // Not converted yet; fall through and do the work.
+    // Not converted yet, or nothing readable written down; do the work.
   }
 
   await mkdir(bookDir, { recursive: true });
   try {
-    await epubToPdf(book.file, pdfPath);
+    const converted = await epubToPdf(book.file, pdfPath);
+    meta.chapters = converted.chapters;
     // The cover was already read out of the epub by readLibrary, so it is
     // written straight through rather than extracted a second time.
     if (book.cover) {
@@ -195,7 +226,11 @@ async function openLibraryBook(id: string): Promise<OpenedBook | null> {
       await writeFile(path.join(bookDir, 'cover.type'), book.cover.mediaType, 'utf-8');
     }
     const { id: _id, pdfUrl: _pdfUrl, ...stored } = meta;
-    await writeFile(path.join(bookDir, 'meta.json'), JSON.stringify(stored), 'utf-8');
+    await writeFile(
+      path.join(bookDir, 'meta.json'),
+      JSON.stringify({ ...stored, conversion: CONVERSION_VERSION }),
+      'utf-8',
+    );
   } catch (err) {
     // A half-written folder would look converted to the check above and
     // fail forever after, so failure leaves nothing behind.

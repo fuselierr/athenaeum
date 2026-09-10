@@ -29,6 +29,22 @@ export interface EpubStructure {
   chapters: Chapter[];
 }
 
+/**
+ * One table-of-contents entry, still pointing at the epub rather than at a
+ * position -- the raw material both consumers work from.
+ *
+ * `readStructure` below turns these into text fractions for the shelf.
+ * epubToPdf turns them into headings and a contents page, which needs the
+ * anchor kept intact: `target` alone says which document a chapter is in,
+ * and books that keep their whole text in one file need `fragment` to say
+ * where in it.
+ */
+export interface TocEntry {
+  title: string;
+  target: string; // document path, normalised, relative to the zip root
+  fragment: string; // the id within that document, or '' for its start
+}
+
 const parser = () => new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
 const asArray = <T>(v: T | T[] | undefined | null): T[] => (
@@ -112,6 +128,80 @@ function findAnchor(html: string, fragment: string): number {
   return match ? match.index : -1;
 }
 
+/** The OPF -- the file that lists what a book contains and in what order. */
+async function openPackage(zip: JSZip) {
+  const containerXml = await zip.file('META-INF/container.xml')?.async('string');
+  if (!containerXml) return null;
+  const opfPath = String(
+    asArray<any>(parser().parse(containerXml).container.rootfiles.rootfile)[0]['@_full-path'],
+  );
+  const opfDir = path.posix.dirname(opfPath) === '.' ? '' : path.posix.dirname(opfPath);
+
+  const opfXml = await zip.file(opfPath)?.async('string');
+  if (!opfXml) return null;
+  const pkg = parser().parse(opfXml).package;
+  const manifest = asArray<any>(pkg.manifest?.item);
+  return {
+    pkg,
+    opfDir,
+    manifest,
+    byId: new Map(manifest.map((item) => [String(item['@_id']), item])),
+  };
+}
+
+/**
+ * A book's table of contents, as the book itself declares it.
+ *
+ * EPUB 3 keeps it in a nav document and EPUB 2 in an NCX; a great many
+ * books in the wild carry both, or carry one while claiming the other.
+ * Whichever is found first and yields entries wins, and a book with
+ * neither simply has no chapters -- see the note at the top of the file.
+ */
+export async function readTocEntries(zip: JSZip): Promise<TocEntry[]> {
+  try {
+    const open = await openPackage(zip);
+    if (!open) return [];
+    const { pkg, opfDir, manifest, byId } = open;
+
+    const navItem = manifest.find(
+      (item) => String(item['@_properties'] ?? '').split(/\s+/).includes('nav'),
+    );
+    const ncxItem = byId.get(String(pkg.spine?.['@_toc'] ?? ''))
+      ?? manifest.find((item) => String(item['@_media-type']) === 'application/x-dtbncx+xml');
+
+    // Hrefs in a TOC are relative to the TOC's own location, which is not
+    // always the OPF's -- hence resolving against the document that was
+    // actually read rather than against opfDir.
+    let raw: { title: string; href: string }[] = [];
+    let tocDir = '';
+    const readToc = async (item: any, parse: (text: string) => { title: string; href: string }[]) => {
+      const href = normaliseHref(String(item['@_href']), opfDir);
+      const text = await zip.file(href)?.async('string');
+      if (!text) return;
+      raw = parse(text);
+      tocDir = path.posix.dirname(href) === '.' ? '' : path.posix.dirname(href);
+    };
+
+    if (navItem) await readToc(navItem, chaptersFromNav);
+    if (raw.length === 0 && ncxItem) await readToc(ncxItem, chaptersFromNcx);
+
+    return raw
+      .map((entry) => {
+        const [href, fragment] = String(entry.href).split('#');
+        return {
+          title: entry.title,
+          // A bare "#anchor" has no document of its own to resolve to, so
+          // it is dropped rather than guessed at -- see the filter below.
+          target: href ? normaliseHref(href, tocDir) : '',
+          fragment: fragment ? decodeURIComponent(fragment) : '',
+        };
+      })
+      .filter((entry) => entry.target !== '');
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Read a book's reading order and table of contents out of an OPEN zip --
  * the caller usually has one already, and an epub is not worth unpacking
@@ -120,18 +210,9 @@ function findAnchor(html: string, fragment: string): number {
 export async function readStructure(zip: JSZip): Promise<EpubStructure> {
   const empty: EpubStructure = { characters: 0, chapters: [] };
   try {
-    const containerXml = await zip.file('META-INF/container.xml')?.async('string');
-    if (!containerXml) return empty;
-    const opfPath = String(
-      asArray<any>(parser().parse(containerXml).container.rootfiles.rootfile)[0]['@_full-path'],
-    );
-    const opfDir = path.posix.dirname(opfPath) === '.' ? '' : path.posix.dirname(opfPath);
-
-    const opfXml = await zip.file(opfPath)?.async('string');
-    if (!opfXml) return empty;
-    const pkg = parser().parse(opfXml).package;
-    const manifest = asArray<any>(pkg.manifest?.item);
-    const byId = new Map(manifest.map((item) => [String(item['@_id']), item]));
+    const open = await openPackage(zip);
+    if (!open) return empty;
+    const { pkg, opfDir, byId } = open;
 
     // --- the reading order, and how much text is in each part of it ------
     const spine: string[] = asArray<any>(pkg.spine?.itemref)
@@ -148,31 +229,7 @@ export async function readStructure(zip: JSZip): Promise<EpubStructure> {
     }
     if (characters === 0) return empty;
 
-    // --- the table of contents -------------------------------------------
-    const navItem = manifest.find(
-      (item) => String(item['@_properties'] ?? '').split(/\s+/).includes('nav'),
-    );
-    const ncxItem = byId.get(String(pkg.spine?.['@_toc'] ?? ''))
-      ?? manifest.find((item) => String(item['@_media-type']) === 'application/x-dtbncx+xml');
-
-    let entries: { title: string; href: string }[] = [];
-    let tocDir = '';
-    if (navItem) {
-      const href = normaliseHref(String(navItem['@_href']), opfDir);
-      const xhtml = await zip.file(href)?.async('string');
-      if (xhtml) {
-        entries = chaptersFromNav(xhtml);
-        tocDir = path.posix.dirname(href) === '.' ? '' : path.posix.dirname(href);
-      }
-    }
-    if (entries.length === 0 && ncxItem) {
-      const href = normaliseHref(String(ncxItem['@_href']), opfDir);
-      const xml = await zip.file(href)?.async('string');
-      if (xml) {
-        entries = chaptersFromNcx(xml);
-        tocDir = path.posix.dirname(href) === '.' ? '' : path.posix.dirname(href);
-      }
-    }
+    const entries = await readTocEntries(zip);
 
     // Entries are placed by the document they point INTO, so an entry
     // whose target is not in the reading order (a cover page marked
@@ -192,15 +249,13 @@ export async function readStructure(zip: JSZip): Promise<EpubStructure> {
     const chapters: Chapter[] = [];
     const seen = new Set<number>();
     for (const entry of entries) {
-      const [rawHref, fragment] = String(entry.href).split('#');
-      const target = normaliseHref(rawHref, tocDir);
-      const base = before.get(target);
+      const base = before.get(entry.target);
       if (base == null) continue;
 
       let offset = base;
-      if (fragment) {
-        const html = await documentText(target);
-        const at = findAnchor(html, decodeURIComponent(fragment));
+      if (entry.fragment) {
+        const html = await documentText(entry.target);
+        const at = findAnchor(html, entry.fragment);
         if (at >= 0) offset = base + plainTextLength(html.slice(0, at));
       }
 

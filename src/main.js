@@ -302,6 +302,10 @@ async function openFromShelf(record) {
         jacket = j;
         applyJacket();
       },
+      onChapters: (chapters) => {
+        if (token !== openSequence) return;
+        bookState.chapters = chapters;
+      },
       onDimensions: async (widthPts, heightPts, pageCount) => {
         if (token !== openSequence) return;
         await applyPdfDimensions(widthPts, heightPts, pageCount);
