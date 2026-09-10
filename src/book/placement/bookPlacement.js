@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { GRAVITY_MAG } from '../pageSim/config.js';
+import { GRAVITY_MAG, spineWeight } from '../pageSim/config.js';
 
 /**
  * The book's PLACEMENT physics: where the book as a whole sits, and what
@@ -38,6 +38,39 @@ const ANGULAR_DAMPING = 0.6;
 // Boards are card, not rubber.
 const RESTITUTION = 0.05;
 const FRICTION = 0.9;
+
+// --- where the paper is ------------------------------------------------
+//
+// The boards are the only colliders the book has, so they are also the
+// only thing Rapier can work its mass out of -- and two identical boards
+// make a symmetric object, which a book that is open is not. Almost all of
+// a book's weight is the text block, and while it is open almost all of
+// THAT is on one side: twenty leaves under your left thumb and the other
+// three hundred stacked on the right.
+//
+// So the block's mass is handed to the boards, split by how far through
+// the book you are, by giving each board collider a density. Densities
+// rather than an explicit centre of mass because Rapier then derives the
+// mass, the centre of mass AND the rotational inertia from the colliders
+// it already has posed, all three staying correct as the covers move --
+// which is exactly what a second, hand-maintained mass frame would get
+// wrong the moment the book was flipped.
+//
+// The numbers are relative, not physical. Nothing here reads an absolute
+// mass -- gravity does not care and the damping is per-velocity -- so what
+// matters is only how much heavier the block is than a board, and which
+// board is carrying it.
+const BOARD_DENSITY = 1;
+
+// The text block, in board-densities, for the thinnest and thickest book
+// the spine will stretch to. A pamphlet is mostly its covers; an 800-page
+// novel is mostly paper.
+const PAGE_BLOCK_LIGHTEST = 1.6;
+const PAGE_BLOCK_HEAVIEST = 7.5;
+
+// Reading moves the paper across by a leaf at a time. Re-deriving the mass
+// properties for a change smaller than this is work nothing could feel.
+const SHARE_EPSILON = 0.004;
 
 // A grabbed book is moved by hand, so its velocity has to be measured
 // rather than simulated -- this is what lets you throw it. Capped so a
@@ -80,6 +113,9 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
   // (a loaded PDF changes HINGE_LEN/PANEL_REACH, which changes the boards).
   let boardColliders = null;
   let boardSignature = null;
+  // How much of the text block is on the front board, 0..1, as last
+  // applied. Null when it needs applying whatever it says.
+  let boardShare = null;
 
   // pages.root's own transform -- the permanent rotation.x = PI. Board
   // matrices are expressed in root's space, colliders in the body's, and
@@ -117,6 +153,33 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
       bookBody,
     );
     boardColliders = [make(), make()];
+    boardShare = null; // new colliders carry no weight until weighBoards runs
+  }
+
+  /**
+   * Put the text block's weight on whichever board is carrying it.
+   *
+   * `progress` is 0 with the leaves' shared hinge against the front cover
+   * -- page one, nothing read, the whole block still lying on the back
+   * board -- and 1 against the back cover. So it IS the front board's
+   * share of the paper, and the back board's is the rest.
+   */
+  function weighBoards(pages) {
+    const share = pages.progress;
+    if (boardShare !== null && Math.abs(share - boardShare) < SHARE_EPSILON) return;
+    boardShare = share;
+
+    // spineWeight() is 0 for the thinnest book and 1 for the thickest, off
+    // the same spine gap the page count already sets -- so a long book is
+    // heavier than a short one for the same reason it is fatter.
+    const block = PAGE_BLOCK_LIGHTEST
+      + (PAGE_BLOCK_HEAVIEST - PAGE_BLOCK_LIGHTEST) * spineWeight();
+    boardColliders[0].setDensity(BOARD_DENSITY + block * share);
+    boardColliders[1].setDensity(BOARD_DENSITY + block * (1 - share));
+    // Rapier would pick this up at the next step anyway; doing it here
+    // keeps the body's centre of mass true for anything that reads it
+    // before then.
+    bookBody.recomputeMassPropertiesFromColliders();
   }
 
   /**
@@ -137,6 +200,7 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
       boardSignature = sig;
       rebuildBoards(shape);
     }
+    weighBoards(pages);
 
     // Refreshed rather than read as-is: three.js only recomposes an
     // object's local matrix during render, so on the very first frame --
