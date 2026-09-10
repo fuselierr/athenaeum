@@ -111,14 +111,12 @@ export function createBookOpening({ getPages, dragCover, dragPageTurn }) {
 
     // Grabbed mid-motion: the reader takes over. This motion's hold is let
     // go UNLESS the pointer has hold of that very part, in which case the
-    // hold is the pointer's now and releasing it would drop the grip. A
-    // board pinned for the length of a drag on the other one (dragCover's
-    // frozenCover) counts as the pointer's too -- releasing it would unpin
-    // the board the reader expects to stay still. Any other part is let
-    // go, or it would stay pinned with nothing driving it.
+    // hold is the pointer's now and releasing it would drop the grip. Any
+    // other part is let go, or it would stay pinned with nothing driving
+    // it.
     if (pointerHolding()) {
       const pointerOwnsIt = motion.kind === 'cover'
-        ? dragCover.draggingCover === motion.part || dragCover.frozenCover === motion.part
+        ? dragCover.draggingCover === motion.part
         : dragCover.draggingSpread === motion.part;
       if (!pointerOwnsIt) hold(motion, null);
       motion = null;

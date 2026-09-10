@@ -60,7 +60,6 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
   const pivotScreen = new THREE.Vector2();
 
   let slot = null; // 'H1' | 'H2' while dragging a board
-  let frozen = null; // the OTHER board, pinned where it was for the length of that drag
   let spread = null; // 'front' | 'back' while lifting a spread
   let angle0 = 0; // cursor angle at grab
   let startAngle = 0; // the cover's own angle at grab
@@ -123,15 +122,6 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
       slot = hit;
       startAngle = pages.hardcoverAngles[hit];
       pages.setHardcoverHold(hit, startAngle);
-      // The board not in your hand stays exactly where it was until you let
-      // go. Left to its own dynamics it does not stay put: moving one board
-      // moves the weight of the book, the book shifts under it, gravity in
-      // the page frame turns with the book, and the other board swings --
-      // so a drag on one cover visibly dragged the other one about too.
-      // Pinned, it is also a fixed stop: setHardcoverHold keeps H1 <= H2
-      // against the other board's CURRENT angle, which is now this one.
-      frozen = hit === 'H1' ? 'H2' : 'H1';
-      pages.setHardcoverHold(frozen, pages.hardcoverAngles[frozen]);
     } else {
       // A page. Only ours while a spread is waiting to be lifted; any other
       // time a page press belongs to dragPageTurn.
@@ -183,12 +173,8 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
     // own.
     if (slot) getPages()?.setHardcoverHold(slot, null);
     else getPages()?.setSpreadHold(spread, null);
-    // And the board that was pinned for the drag goes back to its own
-    // dynamics at the same moment, from where it has been all along.
-    if (frozen) getPages()?.setHardcoverHold(frozen, null);
     slot = null;
     spread = null;
-    frozen = null;
     controls.enabled = true;
     dom.style.cursor = '';
   }
@@ -199,8 +185,6 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
 
   return {
     get draggingCover() { return slot; },
-    /** The board pinned in place while the other is dragged, or null. */
-    get frozenCover() { return frozen; },
     get draggingSpread() { return spread; },
     release,
   };
