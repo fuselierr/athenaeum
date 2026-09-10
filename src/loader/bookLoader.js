@@ -33,6 +33,23 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 const DEFAULT_RENDER_SCALE = 1.5; // px-per-pdf-unit; raise for sharper page textures
 
+// --- folios (the printed page numbers) --------------------------------------
+//
+// Sized and positioned as FRACTIONS OF THE PAGE, never in pixels. A canvas's
+// pixel size is page size x DEFAULT_RENDER_SCALE, so anything measured in
+// pixels would silently change size the moment either one moved; expressed as
+// a fraction, a folio is the same size relative to its page whatever the PDF's
+// dimensions or the texture resolution, which is what makes it look identical
+// from book to book once every page is mapped onto the same mesh.
+//
+// The stack matches the spine and jacket lettering in book/cover/jacketArt.js
+// on purpose -- one typeface for everything the app itself prints, so the
+// numbers read as part of the same edition rather than as an overlay.
+const FOLIO_FONT = "Georgia, 'Times New Roman', serif";
+const FOLIO_SIZE_FRACTION = 0.021; // of page width -- ~9.5pt on the 160mm page epubToPdf emits
+const FOLIO_BASELINE_FRACTION = 0.024; // of page height, up from the bottom edge
+const FOLIO_INK = 'rgba(0, 0, 0, 0.62)'; // lighter than body text, as a printed folio is
+
 // Vite-only, build-time glob: resolves every .pdf under src/books/ to its
 // served URL (no fetch/network round-trip -- Vite just hands back the
 // asset URL string directly, same mechanism as the `?url` worker import
@@ -67,6 +84,54 @@ async function uploadEpub(file) {
     throw new Error('Upload response missing pdfUrl (see console for full response)');
   }
   return body; // { id, pdfUrl }
+}
+
+/**
+ * Print a page number at the foot of a page that has just been rendered.
+ *
+ * Done here, onto the canvas, because there is nowhere later to do it: the
+ * canvas becomes a THREE.CanvasTexture and from that point on a page is an
+ * image on a curved mesh, with no text layer left to add to. Stamping at
+ * render time also means the number curls, shades and turns with the paper
+ * it is printed on, exactly like the rest of the page.
+ *
+ * WHY THE VIEWPORT DOES THE POSITIONING. The canvas is not the page the
+ * right way up -- `rotation: 270` below turns it a quarter turn so it lands
+ * on the mesh's UVs (see the long note in renderPdfToCanvases), which means
+ * the foot of the PAGE is one of the canvas's SIDES, and which side depends
+ * on the rotation. So the placement is worked out in PDF user space, where
+ * "bottom centre" is unambiguous, and handed to the viewport to convert:
+ *   - `viewBox` is the page's own rectangle in PDF units (y up from the
+ *     bottom-left), so the target point is trivially expressed in it;
+ *   - `convertToViewportPoint` maps that through whatever rotation, scale
+ *     and flip the viewport is applying, landing on the right canvas pixel;
+ *   - the transform's first column is where PDF's +x -- the direction text
+ *     advances -- ended up, so its angle is the angle to rotate the context
+ *     by for the number to sit the same way round as the words above it.
+ * Nothing here hard-codes 270: change the rotation and the folio follows.
+ */
+function stampPageNumber(ctx, viewport, pageNumber) {
+  const [left, bottom, right, top] = viewport.viewBox;
+  const pageWidth = right - left;
+  const pageHeight = top - bottom;
+
+  const [x, y] = viewport.convertToViewportPoint(
+    left + pageWidth / 2,
+    bottom + pageHeight * FOLIO_BASELINE_FRACTION,
+  );
+  const angle = Math.atan2(viewport.transform[1], viewport.transform[0]);
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  // scale converts PDF units to canvas pixels -- the same conversion the
+  // viewport applied to everything page.render() just painted.
+  ctx.font = `400 ${FOLIO_SIZE_FRACTION * pageWidth * viewport.scale}px ${FOLIO_FONT}`;
+  ctx.fillStyle = FOLIO_INK;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic'; // sit the number ON the baseline, as type does
+  ctx.fillText(String(pageNumber), 0, 0);
+  ctx.restore();
 }
 
 async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPage, onDimensions } = {}) {
@@ -138,6 +203,9 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
     canvas.height = viewport.height;
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
+    // After the render, not before: page.render() paints the page's own
+    // background over anything already on the canvas.
+    stampPageNumber(ctx, viewport, pageNum);
     canvases.push(canvas);
     onPage?.(canvases.length, pdf.numPages);
   }
