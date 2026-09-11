@@ -109,7 +109,8 @@ function sections() {
         { gesture: 'Drag a cover', text: 'Open or close the book' },
         { gesture: 'Shift + drag', text: 'Slide the book' },
         { gesture: 'Right-drag', text: 'Turn the book in your hands' },
-        { keys: [k('book.reset')], text: 'Put it back on the desk' },
+        { gesture: 'Scroll', text: 'Bring the book in your hand closer, or push it away' },
+        { keys: [k('book.reset')], text: 'Put it back on the desk. In your hand, square it up again.' },
       ],
     },
   ];

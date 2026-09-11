@@ -592,7 +592,9 @@ export class PageSimulation {
    * The reading position (the B/C hinge) is left where it is, so a book
    * shut on its first page still opens on it.
    *
-   * Nothing holds it shut afterwards -- see setShutHold.
+   * Nothing holds it shut afterwards. Lying flat it stays that way under its
+   * own weight, and so it does in the hand, where the pages feel down as if
+   * it were lying flat (input/bookManipulator.js).
    *
    * Returns where the shut book is, in the parent's space and before any
    * scale the parent carries: `centre` is the middle of the page block, and
@@ -689,22 +691,6 @@ export class PageSimulation {
     this.root.updateMatrix();
     out.set(0, gutter.y, gutter.z).applyMatrix4(this.root.matrix);
     return { centre: out, width: 2 * (PANEL_REACH + SPINE_GAP), height: HINGE_LEN };
-  }
-
-  /**
-   * Hold the whole book at `angle` -- both boards and both halves of the
-   * block -- or pass null to let all of it go. For keeping a shut book
-   * (close) shut while it is carried, when gravity pulls whichever way the
-   * hand happens to be pointing it.
-   *
-   * Letting go releases all four holds, including one a cover drag or the
-   * keyboard opener may have taken over since.
-   */
-  setShutHold(angle) {
-    this.setHardcoverHold('H1', angle);
-    this.setHardcoverHold('H2', angle);
-    this.setSpreadHold('front', angle);
-    this.setSpreadHold('back', angle);
   }
 
   /**

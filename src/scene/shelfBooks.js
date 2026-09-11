@@ -45,12 +45,14 @@ import { createBookModel } from '../book/cover/bookModel.js';
  * AND THEN THE REAL BOOK. A model is a silhouette; the readable book is a
  * physics rig that has to be built from the PDF before it can exist. So the
  * model is what you pick up, and once its book has been converted and
- * rendered the caller SUBSTITUTES the real one into the same place --
- * `substitute()` hides the model and mirrors its pose onto the stand-in for
- * as long as it is out. The stand-in need not be built around the same
- * origin: the caller says where the model's middle and axes sit inside it,
- * and it is placed so those land exactly on the model's. The trip back to the shelf is the model's own
- * animation, so the real book rides it home and is handed back at the end.
+ * rendered the caller HANDS IT OVER: `handOver()` hides the model, puts the
+ * real book exactly where the model is, and lets go of it -- from then on
+ * the book is carried like any other (input/bookCarry.js). What comes back
+ * is the pose the book needs to sit in the model's slot, so it can be flown
+ * home into the shelf, and a `takeBack` that shows the model again once it
+ * has. The real book need not be built around the same origin as a model:
+ * the caller says where the model's middle and axes sit inside it, and it
+ * is placed so those land exactly on the model's.
  *
  * WHY THE BOOKS ARE PARENTED TO THE SHELF. They go inside an anchor that
  * cancels the shelf group's own scale, so their sizes stay in metres while
@@ -419,9 +421,15 @@ export async function populateShelf(bookshelf, {
     raycaster.setFromCamera(ndc, camera);
     const hits = raycaster.intersectObjects(anchor.children, true);
     if (hits.length === 0) return null;
-    let node = hits[0].object;
-    while (node && node.parent !== anchor) node = node.parent;
-    return hovering.find((entry) => entry.group === node) ?? null;
+    for (const hit of hits) {
+      let node = hit.object;
+      while (node && node.parent !== anchor) node = node.parent;
+      // Raycasting ignores `visible`: a model hidden because its real book
+      // is out of the shelf is not there to be hovered or taken.
+      if (!node?.visible) continue;
+      return hovering.find((entry) => entry.group === node) ?? null;
+    }
+    return null;
   }
 
   function hovered() {
@@ -431,21 +439,11 @@ export async function populateShelf(bookshelf, {
 
   // --- in hand -------------------------------------------------------------
   let held = null; // the entry the player is holding, or null
-  // While set, the model of `entry` is hidden and `object` is being posed in
-  // its place: { entry, object, onStow }.
-  let substitution = null;
 
   function setHeld(entry) {
     if (entry === held) return;
     held = entry;
     onTake?.(held?.book ?? null);
-  }
-
-  function endSubstitution() {
-    const { entry, onStow } = substitution;
-    substitution = null;
-    entry.group.visible = true;
-    onStow?.();
   }
 
   const _pickPointer = new THREE.Vector2();
@@ -459,9 +457,11 @@ export async function populateShelf(bookshelf, {
   const _fitOffset = new THREE.Vector3();
 
   /**
-   * Put `object` where the model is, in WORLD space -- the substitute lives
-   * under the scene, not under the shelf, because it is a book in its own
-   * right with its own scale and its own physics.
+   * Put `object` where a model posed at `position`/`quaternion` (anchor
+   * space) is, in WORLD space -- the real book lives under the scene, not
+   * under the shelf, because it is a book in its own right with its own
+   * scale and its own physics. `object` only needs `position` and
+   * `quaternion`, so a plain pose can be filled in too.
    */
   function mirrorTo(object, position, quaternion, fit) {
     anchor.getWorldQuaternion(_anchorQuaternion);
@@ -529,52 +529,43 @@ export async function populateShelf(bookshelf, {
     get heldSize() { return held?.size ?? null; },
 
     /**
-     * Stand `object` in for the model in hand: the model is hidden and
-     * `object` takes its pose, in world space, every frame -- including the
-     * whole way back to the shelf, at the end of which the model reappears
-     * and `onStow` fires so the caller can put its object away.
+     * Give the book in hand over to `object`, the real book: the model is
+     * hidden, `object` is put exactly where the model is now, and the shelf
+     * lets go -- nothing here poses `object` again. The model, hidden, goes
+     * home on its own.
      *
-     * `fit`, if given, is where the model's middle and axes sit in `object`'s
-     * own frame -- `position` already multiplied by `object`'s scale -- for a
-     * stand-in whose origin is not its middle. Left out, the two origins and
-     * orientations are simply matched.
+     * `fit` is where the model's middle and axes sit in `object`'s own frame
+     * -- `position` already multiplied by `object`'s scale -- for a book
+     * whose origin is not its middle.
      *
-     * Returns false if nothing is being held, which is the case when a book
+     * Returns `{ position, quaternion }`, the world pose `object` needs to
+     * sit in the model's slot, and `takeBack()`, which shows the model again
+     * -- call it once the book has gone back in, or has been put down
+     * somewhere else. Null if nothing is held, which is the case when a book
      * was put back while its pages were still rendering.
      */
-    substitute(object, onStow, fit = null) {
-      if (!held) return false;
-      // Only one stand-in at a time: an earlier one is handed back where it
-      // stands rather than being abandoned mid-flight.
-      if (substitution) endSubstitution();
-      substitution = {
-        entry: held,
-        object,
-        onStow,
-        fit: fit && {
-          position: fit.position.clone(),
-          inverse: fit.quaternion.clone().invert(),
+    handOver(object, fit) {
+      if (!held) return null;
+      const entry = held;
+      const fitted = {
+        position: fit.position.clone(),
+        inverse: fit.quaternion.clone().invert(),
+      };
+      entry.group.visible = false;
+      mirrorTo(object, entry.group.position, entry.group.quaternion, fitted);
+      const home = { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() };
+      mirrorTo(home, entry.rest, upright, fitted);
+      // Let go without telling onTake: the book was taken, and has not been
+      // put back -- it is simply not this model any more.
+      held = null;
+      return {
+        ...home,
+        takeBack() {
+          entry.hold = 0;
+          entry.offset = 0;
+          entry.group.visible = true;
         },
       };
-      held.group.visible = false;
-      // In place straight away rather than at the next update(): the frame
-      // in between still steps the physics, which would otherwise carry the
-      // book from wherever it last was.
-      mirrorTo(object, held.group.position, held.group.quaternion, substitution.fit);
-      return true;
-    },
-
-    /**
-     * Let go of the substitute where it is. The model goes home on its own
-     * and the stand-in stays put -- what putting a book down on the desk
-     * means, as opposed to shelving it.
-     */
-    putDown() {
-      if (substitution) {
-        substitution.entry.group.visible = true;
-        substitution = null;
-      }
-      setHeld(null);
     },
 
     /**
@@ -623,13 +614,6 @@ export async function populateShelf(bookshelf, {
           const t = ease(book.hold);
           book.group.position.lerpVectors(_shelfPosition, _handPosition, t);
           book.group.quaternion.copy(upright).slerp(_handQuaternion, t);
-        }
-
-        if (substitution && substitution.entry === book) {
-          mirrorTo(substitution.object, book.group.position, book.group.quaternion, substitution.fit);
-          // Back in the row: the model reappears and the stand-in is handed
-          // over to whoever lent it.
-          if (book.hold <= 0) endSubstitution();
         }
       }
     },

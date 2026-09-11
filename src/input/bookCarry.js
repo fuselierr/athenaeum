@@ -12,9 +12,18 @@ import * as THREE from 'three';
  * putBookDown). Clicking the book itself while it is up does nothing: that
  * is reading it, not asking for it to go.
  *
- * The same mechanism as the shelf: a `hold` easing between 0 and 1, and a
- * pose blended by it from where the book lay to where the hand is. The hand
- * pose is read from the camera every frame, so the book follows you.
+ * A BOOK FROM THE SHELF is carried the same way. Once its pages are ready,
+ * main.js hands it over with takeFrom(): it starts from where the shelf
+ * model was in the hand, and its HOME is the model's slot on the shelf
+ * rather than wherever it lay -- so Escape flies it back into the shelf, and
+ * `onReturn` lets the shelf show its model again.
+ *
+ * Every trip -- up to the hand, or home -- is a `travel` easing from 0 to 1,
+ * blending from where the book was when the trip began to where it is
+ * going. Re-based at each start, so a trip can begin anywhere: from a desk,
+ * from a shelf model's pose, or from half-way back when the book is caught
+ * again. The hand end is read from the camera every frame, so the book
+ * follows you.
  *
  * WHAT IT IS CENTRED ON. The book's own origin is the spine of a book lying
  * open, which is the middle of nothing once it is shut. So the hand holds
@@ -23,6 +32,15 @@ import * as THREE from 'three';
  * in view. Opening the book in the hand changes both, so they are eased
  * rather than snapped: the book settles into its new framing instead of
  * jumping.
+ *
+ * ADJUSTING IT. The book in the hand can still be slid (shift-drag), turned
+ * (right-drag) and brought nearer or pushed away (scroll) -- the same
+ * gestures as on the desk, routed here by bookManipulator.js. They are kept
+ * as offsets on top of the hand pose, in the camera's own space, so the
+ * book keeps wherever you put it as you walk and look around, and the
+ * framing still follows it opening and shutting. Each take starts square
+ * again, and straighten() (the reset key) eases the book back to that
+ * without putting it down.
  *
  * GRAVITY is not handled here, but it matters: held up facing you, real
  * gravity would run across the pages and swing them about. While it is
@@ -41,6 +59,15 @@ const TAKE_RATE = 7;
 const RETURN_RATE = 5;
 // How quickly the framing follows the book opening or shutting in the hand.
 const REFRAME_RATE = 5;
+// How far scrolling can take the book, as a multiple of the distance that
+// fits it in view, and as a hard floor and ceiling in metres -- the floor
+// keeps it outside the camera's near plane, the ceiling within reach.
+const REACH_SCALE_MIN = 0.25;
+const REACH_SCALE_MAX = 4;
+const REACH_MIN = 0.08;
+const REACH_MAX = 2.5;
+// How quickly straighten() eases the slide, turn and push back out, 1/s.
+const STRAIGHTEN_RATE = 8;
 
 // The held orientation, in the camera's own space. The book's reading axes
 // (X = head, Y = out of the page, Z = the reader's right) onto the camera's
@@ -68,26 +95,36 @@ function ease(t) {
  * @param {() => import('../book/pageSim/PageSimulation.js').PageSimulation} opts.getPages
  * @param {{ reset(position: THREE.Vector3, quaternion: THREE.Quaternion): void }} opts.placement
  * @param {() => boolean} [opts.canTake]  whether the book is free to be taken
- *   -- not while a shelf book has the hand
- * @param {() => boolean} [opts.inHand]  whether the book is already in the
- *   hand some other way (a shelf book that became this book), so a click on
- *   it is swallowed rather than handed on to send it back
+ *   -- not while a shelf model has the hand
  */
 export function createBookCarry({
   scene, bookGroup, camera, renderer, getPages, placement,
-  canTake = () => true, inHand = () => false,
+  canTake = () => true,
 }) {
-  let held = false;
-  let hold = 0; // 0 where it lay, 1 in the hand, in between on the way
+  let held = false; // in the hand, or on the way there
+  let returning = false; // on the way home
+  let travel = 1; // 0..1 through the current trip
 
-  // Where it lay when it was taken, and so where it goes back to.
-  const restPosition = new THREE.Vector3();
-  const restQuaternion = new THREE.Quaternion();
+  // Where the current trip began, and where the book goes when put back.
+  const fromPosition = new THREE.Vector3();
+  const fromQuaternion = new THREE.Quaternion();
+  const homePosition = new THREE.Vector3();
+  const homeQuaternion = new THREE.Quaternion();
+  // Told when the book stops being carried: (true) once it has arrived home,
+  // (false) when it was let go of anywhere else. Only a shelf book has one.
+  let onReturn = null;
 
   // The framing actually in use, eased toward what the book asks for.
   const centre = new THREE.Vector3();
   let distance = 0;
   let framed = false; // seeded since the last take?
+
+  // What the reader has done to it since taking it, in camera space: slid
+  // right/up (metres), turned, and pushed (a multiple of `distance`).
+  const nudge = new THREE.Vector2();
+  const twist = new THREE.Quaternion();
+  let reach = 1;
+  let straightening = false; // easing all three back to none
 
   const _raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
@@ -95,6 +132,9 @@ export function createBookCarry({
   const _handPosition = new THREE.Vector3();
   const _handQuaternion = new THREE.Quaternion();
   const _offset = new THREE.Vector3();
+  const _cameraInverse = new THREE.Quaternion();
+  const _identity = new THREE.Quaternion();
+  const _slide = new THREE.Vector3();
 
   /** Is an object actually on screen -- itself and every parent visible? */
   function shown(object) {
@@ -124,6 +164,32 @@ export function createBookCarry({
     return Boolean(nearest) && partOfBook(nearest.object);
   }
 
+  /** A new trip starts from wherever the book is now. */
+  function startTrip() {
+    fromPosition.copy(bookGroup.position);
+    fromQuaternion.copy(bookGroup.quaternion);
+    travel = 0;
+  }
+
+  /** Square again: no slide, turn or push, framing re-seeded. */
+  function resetAdjustments() {
+    framed = false;
+    nudge.set(0, 0);
+    twist.identity();
+    reach = 1;
+    straightening = false;
+  }
+
+  /** No longer carried, for whatever reason. */
+  function endCarry(arrived) {
+    held = false;
+    returning = false;
+    travel = 1;
+    const callback = onReturn;
+    onReturn = null;
+    callback?.(arrived);
+  }
+
   /** The pose the hand wants this frame, into _handPosition/_handQuaternion. */
   function readHandPose(dt) {
     const frame = getPages().readingFrame(_targetCentre);
@@ -145,10 +211,14 @@ export function createBookCarry({
 
     // Matrices are composed at render; the camera has moved since.
     camera.updateMatrixWorld();
-    camera.getWorldQuaternion(_handQuaternion).multiply(HOLD_ROTATION);
-    // Straight ahead at `distance`, then back by wherever the framed middle
-    // sits inside the book, so that middle is what lands in front of you.
-    _handPosition.set(0, 0, -distance).applyMatrix4(camera.matrixWorld)
+    // The twist sits between the camera and the reading pose, so a turn is
+    // made in view space -- the way the drag that made it was.
+    camera.getWorldQuaternion(_handQuaternion).multiply(twist).multiply(HOLD_ROTATION);
+    // Ahead at the pushed distance and off by the slide, then back by
+    // wherever the framed middle sits inside the book, so that middle is
+    // what lands there -- and is what the book turns about.
+    const away = THREE.MathUtils.clamp(distance * reach, REACH_MIN, REACH_MAX);
+    _handPosition.set(nudge.x, nudge.y, -away).applyMatrix4(camera.matrixWorld)
       .sub(_offset.copy(centre).multiplyScalar(scale).applyQuaternion(_handQuaternion));
   }
 
@@ -156,62 +226,138 @@ export function createBookCarry({
     /** In the hand, or on its way there. */
     get held() { return held; },
 
-    /** Anywhere off the desk: held, or still travelling either way. */
-    get carrying() { return held || hold > 0; },
+    /** Anywhere off its resting place: held, or on its way home. */
+    get carrying() { return held || returning; },
 
     /**
      * A click in the room. Returns true if it was the book's: a click on the
      * book takes it up. A click on it while it is already in the hand is
      * still the book's, and does nothing -- claimed, so the shelf does not
-     * take it as a click on the book behind it (the shelf tests only its own
-     * books, whatever is in front) or send a shelf book back.
+     * take it as a click on the shelf book behind it (the shelf tests only
+     * its own books, whatever is in front).
      */
     handleClick(event) {
       if (!bookUnder(event)) return false;
-      if (held || inHand()) return true;
+      if (held) return true;
       if (!canTake()) return false;
-      // Caught on its way back, it keeps the place it was going back to.
-      if (hold === 0) {
-        restPosition.copy(bookGroup.position);
-        restQuaternion.copy(bookGroup.quaternion);
-        framed = false;
+      // Lying where it lies, that is its home. Caught on its way back, it
+      // keeps the home it was going to, and the way it was being held.
+      if (!returning) {
+        homePosition.copy(bookGroup.position);
+        homeQuaternion.copy(bookGroup.quaternion);
+        onReturn = null;
+        resetAdjustments();
       }
+      returning = false;
       held = true;
+      startTrip();
       return true;
     },
 
-    /** Send it back to where it lay -- what Escape does. */
-    putBack() {
-      held = false;
+    /**
+     * Take the book into the hand from wherever it has just been put -- a
+     * shelf model's pose, for a book off the shelf -- with its own home to
+     * go back to.
+     *
+     * @param {{ position: THREE.Vector3, quaternion: THREE.Quaternion }} home
+     * @param {(arrived: boolean) => void} [onReturnHome]  see `onReturn`
+     */
+    takeFrom(home, onReturnHome = null) {
+      // Anything still carried gives way first, and is told so.
+      if (held || returning) endCarry(false);
+      homePosition.copy(home.position);
+      homeQuaternion.copy(home.quaternion);
+      onReturn = onReturnHome;
+      resetAdjustments();
+      held = true;
+      startTrip();
+    },
+
+    /** Slide it by a WORLD-space movement; kept as a slide in view space. */
+    slideBy(worldDelta) {
+      camera.getWorldQuaternion(_cameraInverse).invert();
+      _slide.copy(worldDelta).applyQuaternion(_cameraInverse);
+      // Across the view only: nearer and further is the scroll's.
+      nudge.x += _slide.x;
+      nudge.y += _slide.y;
+      straightening = false; // the reader's hand wins over the reset's
+    },
+
+    /** Turn it by a rotation given in the CAMERA's own space. */
+    turnBy(viewDelta) {
+      twist.premultiply(viewDelta).normalize();
+      straightening = false;
+    },
+
+    /** Scale how far away it is held: > 1 pushes it away, < 1 brings it in. */
+    pushBy(factor) {
+      reach = THREE.MathUtils.clamp(reach * factor, REACH_SCALE_MIN, REACH_SCALE_MAX);
+      straightening = false;
     },
 
     /**
-     * Drop it out of the hand on the spot, for a caller that is placing the
-     * book itself (setting it down on the desk, resetting it).
+     * Back to how the book was first held -- centred, square, at the distance
+     * that fits it in view -- eased there rather than snapped. Keeps it in
+     * the hand. A slide, turn or push made on the way cancels it.
+     */
+    straighten() {
+      if (held) straightening = true;
+    },
+
+    /** Send it home -- where it lay, or its shelf slot. What Escape does. */
+    putBack() {
+      if (!held) return;
+      held = false;
+      returning = true;
+      startTrip();
+    },
+
+    /**
+     * Stop carrying it on the spot, for a caller that is placing the book
+     * itself (setting it down on the desk, resetting it).
      */
     letGo() {
-      held = false;
-      hold = 0;
+      if (held || returning) endCarry(false);
     },
 
     /** Call every frame, after the camera has moved. */
     update(dt) {
-      if (!held && hold === 0) return;
-      const target = held ? 1 : 0;
-      if (Math.abs(target - hold) < 1e-4) {
-        hold = target;
-      } else {
-        hold += (target - hold) * Math.min((held ? TAKE_RATE : RETURN_RATE) * dt, 1);
+      if (!held && !returning) return;
+      if (travel < 1) {
+        travel += (1 - travel) * Math.min((held ? TAKE_RATE : RETURN_RATE) * dt, 1);
+        if (1 - travel < 1e-4) travel = 1;
       }
 
-      readHandPose(dt);
-      const t = ease(hold);
-      bookGroup.position.lerpVectors(restPosition, _handPosition, t);
-      bookGroup.quaternion.slerpQuaternions(restQuaternion, _handQuaternion, t);
+      if (straightening) {
+        const k = 1 - Math.exp(-STRAIGHTEN_RATE * dt);
+        nudge.multiplyScalar(1 - k);
+        twist.slerp(_identity, k);
+        reach += (1 - reach) * k;
+        if (nudge.lengthSq() < 1e-8 && Math.abs(1 - reach) < 1e-4 && twist.angleTo(_identity) < 1e-4) {
+          nudge.set(0, 0);
+          twist.identity();
+          reach = 1;
+          straightening = false;
+        }
+      }
 
-      // Home. Handed back to physics at rest, rather than carrying away
-      // whatever speed the last frame of the trip happened to measure.
-      if (hold === 0) placement.reset(restPosition, restQuaternion);
+      const t = ease(travel);
+      if (held) {
+        readHandPose(dt);
+        bookGroup.position.lerpVectors(fromPosition, _handPosition, t);
+        bookGroup.quaternion.slerpQuaternions(fromQuaternion, _handQuaternion, t);
+        return;
+      }
+
+      bookGroup.position.lerpVectors(fromPosition, homePosition, t);
+      bookGroup.quaternion.slerpQuaternions(fromQuaternion, homeQuaternion, t);
+      if (travel === 1) {
+        // Home. Handed back to physics at rest, rather than carrying away
+        // whatever speed the last frame of the trip happened to measure --
+        // and then to whoever the home belongs to.
+        placement.reset(homePosition, homeQuaternion);
+        endCarry(true);
+      }
     },
   };
 }

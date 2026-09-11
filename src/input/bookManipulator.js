@@ -3,6 +3,14 @@ import * as THREE from 'three';
 // >1 = a given drag arc turns the book further than it visually swept.
 const ROTATE_SENSITIVITY = 1.4;
 
+// How much one pixel of scroll pushes a book in the hand away (or, scrolled
+// the other way, brings it in), as a growth rate: a notch of about 100 px is
+// roughly a tenth further. Multiplicative, so every notch feels the same
+// whether the book is at arm's length or across the room.
+const WHEEL_PUSH = 0.001;
+// A wheel reporting in lines (Firefox, some mice) rather than pixels.
+const PIXELS_PER_LINE = 33;
+
 const WORLD_DOWN = new THREE.Vector3(0, -1, 0);
 
 /**
@@ -11,20 +19,47 @@ const WORLD_DOWN = new THREE.Vector3(0, -1, 0);
  *
  *   right-drag          arcball-rotate the book
  *   shift + left-drag   slide the book in the plane of the screen
+ *   scroll              bring a book in the hand nearer or push it away
  *
- * Both act on `bookGroup` -- the render-only wrapper the book hangs under
- * -- and never touch physics coordinates or PageSimulation.root's own
- * transform.
+ * On the desk, the two drags act on `bookGroup` -- the render-only wrapper
+ * the book hangs under -- and never touch physics coordinates or
+ * PageSimulation.root's own transform. With the book up in the hand
+ * (input/bookCarry.js), whose pose is rewritten every frame from the camera,
+ * a change made straight to bookGroup would last one frame -- so there the
+ * gestures are handed to the carry instead, as adjustments to how it holds
+ * the book.
  *
  * Returns `{ update() }`; tick it each frame so gravity keeps pointing at
  * true world-down.
  */
-export function createBookManipulator({ bookGroup, camera, renderer, getPages }) {
+export function createBookManipulator({
+  bookGroup, camera, renderer, getPages, getCarry = () => null,
+}) {
   const dom = renderer.domElement;
   dom.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  const arcball = installArcballRotate({ bookGroup, camera, dom });
-  const slide = installScreenPlaneSlide({ bookGroup, camera, dom });
+  // The carry, while the book is off the desk in it; null otherwise.
+  const carried = () => {
+    const carry = getCarry();
+    return carry?.carrying ? carry : null;
+  };
+
+  const arcball = installArcballRotate({ bookGroup, camera, dom, carried });
+  const slide = installScreenPlaneSlide({ bookGroup, camera, dom, carried });
+
+  // On WINDOW, in the capture phase: the look modes zoom on a capture
+  // listener on the canvas that is registered first (cameraModes.js), and
+  // orbit mode's OrbitControls listens there too. Stopping the wheel on its
+  // way down is the only way past both. Only while a book is in the hand;
+  // otherwise the wheel is the camera's, as it always was.
+  window.addEventListener('wheel', (e) => {
+    const carry = carried();
+    if (!carry?.held || e.target !== dom) return;
+    const pixels = e.deltaMode === 1 ? e.deltaY * PIXELS_PER_LINE : e.deltaY;
+    carry.pushBy(Math.exp(pixels * WHEEL_PUSH));
+    e.preventDefault();
+    e.stopPropagation();
+  }, { capture: true, passive: false });
 
   // Rapier's gravity vector lives in PageSimulation's own physics space,
   // which knows nothing about bookGroup's transform -- so without this,
@@ -75,7 +110,7 @@ export function createBookManipulator({ bookGroup, camera, renderer, getPages })
 // book. Axis and angle come from the arc between the previous and current
 // sphere points, so a diagonal or curved drag is one combined rotation
 // rather than two independent ones.
-function installArcballRotate({ bookGroup, camera, dom }) {
+function installArcballRotate({ bookGroup, camera, dom, carried }) {
   let rotating = false;
   const _last = new THREE.Vector3();
   const _cur = new THREE.Vector3();
@@ -122,13 +157,21 @@ function installArcballRotate({ bookGroup, camera, dom }) {
       const dot = THREE.MathUtils.clamp(_last.dot(_cur), -1, 1);
       const angle = Math.acos(dot) * ROTATE_SENSITIVITY;
       _axis.multiplyScalar(1 / Math.sqrt(axisLenSq)); // normalize without a second sqrt
-      // The axis is camera-local (see pointerToSphere); transformDirection
-      // rotates it into world space by the camera's CURRENT orientation, so
-      // the gesture stays camera-relative however the book is oriented.
-      _axis.transformDirection(camera.matrix);
-      _delta.setFromAxisAngle(_axis, angle);
-      bookGroup.quaternion.premultiply(_delta);
-      bookGroup.quaternion.normalize(); // stop float drift accumulating over a long drag
+      const carry = carried();
+      if (carry) {
+        // The carry keeps its turn in camera space, which is the space the
+        // axis is already in.
+        _delta.setFromAxisAngle(_axis, angle);
+        carry.turnBy(_delta);
+      } else {
+        // The axis is camera-local (see pointerToSphere); transformDirection
+        // rotates it into world space by the camera's CURRENT orientation, so
+        // the gesture stays camera-relative however the book is oriented.
+        _axis.transformDirection(camera.matrix);
+        _delta.setFromAxisAngle(_axis, angle);
+        bookGroup.quaternion.premultiply(_delta);
+        bookGroup.quaternion.normalize(); // stop float drift accumulating over a long drag
+      }
     }
 
     _last.copy(_cur);
@@ -163,8 +206,10 @@ function installArcballRotate({ bookGroup, camera, dom }) {
 // left-drags that hit a page via its own capture listener on the canvas,
 // and OrbitControls claims what is left in the bubble phase. Capture
 // descends window -> document -> canvas, so this runs before both.
-function installScreenPlaneSlide({ bookGroup, camera, dom }) {
+function installScreenPlaneSlide({ bookGroup, camera, dom, carried }) {
   const _plane = new THREE.Plane();
+  const _lastHit = new THREE.Vector3(); // where the previous move landed, for a carried book
+  const _step = new THREE.Vector3();
   const _ray = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
   const _hit = new THREE.Vector3();
@@ -194,6 +239,7 @@ function installScreenPlaneSlide({ bookGroup, camera, dom }) {
     if (!pointerToPlane(e.clientX, e.clientY, _grab)) return; // grazing view -- leave the event alone
 
     _origin.copy(bookGroup.position);
+    _lastHit.copy(_grab);
     sliding = true;
     dom.style.cursor = 'grabbing';
     e.stopPropagation();
@@ -206,6 +252,15 @@ function installScreenPlaneSlide({ bookGroup, camera, dom }) {
     // should not drop the book somewhere unintended -- the gesture ends on
     // pointerup, like every other drag here.
     if (!pointerToPlane(e.clientX, e.clientY, _hit)) return;
+    const carry = carried();
+    if (carry) {
+      // Handed over a move at a time rather than as a total from the grab:
+      // the carry re-poses the book from the camera every frame, so there
+      // is no fixed origin for a total to be measured from.
+      carry.slideBy(_step.copy(_hit).sub(_lastHit));
+      _lastHit.copy(_hit);
+      return;
+    }
     // The plane is screen-facing, so this is exactly the cursor's own
     // movement carried into world space.
     bookGroup.position.copy(_origin).add(_hit).sub(_grab);

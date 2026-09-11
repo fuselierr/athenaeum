@@ -53,7 +53,7 @@ export const ACTIONS = [
   { id: 'book.pageForward', group: 'Book', label: 'Turn forward', default: 'ArrowRight' },
   { id: 'book.pageBack', group: 'Book', label: 'Turn back', default: 'ArrowLeft' },
   { id: 'book.flip', group: 'Book', label: 'Flip the book over', default: 'KeyF' },
-  { id: 'book.reset', group: 'Book', label: 'Put the book back on the desk', default: 'KeyR' },
+  { id: 'book.reset', group: 'Book', label: 'Reset the book (on the desk, or square in your hand)', default: 'KeyR' },
 
   { id: 'debug.labels', group: 'Debug', label: 'Hinge labels', default: 'Backquote' },
   { id: 'debug.pause', group: 'Debug', label: 'Pause the simulation', default: 'Space' },

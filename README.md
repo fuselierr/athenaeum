@@ -61,8 +61,10 @@ Every key below can be rebound in **Settings → Controls**.
 | `←` / `→` | Turn to the previous/next page |
 | Drag a page directly | Turn that page by hand, mid-curl |
 | `Shift` + drag | Slide the book across the desk, along the camera's view plane |
+| Right-drag | Turn the book — on the desk or in your hand |
+| Scroll, holding the book | Bring it closer or push it away |
 | `F` | Flip the book over |
-| `R` | Reset the book to the desk |
+| `R` | Reset the book to the desk — or, in your hand, back to how it was first held |
 | `H` | Hide or show the walls and ceiling |
 | `M` | Mute |
 
