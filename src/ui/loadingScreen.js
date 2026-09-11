@@ -1,6 +1,7 @@
 /**
  * The loading screen: what covers the page from the first paint until the
- * room is built and the shelf has its books.
+ * room is built and the shelf has its books -- and again, via show(), while
+ * the outdoors is loaded behind the door (scene/outside.js).
  *
  * Its markup and styles live in index.html, not here. They have to be on
  * screen before any script has loaded, and this module only arrives with
@@ -26,6 +27,8 @@ const FALLBACK_SKIP_MS = 15000;
 
 let finished = false;
 let skipTimer = null;
+let fadeTimer = null;
+let failTimer = null;
 
 function hide() {
   if (!root || finished) return;
@@ -33,7 +36,28 @@ function hide() {
   clearTimeout(skipTimer);
   root.classList.add('done');
   root.setAttribute('aria-busy', 'false');
-  setTimeout(() => root.remove(), FADE_MS);
+  // Kept, not removed: show() brings it back. Out of the layout once faded.
+  fadeTimer = setTimeout(() => { root.style.display = 'none'; }, FADE_MS);
+}
+
+/**
+ * Bring the screen back up over the page, saying `text`, for a load that
+ * happens after startup. Fades in; finish() or fail() take it away as usual.
+ * No "enter without waiting" here -- there is nothing behind it to enter.
+ */
+function show(text) {
+  if (!root) return;
+  clearTimeout(fadeTimer);
+  clearTimeout(failTimer);
+  clearTimeout(skipTimer);
+  finished = false;
+  if (skip) skip.hidden = true;
+  bar?.classList.remove('failed');
+  root.style.display = '';
+  void root.offsetWidth; // lay it out transparent first, so it fades in
+  root.classList.remove('done');
+  root.setAttribute('aria-busy', 'true');
+  status(text);
 }
 
 /**
@@ -73,10 +97,10 @@ function fail(text) {
   if (!root || finished) return;
   status(text, 1);
   bar?.classList.add('failed');
-  setTimeout(hide, FAILURE_HOLD_MS);
+  failTimer = setTimeout(hide, FAILURE_HOLD_MS);
 }
 
 skip?.addEventListener('click', hide);
 allowSkip(FALLBACK_SKIP_MS);
 
-export const loadingScreen = { status, allowSkip, finish, fail };
+export const loadingScreen = { status, allowSkip, finish, fail, show };

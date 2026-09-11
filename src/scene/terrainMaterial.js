@@ -81,11 +81,14 @@ async function loadLayerTexture(url) {
 }
 
 /**
- * @param {{ height: number }} opts  the terrain's full height, in its own
- *   units -- what the height fractions in BLEND are fractions of
- * @returns {THREE.MeshStandardMaterial}
+ * @param {{ height: number, onProgress?: (loaded: number, total: number) => void }} opts
+ *   height: the terrain's full height, in its own units -- what the height
+ *   fractions in BLEND are fractions of. onProgress: told as each layer's
+ *   texture arrives, or gives up.
+ * @returns {THREE.MeshStandardMaterial}  userData.ready resolves once every
+ *   layer has its texture or has fallen back to its colour -- it never rejects
  */
-export function createTerrainMaterial({ height }) {
+export function createTerrainMaterial({ height, onProgress = null }) {
   const material = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0 });
 
   const uniforms = {
@@ -105,8 +108,9 @@ export function createTerrainMaterial({ height }) {
     uniforms[`${name}Tint`] = { value: new THREE.Color(layer.colour) };
   }
 
-  for (const [name, layer] of Object.entries(LAYERS)) {
-    loadLayerTexture(layer.url)
+  const total = Object.keys(LAYERS).length;
+  let settled = 0;
+  const loads = Object.entries(LAYERS).map(([name, layer]) => loadLayerTexture(layer.url)
       .then((texture) => {
         if (!texture) {
           console.warn(`Terrain: ${layer.url} has no texture in it; ${name} stays a flat colour.`);
@@ -121,8 +125,12 @@ export function createTerrainMaterial({ height }) {
       })
       .catch((err) => {
         console.warn(`Terrain: ${layer.url} failed to load; ${name} stays a flat colour.`, err);
-      });
-  }
+      })
+      .finally(() => {
+        settled += 1;
+        onProgress?.(settled, total);
+      }));
+  material.userData.ready = Promise.all(loads);
 
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);

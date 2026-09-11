@@ -18,17 +18,48 @@ import { createTerrainMaterial } from './terrainMaterial.js';
  */
 
 /**
+ * A response body, read a chunk at a time so `onProgress` can be told how
+ * much of it has arrived (0..1). Falls back to a plain read when there is no
+ * one to tell, or no length to measure against.
+ */
+async function readBody(response, onProgress) {
+  const total = Number(response.headers.get('content-length'));
+  if (!onProgress || !total || !response.body) return response.arrayBuffer();
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.byteLength;
+    // Capped: a compressed response's length is its compressed size.
+    onProgress(Math.min(received / total, 1));
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
+}
+
+/**
  * Fetch and decode a square 16-bit little-endian .raw heightmap.
  *
  * @param {string} url
+ * @param {((fraction: number) => void)|null} [onProgress]  how much of the
+ *   file has downloaded, 0..1
  * @returns {Promise<{ size: number, heights: Float32Array }>}  `heights` is
  *   row by row from the top of the image, normalised to 0..1 across the
  *   map's own lowest and highest sample.
  */
-export async function loadHeightmap(url) {
+export async function loadHeightmap(url, onProgress = null) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Heightmap failed to load (${response.status})`);
-  const buffer = await response.arrayBuffer();
+  const buffer = await readBody(response, onProgress);
 
   const count = buffer.byteLength / 2;
   const size = Math.round(Math.sqrt(count));
@@ -60,10 +91,15 @@ export async function loadHeightmap(url) {
  * point at y = 0.
  *
  * @param {{ size: number, heights: Float32Array }} heightmap
- * @param {{ width?: number, height?: number, segments?: number }} [opts]
+ * @param {{ width?: number, height?: number, segments?: number,
+ *   onTextureProgress?: (loaded: number, total: number) => void }} [opts]
+ *   onTextureProgress: each ground texture as it arrives (or gives up);
+ *   mesh.material.userData.ready resolves once they all have
  * @returns {THREE.Mesh}
  */
-export function createTerrain(heightmap, { width = 400, height = 60, segments = 255 } = {}) {
+export function createTerrain(heightmap, {
+  width = 400, height = 60, segments = 255, onTextureProgress = null,
+} = {}) {
   const geometry = new THREE.PlaneGeometry(width, width, segments, segments);
   // Flat on the ground. The plane's rows run from its +Y edge down, which
   // after this turn is from -Z toward +Z: row 0 of the image is the far edge.
@@ -86,7 +122,7 @@ export function createTerrain(heightmap, { width = 400, height = 60, segments = 
   geometry.computeBoundingSphere();
 
   // Sand, grass, rock and snow, laid on by slope and height.
-  const mesh = new THREE.Mesh(geometry, createTerrainMaterial({ height }));
+  const mesh = new THREE.Mesh(geometry, createTerrainMaterial({ height, onProgress: onTextureProgress }));
   mesh.name = 'terrain';
   // Both: a ridge throws its shadow down the valley beside it.
   mesh.castShadow = true;

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { loadHeightmap, createTerrain, terrainHeightAt } from './terrain.js';
 import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
+import { loadingScreen } from '../ui/loadingScreen.js';
 
 /**
  * Going outside, through the door.
@@ -19,6 +20,11 @@ import { createOutdoorPost } from './outdoorPost.js';
 
 const HEIGHTMAP_URL = '/heightmaps/swissalps.raw'; // public/heightmaps
 const TERRAIN = { width: 400, height: 60, segments: 255 };
+
+/** Resolves on the next frame -- so a status line paints before blocking work. */
+function nextFrame() {
+  return new Promise((resolve) => { requestAnimationFrame(() => resolve()); });
+}
 
 /**
  * @param {object} opts
@@ -56,12 +62,29 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
     return false;
   }
 
+  // Everything that can fail -- the downloads -- happens before the room is
+  // touched, so a failed trip leaves you standing in the room as it was.
   async function goOutside() {
     if (state !== 'inside') return;
     state = 'loading';
+    loadingScreen.show('Opening the door…');
     try {
-      const heightmap = await loadHeightmap(HEIGHTMAP_URL);
-      terrain = createTerrain(heightmap, TERRAIN);
+      const heightmap = await loadHeightmap(HEIGHTMAP_URL, (fraction) => {
+        loadingScreen.status('Surveying the land…', fraction);
+      });
+
+      loadingScreen.status('Shaping the terrain…');
+      await nextFrame();
+      terrain = createTerrain(heightmap, {
+        ...TERRAIN,
+        onTextureProgress: (loaded, total) => {
+          loadingScreen.status(`Laying the ground… ${loaded} of ${total}`, loaded / total);
+        },
+      });
+      await terrain.material.userData.ready;
+
+      loadingScreen.status('Lighting the sky…');
+      await nextFrame();
 
       // The ground under the middle of the room goes where the floor was.
       const floorBox = new THREE.Box3().setFromObject(floor);
@@ -93,10 +116,18 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
         sunDirection: daylight.sunDirection,
         groundHeight: floorBox.max.y,
       });
+
+      // Compiled now, behind the screen, rather than as a stall on the first
+      // frame outside.
+      loadingScreen.status('Almost there…');
+      await renderer.compileAsync(scene, camera);
+
       state = 'outside';
+      loadingScreen.finish();
     } catch (err) {
       console.error('Going outside failed:', err);
-      state = 'inside';
+      if (state === 'loading') state = 'inside';
+      loadingScreen.fail('The way outside is blocked for now.');
     }
   }
 
