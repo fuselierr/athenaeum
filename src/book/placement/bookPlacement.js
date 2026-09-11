@@ -39,6 +39,12 @@ const ANGULAR_DAMPING = 0.6;
 const RESTITUTION = 0.05;
 const FRICTION = 0.9;
 
+// How deep the room's floor, wall and ceiling slabs are. Far deeper than any
+// real wall needs to be, on purpose: the book is two thin boards, and a slab
+// only a few centimetres deep is exactly what a fast one can skip clean
+// through between two steps, CCD or not.
+const ROOM_SLAB_THICKNESS = 0.5;
+
 // --- where the paper is ------------------------------------------------
 //
 // The boards are the only colliders the book has, so they are also the
@@ -91,7 +97,9 @@ const SHARE_EPSILON = 0.004;
 const MAX_RELEASE_SPEED = 2.5;
 const MAX_RELEASE_SPIN = 12; // rad/s
 
-export async function createBookPlacement({ bookGroup, getPages, desk }) {
+// `room` is the room's inside as a world-space THREE.Box3 -- floor to ceiling,
+// wall to wall. Optional: without it the desk is the only thing to land on.
+export async function createBookPlacement({ bookGroup, getPages, desk, room = null }) {
   await RAPIER.init();
 
   const world = new RAPIER.World({ x: 0, y: -GRAVITY_MAG, z: 0 });
@@ -109,6 +117,39 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
       .setRestitution(RESTITUTION),
     deskBody,
   );
+
+  // --- the room -----------------------------------------------------------
+  // Floor, four walls and a ceiling, so a book knocked off the desk lands on
+  // the floor and a thrown one stops at a wall, instead of falling out of
+  // the world. Each is a slab sitting just OUTSIDE the room, so its inner
+  // face is exactly the room's; the slabs run past each other at the
+  // corners, leaving no seam for a board to slip through. The window is
+  // solid here too -- it is glass.
+  if (room) {
+    const t = ROOM_SLAB_THICKNESS;
+    const size = room.getSize(new THREE.Vector3());
+    const centre = room.getCenter(new THREE.Vector3());
+    const slabs = [
+      // centre x, y, z                              half-extents x, y, z
+      [centre.x, room.min.y - t / 2, centre.z, size.x / 2 + t, t / 2, size.z / 2 + t], // floor
+      [centre.x, room.max.y + t / 2, centre.z, size.x / 2 + t, t / 2, size.z / 2 + t], // ceiling
+      [room.min.x - t / 2, centre.y, centre.z, t / 2, size.y / 2 + t, size.z / 2 + t], // -X wall
+      [room.max.x + t / 2, centre.y, centre.z, t / 2, size.y / 2 + t, size.z / 2 + t], // +X wall
+      [centre.x, centre.y, room.min.z - t / 2, size.x / 2 + t, size.y / 2 + t, t / 2], // -Z wall
+      [centre.x, centre.y, room.max.z + t / 2, size.x / 2 + t, size.y / 2 + t, t / 2], // +Z wall
+    ];
+    const roomBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    for (const [x, y, z, hx, hy, hz] of slabs) {
+      world.createCollider(
+        RAPIER.ColliderDesc
+          .cuboid(hx, hy, hz)
+          .setTranslation(x, y, z)
+          .setFriction(FRICTION)
+          .setRestitution(RESTITUTION),
+        roomBody,
+      );
+    }
+  }
 
   // --- the book ---------------------------------------------------------
   const bookBody = world.createRigidBody(
@@ -280,6 +321,44 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
     bookBody.recomputeMassPropertiesFromColliders();
   }
 
+  // --- keeping a held book inside the room -------------------------------
+  // The slabs above stop a book that is FALLING. They cannot stop one being
+  // held -- moved with shift-drag, turned with right-drag, carried in pickup
+  // mode. A held book is kinematic: it is put where the hand puts it, not
+  // pushed back by whatever it overlaps. So while it is held, the room is
+  // enforced by limiting where it may be put.
+  //
+  // Measured by EVERYTHING the book draws, not by its colliders: covers,
+  // spine, the page block, and a leaf standing up mid-turn can all reach past
+  // the two boards Rapier knows about. Their world bounds are taken after the
+  // hand's latest move or turn, and the book is shifted back by exactly as far
+  // as those bounds cross a wall, the floor or the ceiling. Moving the book
+  // does not change the size of its bounds, so that one shift is exact -- and
+  // turning the book against a wall just eases it away from the wall.
+  const _bookBounds = new THREE.Box3();
+
+  function keepInsideRoom() {
+    if (!room) return;
+    // three.js recomposes matrices at render, and the hand has moved or
+    // turned the book since then.
+    bookGroup.updateMatrixWorld(true);
+    // `precise`: measured from the vertices, not each geometry's cached
+    // bounding box. The curl strips are rewritten every frame, and a cached
+    // box is whatever shape that page had when it was last computed.
+    _bookBounds.setFromObject(bookGroup, true);
+    if (_bookBounds.isEmpty()) return;
+
+    for (let axis = 0; axis < 3; axis++) {
+      const under = room.min.getComponent(axis) - _bookBounds.min.getComponent(axis);
+      const over = _bookBounds.max.getComponent(axis) - room.max.getComponent(axis);
+      if (under > 0 && over > 0) continue; // bigger than the room this way -- nowhere to put it
+      const shift = under > 0 ? under : (over > 0 ? -over : 0);
+      if (shift !== 0) {
+        bookGroup.position.setComponent(axis, bookGroup.position.getComponent(axis) + shift);
+      }
+    }
+  }
+
   // --- grab / release ---------------------------------------------------
   let grabbed = false;
   const _lastGrabPos = new THREE.Vector3().copy(bookGroup.position);
@@ -356,8 +435,9 @@ export async function createBookPlacement({ bookGroup, getPages, desk }) {
       syncBoards(pages);
 
       if (grabbed) {
-        // The hand is authoritative; the body just tracks it, so whatever
-        // it is pushed into still generates contacts.
+        // The hand is authoritative -- within the room -- and the body just
+        // tracks it, so whatever it is pushed into still generates contacts.
+        keepInsideRoom();
         bookBody.setNextKinematicTranslation({
           x: bookGroup.position.x, y: bookGroup.position.y, z: bookGroup.position.z,
         });

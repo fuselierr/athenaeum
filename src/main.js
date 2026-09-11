@@ -132,6 +132,10 @@ const SILL_ABOVE_DESK = 0.12;
 const CEILING_CLEARANCE = 0.7;
 const MIN_CEILING_HEIGHT = 3;
 
+// The room's inside, floor to ceiling and wall to wall. Filled in by the
+// block below once the walls exist, and handed to the book's physics, which
+// keeps the book within it.
+let roomInterior = null;
 {
   const deskBox = new THREE.Box3().setFromObject(desk.object);
 
@@ -211,6 +215,18 @@ const MIN_CEILING_HEIGHT = 3;
     camera.position.y - 0.4,
     shell.window.centre.z,
   ));
+
+  // The floor's footprint, raised to the ceiling. The floor is a flat plane,
+  // so its box is only as tall as the floor itself; the ceiling's own world
+  // position supplies the height rather than restating addRoom's arithmetic.
+  roomInterior = new THREE.Box3(
+    walkable.min.clone(),
+    new THREE.Vector3(
+      walkable.max.x,
+      shell.ceiling.getWorldPosition(new THREE.Vector3()).y,
+      walkable.max.z,
+    ),
+  );
 }
 
 // After the shelf has been turned and placed: the books measure it in its
@@ -268,7 +284,7 @@ const getPages = () => pages;
 // settles on whichever cover is underneath. bookGroup is its render side --
 // driven by the body when the book is loose, and copied INTO the body while
 // a gesture is holding it (see bookManipulator's `grabbed`).
-const placement = await createBookPlacement({ bookGroup, getPages, desk });
+const placement = await createBookPlacement({ bookGroup, getPages, desk, room: roomInterior });
 
 const content = createBookContent(getPages);
 // Constructed BEFORE dragPageTurn on purpose: both listen for pointerdown
