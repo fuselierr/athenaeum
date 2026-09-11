@@ -82,20 +82,24 @@ function current(id) {
   gap: 3px;
   width: 100%;
   padding: 12px 14px;
-  border: 1px solid #2c3444;
-  border-radius: 8px;
-  background: #161b25;
-  color: #cfd6e4;
+  border: 1px solid var(--ath-line);
+  border-radius: 10px;
+  background: var(--ath-control);
+  color: var(--ath-text-soft);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
-.scene:hover:not(:disabled) { border-color: #46536e; background: #1a2029; }
-.scene.current { border-color: #6f8cff; background: rgba(111, 140, 255, 0.12); }
+.scene:hover:not(:disabled) { border-color: var(--ath-line-strong); background: var(--ath-control-hover); }
+.scene.current {
+  border-color: var(--ath-orange);
+  background: linear-gradient(135deg, rgba(255, 155, 80, 0.20), rgba(166, 107, 255, 0.16));
+}
 .scene:disabled { cursor: default; }
 .scene.busy { opacity: 0.8; }
 
-.scene-name { color: #fff; }
-.scene-note { color: #7f89a0; font-size: 12px; }
-.scene-meta { color: #6f7a8e; font-size: 11px; letter-spacing: 0.04em; }
+.scene-name { color: var(--ath-text); font-family: var(--ath-serif); font-size: 14px; }
+.scene-note { color: var(--ath-text-dim); font-size: 12px; }
+.scene-meta { color: var(--ath-text-faint); font-size: 11px; letter-spacing: 0.04em; }
 </style>

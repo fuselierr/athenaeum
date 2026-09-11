@@ -26,6 +26,7 @@ import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
 import { initBookLoader, openLibraryBook, uploadBook } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
+import './ui/theme.css'; // the interface's colours, for every panel
 import { mountMenu } from './ui/mountMenu.js';
 import { mountAccount } from './ui/mountAccount.js';
 import { bindSettings } from './ui/bindSettings.js';

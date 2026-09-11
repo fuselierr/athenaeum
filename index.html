@@ -6,36 +6,11 @@
     <title>Athenaeum</title>
     <link rel="icon" type="image/png" href="/appicon.png">
     <style>
-        html, body { margin: 0; height: 100%; background: #11141a; overflow: hidden; }
+        /* Only what has to be right before any script runs: the ground the
+           page shows while the room loads. Every panel's look lives in
+           src/ui/theme.css. */
+        html, body { margin: 0; height: 100%; background: #1a0f1d; overflow: hidden; }
         canvas { display: block; }
-
-        #hud {
-            position: fixed; top: 12px; left: 12px; max-width: 340px;
-            color: #cfd6e4; font: 13px/1.5 system-ui, sans-serif;
-            background: rgba(20, 24, 32, 0.6); padding: 10px 14px; border-radius: 8px;
-        }
-        #hud b { color: #fff; }
-        #hud button {
-            margin-top: 8px; padding: 6px 12px; font: 13px/1.4 system-ui, sans-serif; color: #fff;
-            background: #3a4258; border: 1px solid #4d5872; border-radius: 6px; cursor: pointer;
-        }
-        #hud button:hover { background: #4a5470; }
-
-        #spine-rotation-panel {
-            position: fixed; top: 12px; left: 12px; z-index: 2;
-            color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
-            background: rgba(20, 24, 32, 0.75); padding: 8px 10px; border-radius: 8px; display: none;
-        }
-        #spine-rotation-panel input { width: 150px; vertical-align: middle; }
-        #spine-rotation-value { display: inline-block; min-width: 42px; text-align: right; }
-
-        /* Which camera rig has the view; updated by input/cameraModes.js. */
-        #camera-mode {
-            position: fixed; bottom: 12px; left: 12px; z-index: 2;
-            color: #cfd6e4; font: 12px/1.4 system-ui, sans-serif;
-            background: rgba(20, 24, 32, 0.6); padding: 8px 12px; border-radius: 8px;
-            pointer-events: none;
-        }
     </style>
 </head>
 <body>

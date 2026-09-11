@@ -107,8 +107,8 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
   right: 12px;
   /* Above the menu's scrim (10), so it stays usable with the menu open. */
   z-index: 11;
-  font: 13px/1.5 system-ui, sans-serif;
-  color: #cfd6e4;
+  font: var(--ath-font);
+  color: var(--ath-text);
 }
 
 .account-trigger {
@@ -116,18 +116,27 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
   align-items: center;
   gap: 8px;
   height: 34px;
-  padding: 0 14px;
-  background: rgba(20, 24, 32, 0.75);
-  color: #e7ecf5;
-  border: 1px solid #2c3444;
+  padding: 0 16px;
+  /* Glass inside, an orange-to-purple ring outside. The glass layer is
+     clipped to the padding box and the gradient to the border box, so the
+     gradient shows fully only as the border and faintly warms the glass. */
+  border: 1px solid transparent;
   border-radius: 17px;
+  background:
+    linear-gradient(var(--ath-glass-ring), var(--ath-glass-ring)) padding-box,
+    var(--ath-accent-gradient) border-box;
+  backdrop-filter: var(--ath-glass-blur);
+  -webkit-backdrop-filter: var(--ath-glass-blur);
+  box-shadow: 0 6px 20px rgba(20, 4, 18, 0.35);
+  color: var(--ath-text);
   font: inherit;
   cursor: pointer;
-  backdrop-filter: blur(4px);
+  transition: filter 0.12s ease;
 }
-.account-trigger:hover:not(:disabled) { background: rgba(38, 45, 60, 0.9); }
+.account-trigger:hover:not(:disabled) { filter: brightness(1.15); }
 .account-trigger:disabled { opacity: 0.5; cursor: default; }
-.account-trigger.signed-in { padding: 0 12px 0 4px; }
+.account-trigger:focus-visible { outline: none; box-shadow: var(--ath-focus); }
+.account-trigger.signed-in { padding: 0 14px 0 4px; }
 
 .account-avatar {
   width: 26px;
@@ -138,7 +147,7 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
 .account-initial {
   display: grid;
   place-items: center;
-  background: #3d4a63;
+  background: var(--ath-accent-gradient);
   color: #fff;
   font-size: 12px;
   font-weight: 600;
@@ -156,21 +165,26 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
   right: 0;
   width: 260px;
   padding: 14px;
-  background: rgba(18, 21, 28, 0.97);
-  border: 1px solid #2c3444;
-  border-radius: 10px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  background:
+    linear-gradient(160deg, rgba(255, 155, 80, 0.10), rgba(166, 107, 255, 0.08) 70%, transparent),
+    var(--ath-glass-strong);
+  backdrop-filter: var(--ath-glass-blur);
+  -webkit-backdrop-filter: var(--ath-glass-blur);
+  border: 1px solid var(--ath-line);
+  border-radius: 12px;
+  box-shadow: var(--ath-shadow);
 }
 
 .account-heading {
   margin: 0 0 10px;
-  color: #fff;
-  font-weight: 600;
+  color: var(--ath-text);
+  font-family: var(--ath-serif);
+  font-size: 15px;
   overflow-wrap: anywhere;
 }
 .account-note {
   margin: 10px 0 0;
-  color: #7f89a0;
+  color: var(--ath-text-dim);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -183,14 +197,14 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
   width: 100%;
   height: 38px;
   border-radius: 6px;
-  font: 500 13px/1 system-ui, sans-serif;
+  font: 500 13px/1 var(--ath-serif);
   cursor: pointer;
 }
 .account-provider + .account-provider { margin-top: 8px; }
 .account-provider:disabled { opacity: 0.6; cursor: default; }
 
-/* Each in its own brand's colours, which is how both ask for their
-   sign-in buttons to appear. */
+/* Each in its own brand's colours, which is how both ask for their sign-in
+   buttons to appear -- the theme deliberately stops at their edges. */
 .account-google {
   background: #fff;
   color: #1f1f1f;
@@ -209,19 +223,19 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
   width: 100%;
   margin-top: 12px;
   padding: 7px 12px;
-  background: #303a4e;
-  color: #e7ecf5;
-  border: 1px solid #3d4a63;
-  border-radius: 6px;
+  background: var(--ath-control);
+  color: var(--ath-text);
+  border: 1px solid var(--ath-line-strong);
+  border-radius: var(--ath-radius-sm);
   font: inherit;
   cursor: pointer;
 }
-.account-signout:hover:not(:disabled) { background: #3b4761; }
+.account-signout:hover:not(:disabled) { background: var(--ath-control-hover); border-color: var(--ath-orange); }
 .account-signout:disabled { opacity: 0.45; cursor: default; }
 
 .account-error {
   margin: 10px 0 0;
-  color: #ff8a8a;
+  color: var(--ath-danger);
   font-size: 12px;
   overflow-wrap: anywhere;
 }

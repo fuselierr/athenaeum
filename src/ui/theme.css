@@ -1,0 +1,98 @@
+/*
+ * Athenaeum's interface theme: warm, purple and orange, on translucent glass.
+ *
+ * Every panel takes its colours from these variables -- the menu and its
+ * tabs, the account control, the small labels over the room -- so the look
+ * is changed here and nowhere else. Imported once, by src/main.js.
+ *
+ * GLASS. Panels are translucent and blur what is behind them rather than
+ * covering it: the room is the point of the app, and the interface should
+ * sit in front of it, not replace it. The blur is what keeps text readable
+ * over a busy scene; the alpha on the glass decides how much of the room
+ * shows through. If text is ever hard to read against a bright backdrop,
+ * --ath-glass-strong is the dial.
+ *
+ * ACCENTS. Orange is "this one" -- the current tab, chapter, background, a
+ * focused control. Purple is kept for states that are still waiting on
+ * something, like a keybinding listening for its key. The full gradient
+ * between them is used sparingly, so it keeps meaning something.
+ */
+
+:root {
+  /* --- glass ------------------------------------------------------------ */
+  --ath-glass: rgba(44, 20, 48, 0.50);         /* small labels over the room */
+  --ath-glass-strong: rgba(36, 16, 40, 0.68);  /* the menu, the account panel */
+  --ath-glass-ring: rgba(40, 18, 44, 0.80);    /* inside a gradient-ringed pill */
+  --ath-glass-blur: blur(18px) saturate(150%);
+  --ath-scrim: rgba(26, 9, 28, 0.30);          /* behind the open menu -- light, the room stays */
+  --ath-line: rgba(255, 196, 150, 0.16);
+  --ath-line-strong: rgba(255, 176, 120, 0.34);
+  --ath-shadow: 0 24px 60px rgba(20, 4, 18, 0.45);
+
+  /* --- text: cream through dusty rose ------------------------------------ */
+  --ath-text: #f8ece3;
+  --ath-text-soft: #ecd6cf;
+  --ath-text-dim: #d9bccb;
+  --ath-text-faint: #b797aa;
+
+  /* --- accents ----------------------------------------------------------- */
+  --ath-orange: #ff9b50;
+  --ath-orange-soft: #ffb27a;
+  --ath-purple: #a66bff;
+  --ath-accent-gradient: linear-gradient(120deg, #ffa257 0%, #e75a8c 55%, #9d5cff 100%);
+  --ath-danger: #ff8f7a;
+
+  /* --- controls ---------------------------------------------------------- */
+  --ath-control: rgba(255, 236, 222, 0.06);
+  --ath-control-hover: rgba(255, 170, 110, 0.15);
+  --ath-control-active: rgba(166, 107, 255, 0.24);
+  --ath-selected: rgba(255, 155, 80, 0.16);
+  --ath-field: rgba(22, 8, 24, 0.42);          /* inputs and keycaps, a step darker than the glass */
+  --ath-focus: 0 0 0 2px rgba(255, 155, 80, 0.60);
+
+  /* --- shape and type ---------------------------------------------------- */
+  --ath-radius: 16px;
+  --ath-radius-sm: 8px;
+    /* Use the same face as the book covers and folio text throughout the UI. */
+  --ath-serif: Georgia, 'Times New Roman', serif;
+    --ath-font: 13px/1.5 var(--ath-serif);
+}
+
+
+/* --- panels over the room, outside the menu -------------------------------- */
+
+/* Which camera rig has the view; its text is written by input/cameraModes.js. */
+#camera-mode {
+  position: fixed;
+  bottom: 12px;
+  left: 12px;
+  z-index: 2;
+  padding: 8px 12px;
+  color: var(--ath-text-soft);
+  font: 12px/1.4 var(--ath-serif);
+  background: var(--ath-glass);
+  backdrop-filter: var(--ath-glass-blur);
+  -webkit-backdrop-filter: var(--ath-glass-blur);
+  border: 1px solid var(--ath-line);
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+/* The debug spine-rotation slider. Hidden until the debug code shows it. */
+#spine-rotation-panel {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  display: none;
+  padding: 8px 10px;
+  color: var(--ath-text-soft);
+  font: 12px/1.4 var(--ath-serif);
+  background: var(--ath-glass-strong);
+  backdrop-filter: var(--ath-glass-blur);
+  -webkit-backdrop-filter: var(--ath-glass-blur);
+  border: 1px solid var(--ath-line);
+  border-radius: 10px;
+}
+#spine-rotation-panel input { width: 150px; vertical-align: middle; accent-color: var(--ath-orange); }
+#spine-rotation-value { display: inline-block; min-width: 42px; text-align: right; }

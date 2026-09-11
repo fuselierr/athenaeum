@@ -135,7 +135,7 @@ const percent = (v) => `${Math.round(v * 100)}%`;
 .binding-group { margin-bottom: 14px; }
 .binding-group > h4 {
   margin: 12px 0 2px;
-  color: #7f89a0;
+  color: var(--ath-text-dim);
   font-size: 12px;
   font-weight: 500;
 }
@@ -143,18 +143,20 @@ const percent = (v) => `${Math.round(v * 100)}%`;
 .keycap {
   min-width: 96px;
   padding: 5px 10px;
-  border: 1px solid #3d4a63;
+  border: 1px solid var(--ath-line-strong);
   border-bottom-width: 2px;
-  border-radius: 6px;
-  background: #222a38;
-  color: #e7ecf5;
+  border-radius: var(--ath-radius-sm);
+  background: var(--ath-field);
+  color: var(--ath-text);
   font: inherit;
   cursor: pointer;
 }
-.keycap:hover { background: #2b3546; }
+.keycap:hover { background: var(--ath-control-hover); }
+/* Listening for a key: purple, the theme's colour for something that is
+   still waiting to happen. */
 .keycap.listening {
-  border-color: #6f8cff;
-  background: rgba(111, 140, 255, 0.16);
-  color: #cbd6ff;
+  border-color: var(--ath-purple);
+  background: var(--ath-control-active);
+  color: #eadcff;
 }
 </style>

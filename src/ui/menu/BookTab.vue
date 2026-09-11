@@ -132,16 +132,22 @@ function commitScrub() {
   gap: 12px;
   padding: 7px 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--ath-radius-sm);
   background: none;
-  color: #cfd6e4;
+  color: var(--ath-text-soft);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.chapter:hover { background: rgba(255, 255, 255, 0.05); }
-.chapter.current { background: rgba(111, 140, 255, 0.14); color: #fff; }
+.chapter:hover { background: var(--ath-control-hover); color: var(--ath-text); }
+/* The chapter you are in: an orange edge, like a ribbon marker. */
+.chapter.current {
+  background: var(--ath-selected);
+  color: var(--ath-text);
+  box-shadow: inset 2px 0 0 var(--ath-orange);
+}
 
 .chapter-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chapter-page { color: #6f7a8e; font-variant-numeric: tabular-nums; }
+.chapter-page { color: var(--ath-text-faint); font-variant-numeric: tabular-nums; }
+.chapter.current .chapter-page { color: var(--ath-orange-soft); }
 </style>
