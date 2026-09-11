@@ -62,6 +62,7 @@ Every key below can be rebound in **Settings → Controls**.
 | `Shift` + drag | Slide the book across the desk, along the camera's view plane |
 | `F` | Flip the book over |
 | `R` | Reset the book to the desk |
+| `H` | Hide or show the walls and ceiling |
 | `M` | Mute |
 
 ## Status

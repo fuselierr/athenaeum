@@ -195,6 +195,23 @@ export function addRoom(scene, floor, {
     ceiling,
     light,
     window: { side: chosen, ...opening, width: windowWidth, centre: windowCentre },
+
+    /**
+     * Show or hide the walls and ceiling -- and the window, which is built
+     * into its wall and goes with it. The floor is not part of this and
+     * stays.
+     *
+     * Mesh by mesh rather than hiding `group`: the window's daylight lives in
+     * the same group, and hiding a light's parent switches the light off, so
+     * the room would go dark at exactly the moment it was opened up.
+     *
+     * Only what is DRAWN changes. The book's physics still stops at the
+     * walls (book/placement/bookPlacement.js), and so does walking.
+     */
+    setWallsVisible(visible) {
+      for (const wall of Object.values(walls)) wall.visible = visible;
+      ceiling.visible = visible;
+    },
   };
 }
 

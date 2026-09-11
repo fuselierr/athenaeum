@@ -6,6 +6,7 @@ import { loadBookshelf } from './scene/bookshelf.js';
 import { addFloor } from './scene/floor.js';
 import { addRoom, WINDOW_SILL_PROJECTION } from './scene/room.js';
 import { populateShelf } from './scene/shelfBooks.js';
+import { addInstructionCard } from './scene/instructionCard.js';
 import { PageSimulation } from './book/pageSim/PageSimulation.js';
 import { createBookPlacement } from './book/placement/bookPlacement.js';
 import {
@@ -33,6 +34,7 @@ import { mountAccount } from './ui/mountAccount.js';
 import { bindSettings } from './ui/bindSettings.js';
 import { book as bookState } from './state/book.js';
 import { matches } from './state/keybindings.js';
+import { settings } from './state/settings.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
 // tuned around; a loaded PDF's aspect ratio derives HINGE_LEN from this
@@ -68,6 +70,9 @@ const cameraModes = createCameraModes({
   // second listener would never hear one. `shelfBooks` is still loading at
   // this point, hence reading it through the closure.
   onClick: (event) => {
+    // The instruction card first: while it is held up, any click is how it
+    // goes back, and must not also take a book or set one down.
+    if (instructionCard?.handleClick(event)) return;
     if (shelfBooks?.handleClick(event)) return;
     putBookDown(event); // a click past the shelf, holding a book
   },
@@ -136,8 +141,15 @@ const MIN_CEILING_HEIGHT = 3;
 // block below once the walls exist, and handed to the book's physics, which
 // keeps the book within it.
 let roomInterior = null;
+// The framed instructions on the desk. Set in the block below, once the desk
+// has been measured; clicks and Escape reach it through here.
+let instructionCard = null;
 {
   const deskBox = new THREE.Box3().setFromObject(desk.object);
+
+  // How to use the room, framed on the desk's back-right corner, against the
+  // window wall.
+  instructionCard = addInstructionCard(scene, { deskBox, renderer, camera });
 
   // BEHIND IS -X. desk.js rotates the desk by PI/2, so the desk's depth
   // runs along X rather than Z, and the far side from the viewer is its
@@ -202,6 +214,9 @@ let roomInterior = null;
     // whatever the model says it is rather than a number written down.
     sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK,
   });
+  // The walls-and-ceiling setting (the key, or Settings -> View) reaches the
+  // room from here on.
+  scenery.bindRoom(shell);
 
   // Start on your feet in the middle of the room, facing the window. Walk is
   // the default mode, and this is the first moment it can begin: there is a
@@ -557,6 +572,9 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (matches('book.reset', e)) resetBook();
+  // A setting rather than a flag of its own, so Settings shows the same
+  // state and the choice is remembered. See bindSettings' bindRoom.
+  if (matches('room.walls', e) && !e.repeat) settings.graphics.walls = !settings.graphics.walls;
   if (matches('book.flip', e)) { pages.toggleFlip(); refreshFlipLabel(); }
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault();
@@ -586,6 +604,11 @@ mountMenu({
   // Escape, innermost meaning first: a book in the hand goes back before
   // the menu will open. Returning true means the press was spent.
   escape: () => {
+    // The card held up in front of you goes back before a book in your hand.
+    if (instructionCard?.held) {
+      instructionCard.release();
+      return true;
+    }
     if (!shelfBooks?.held) return false;
     shelfBooks.release();
     return true;
@@ -639,6 +662,7 @@ renderer.setAnimationLoop(() => {
   // After the camera has finished moving for the frame: a book in hand is
   // posed from it, and stepping first would leave it a frame behind.
   shelfBooks?.update(dt);
+  instructionCard?.update(dt); // also posed from the camera, so also after it has moved
   renderer.render(scene, camera);
   debugLabels.update();
   anglePanel.update();

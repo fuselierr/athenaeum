@@ -57,5 +57,17 @@ export function bindSettings({ audio, camera, renderer, scene, environment }) {
     settings.scene.background = background.id;
   }
 
-  return { setBackground, initialBackground: settings.scene.background ?? DEFAULT_BACKGROUND };
+  // --- the room's walls ----------------------------------------------------
+  // The room is built after the settings are bound (it needs the furniture
+  // measured first), so it is handed over here once it exists rather than
+  // being one of the parts passed in above.
+  function bindRoom(room) {
+    watch(() => settings.graphics.walls, (on) => room.setWallsVisible(on), { immediate: true });
+  }
+
+  return {
+    setBackground,
+    bindRoom,
+    initialBackground: settings.scene.background ?? DEFAULT_BACKGROUND,
+  };
 }

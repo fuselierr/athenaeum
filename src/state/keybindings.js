@@ -38,6 +38,7 @@ function normalise(code) {
 export const ACTIONS = [
   { id: 'menu.toggle', group: 'General', label: 'Open / close menu', default: 'Escape' },
   { id: 'audio.mute', group: 'General', label: 'Mute', default: 'KeyM' },
+  { id: 'room.walls', group: 'General', label: 'Show / hide walls and ceiling', default: 'KeyH' },
 
   { id: 'camera.orbit', group: 'Camera', label: 'Orbit view', default: 'Digit1' },
   { id: 'camera.walk', group: 'Camera', label: 'Walk (first person)', default: 'Digit2' },

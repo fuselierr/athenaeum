@@ -100,6 +100,14 @@ const percent = (v) => `${Math.round(v * 100)}%`;
       <span class="label">Shadows</span>
       <input type="checkbox" v-model="settings.graphics.shadows">
     </div>
+    <div class="menu-row">
+      <span class="label">Walls and ceiling</span>
+      <span class="value">{{ label(keys['room.walls']) }}</span>
+      <button class="menu-button" type="button"
+              @click="settings.graphics.walls = !settings.graphics.walls">
+        {{ settings.graphics.walls ? 'Hide' : 'Show' }}
+      </button>
+    </div>
   </section>
 
   <section class="menu-section">
