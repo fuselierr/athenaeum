@@ -28,6 +28,14 @@ const WALL_COLOR = 0x5b5249;
 const CEILING_COLOR = 0x6a6159;
 const FRAME_COLOR = 0xcfc7b8; // painted, so the sky behind it reads as bright
 const GLASS_COLOR = 0xdfeaf5;
+const DOOR_COLOR = 0x5a3d28;
+const KNOB_COLOR = 0xb8955a;
+
+// The door, in metres.
+const DOOR_WIDTH = 1.2;
+const DOOR_HEIGHT = 2.45;
+const DOOR_THICKNESS = 0.045;
+const DOOR_CASING_DEPTH = 0.03; // how far its casing stands proud of the wall
 
 // Window proportions, in metres. The opening is centred on whatever the
 // caller passes as `focus` -- the desk -- so it lines up with it rather
@@ -71,13 +79,19 @@ const WINDOW_LIGHT_COLOR = 0xfff1d8;
  * @param {string} [opts.windowSide]  which wall it is cut into: '+x', '-x',
  *   '+z' or '-z'. The scene puts it at '+x': the bookshelf stands at -X, so
  *   that is the wall opposite it, and the one the desk is pushed against.
- * @returns {{ group: THREE.Group, window: object, light: THREE.DirectionalLight|null }}
+ * @param {{ side: string, along: number }|null} [opts.door]  a door, cut into
+ *   wall `side` and centred on the WORLD coordinate `along` that wall (x for
+ *   the ±z walls, z for the ±x ones), kept clear of the corners. Not in the
+ *   window's wall: the two are not checked against each other.
+ * @returns {{ group: THREE.Group, window: object, door: THREE.Group|null,
+ *   light: THREE.DirectionalLight|null }}
  */
 export function addRoom(scene, floor, {
   height = 3,
   focus = new THREE.Vector3(),
   windowSide = '+z',
   sill = SILL_HEIGHT,
+  door = null,
 } = {}) {
   floor.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(floor);
@@ -139,11 +153,31 @@ export function addRoom(scene, floor, {
     chosenPlan.axis === 'z' ? along : chosenPlan.at[1],
   );
 
+  // --- the door's opening, the same way ---------------------------------
+  const doorSide = door && plans[door.side] ? door.side : null;
+  let doorOpening = null;
+  if (doorSide) {
+    const plan = plans[doorSide];
+    const centre = plan.axis === 'x' ? middle.x : middle.z;
+    const reach = Math.max(0, plan.span / 2 - DOOR_WIDTH / 2 - FRAME_WIDTH - 0.1);
+    const at = THREE.MathUtils.clamp(plan.sign * (door.along - centre), -reach, reach);
+    doorOpening = {
+      left: at - DOOR_WIDTH / 2,
+      right: at + DOOR_WIDTH / 2,
+      head: Math.min(DOOR_HEIGHT, height - FRAME_WIDTH - 0.1),
+    };
+  }
+
   // --- the walls ---------------------------------------------------------
   const walls = {};
   for (const [id, plan] of Object.entries(plans)) {
     const mesh = new THREE.Mesh(
-      wallGeometry(plan.span, height, id === chosen ? opening : null),
+      wallGeometry(
+        plan.span,
+        height,
+        id === chosen ? opening : null,
+        id === doorSide ? doorOpening : null,
+      ),
       wallMaterial,
     );
     mesh.name = `wall${id}`;
@@ -179,6 +213,11 @@ export function addRoom(scene, floor, {
   const frame = buildWindowFrame(opening);
   walls[chosen].add(frame);
 
+  // The door, likewise a child of its wall -- so it goes with the wall when
+  // the walls are hidden.
+  const doorGroup = doorSide ? buildDoor(doorOpening) : null;
+  if (doorGroup) walls[doorSide].add(doorGroup);
+
   // Before anything asks a wall where it is in the world: three.js only
   // composes matrices during render, so until this runs every wall still
   // reports itself as sitting at the origin, unrotated -- and the window's
@@ -195,6 +234,7 @@ export function addRoom(scene, floor, {
     ceiling,
     light,
     window: { side: chosen, ...opening, width: windowWidth, centre: windowCentre },
+    door: doorGroup,
 
     /**
      * Show or hide the walls and ceiling -- and the window, which is built
@@ -219,11 +259,20 @@ export function addRoom(scene, floor, {
  * A wall as a flat shape, with the window cut out of it as a hole rather
  * than assembled from four pieces around a gap -- one surface means one
  * plane, and no seam to catch the light along the head of the opening.
+ *
+ * A door is not a hole: it reaches the floor, and a hole touching the
+ * outline does not triangulate. It is a notch in the outline instead.
  */
-function wallGeometry(span, height, opening) {
+function wallGeometry(span, height, opening, door = null) {
   const half = span / 2;
   const shape = new THREE.Shape();
   shape.moveTo(-half, 0);
+  if (door) {
+    shape.lineTo(door.left, 0);
+    shape.lineTo(door.left, door.head);
+    shape.lineTo(door.right, door.head);
+    shape.lineTo(door.right, 0);
+  }
   shape.lineTo(half, 0);
   shape.lineTo(half, height);
   shape.lineTo(-half, height);
@@ -308,6 +357,50 @@ function buildWindowFrame(opening) {
   glass.castShadow = false;
   glass.receiveShadow = false;
   group.add(glass);
+
+  return group;
+}
+
+/** A plain door, its casing and a knob, in wall-local space. */
+function buildDoor(opening) {
+  const group = new THREE.Group();
+  group.name = 'door';
+
+  const width = opening.right - opening.left;
+  const centreX = (opening.left + opening.right) / 2;
+
+  const casing = new THREE.MeshStandardMaterial({
+    color: FRAME_COLOR, roughness: 0.55, metalness: 0.02,
+  });
+  function piece(w, h, d, x, y, z, material, name) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+    mesh.name = name;
+    mesh.position.set(x, y, z);
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+    return mesh;
+  }
+
+  // Sitting in the opening, face flush-ish with the wall.
+  piece(width, opening.head, DOOR_THICKNESS, centreX, opening.head / 2, -DOOR_THICKNESS / 2 + 0.01,
+    new THREE.MeshStandardMaterial({ color: DOOR_COLOR, roughness: 0.7, metalness: 0 }), 'slab');
+
+  const outerHalf = width / 2 + FRAME_WIDTH / 2;
+  piece(width + FRAME_WIDTH * 2, FRAME_WIDTH, DOOR_CASING_DEPTH,
+    centreX, opening.head + FRAME_WIDTH / 2, DOOR_CASING_DEPTH / 2, casing, 'head');
+  piece(FRAME_WIDTH, opening.head, DOOR_CASING_DEPTH,
+    centreX - outerHalf, opening.head / 2, DOOR_CASING_DEPTH / 2, casing, 'jambLeft');
+  piece(FRAME_WIDTH, opening.head, DOOR_CASING_DEPTH,
+    centreX + outerHalf, opening.head / 2, DOOR_CASING_DEPTH / 2, casing, 'jambRight');
+
+  const knob = new THREE.Mesh(
+    new THREE.SphereGeometry(0.03, 16, 12),
+    new THREE.MeshStandardMaterial({ color: KNOB_COLOR, roughness: 0.3, metalness: 0.8 }),
+  );
+  knob.name = 'knob';
+  knob.position.set(opening.right - 0.08, 1.0, 0.04);
+  group.add(knob);
 
   return group;
 }

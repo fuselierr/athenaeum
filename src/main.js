@@ -7,6 +7,7 @@ import { addFloor } from './scene/floor.js';
 import { addRoom, WINDOW_SILL_PROJECTION } from './scene/room.js';
 import { populateShelf } from './scene/shelfBooks.js';
 import { addInstructionCard } from './scene/instructionCard.js';
+import { createOutside } from './scene/outside.js';
 import { PageSimulation } from './book/pageSim/PageSimulation.js';
 import { createBookPlacement } from './book/placement/bookPlacement.js';
 import {
@@ -74,6 +75,7 @@ const cameraModes = createCameraModes({
     // The instruction card first: while it is held up, any click is how it
     // goes back, and must not also take a book or set one down.
     if (instructionCard?.handleClick(event)) return;
+    if (outside?.handleClick(event)) return; // the door
     // The book before the shelf: the shelf tests only its own books and
     // ignores what is in front of them, so a click on the book in your hand
     // would otherwise take down whichever shelf book is behind it.
@@ -153,6 +155,9 @@ let roomInterior = null;
 // The framed instructions on the desk. Set in the block below, once the desk
 // has been measured; clicks and Escape reach it through here.
 let instructionCard = null;
+// The door out, and what is beyond it (scene/outside.js). Set in the block
+// below, once the room exists.
+let outside = null;
 {
   const deskBox = new THREE.Box3().setFromObject(desk.object);
 
@@ -222,7 +227,11 @@ let instructionCard = null;
     // origin here, and the furniture is scaled, so the drop to the floor is
     // whatever the model says it is rather than a number written down.
     sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK,
+    // To the right of the desk as you sit at it, facing the window: the +Z
+    // wall, level with the desk.
+    door: { side: '+z', along: (deskBox.min.x + deskBox.max.x) / 2 },
   });
+  outside = createOutside({ scene, camera, renderer, room: shell, floor });
   // The walls-and-ceiling setting (the key, or Settings -> View) reaches the
   // room from here on.
   scenery.bindRoom(shell);
