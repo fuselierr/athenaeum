@@ -27,6 +27,7 @@ import { createAnglePanel } from './debug/anglePanel.js';
 import { initBookLoader, openLibraryBook, uploadBook } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
 import './ui/theme.css'; // the interface's colours, for every panel
+import { loadingScreen } from './ui/loadingScreen.js';
 import { mountMenu } from './ui/mountMenu.js';
 import { mountAccount } from './ui/mountAccount.js';
 import { bindSettings } from './ui/bindSettings.js';
@@ -38,6 +39,7 @@ import { matches } from './state/keybindings.js';
 // rather than rescaling the whole book.
 const BASE_PANEL_REACH = INITIAL_PANEL_REACH;
 
+loadingScreen.status('Lighting the room…');
 const { scene, camera, renderer, controls, environment } = await createScene();
 const audio = createAudioManager();
 
@@ -89,6 +91,7 @@ scene.add(bookGroup);
 // rests on, so they stay put in world space when the book itself is moved.
 // Loaded alongside the page simulation since none of the three waits on
 // the others.
+loadingScreen.status('Arranging the furniture…');
 const [pagesInstance, desk, , bookshelf] = await Promise.all([
   PageSimulation.create(bookGroup),
   loadDesk(scene),
@@ -199,9 +202,25 @@ const MIN_CEILING_HEIGHT = 3;
 // Assigned when the models finish loading; the render loop skips it until
 // then rather than blocking the whole scene on scenery.
 let shelfBooks = null;
+
+// The loading screen stays up until the shelf is filled -- but never lifts
+// before the room has drawn at least once, or it would fade onto a blank
+// canvas for however long the rest of startup takes. Resolved by the render
+// loop's first frame.
+let markFirstFrame;
+const firstFrame = new Promise((resolve) => { markFirstFrame = resolve; });
+let libraryAnswered = true;
+
 populateShelf(bookshelf, {
   camera,
   renderer,
+  onProgress: ({ stage, done, total }) => {
+    if (stage === 'fetching') loadingScreen.status('Fetching your library…');
+    if (stage === 'unavailable') libraryAnswered = false;
+    if (stage === 'shelving' && total > 0) {
+      loadingScreen.status(`Shelving books… ${done} of ${total}`, done / total);
+    }
+  },
   // Taking a book off the shelf is what opens it. The conversion is fired
   // and forgotten: `openSequence` inside is what makes a book that was put
   // back mid-render simply never arrive.
@@ -211,7 +230,18 @@ populateShelf(bookshelf, {
   },
 })
   .then((result) => { shelfBooks = result; })
-  .catch((err) => console.error('Shelf books failed to load:', err));
+  .catch((err) => {
+    console.error('Shelf books failed to load:', err);
+    libraryAnswered = false;
+  })
+  .then(() => firstFrame)
+  .then(() => {
+    if (libraryAnswered) loadingScreen.finish();
+    else loadingScreen.fail('The library isn’t answering, so the shelf is empty for now.');
+  });
+// The room is standing from here on; only the shelf is still to come, and a
+// server that is slow to wake should not keep anyone at the door.
+loadingScreen.allowSkip(8000);
 
 // Reassigned by applyPdfDimensions below, so everything downstream takes a
 // `getPages` closure rather than capturing the instance.
@@ -536,6 +566,10 @@ mountAccount();
 // --- render loop ---
 let lastFrameTime = performance.now();
 renderer.setAnimationLoop(() => {
+  if (markFirstFrame) {
+    markFirstFrame();
+    markFirstFrame = null;
+  }
   const now = performance.now();
   const dt = Math.min((now - lastFrameTime) / 1000, 1 / 30);
   lastFrameTime = now;

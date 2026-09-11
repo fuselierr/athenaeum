@@ -171,18 +171,19 @@ function thicknessForPages(pages) {
 /**
  * The converted books the server is holding.
  *
- * Returns an empty list rather than throwing when there is no server: the
- * shelf is scenery, and running the front end on its own should give an
- * empty shelf, not a broken scene.
+ * Never throws: the shelf is scenery, and running the front end on its own
+ * should give an empty shelf, not a broken scene. But "the server did not
+ * answer" (null) and "the server has no books" ([]) are kept apart, because
+ * only the first is worth telling the reader about.
  */
 async function fetchLibrary() {
   try {
     const response = await fetch(api('/api/library'));
-    if (!response.ok) return [];
+    if (!response.ok) return null;
     const books = await response.json();
     return Array.isArray(books) ? books : [];
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -208,8 +209,17 @@ function jitter(i, salt) {
  */
 export async function populateShelf(bookshelf, {
   limit = Infinity, camera, renderer, onTake,
+  // onProgress({ stage }) -- 'fetching', then 'unavailable' if the server did
+  // not answer, then 'shelving' with { done, total } as each book is placed.
+  // For the loading screen; the shelf works the same without it.
+  onProgress,
 } = {}) {
-  const library = await fetchLibrary();
+  onProgress?.({ stage: 'fetching' });
+  const fetched = await fetchLibrary();
+  if (fetched === null) onProgress?.({ stage: 'unavailable' });
+  const library = fetched ?? [];
+  const total = Math.min(library.length, limit);
+  onProgress?.({ stage: 'shelving', done: 0, total });
   const scale = bookshelf.scale.x || 1;
   bookshelf.updateMatrixWorld(true);
 
@@ -366,6 +376,7 @@ export async function populateShelf(bookshelf, {
     });
 
     cursor += step * (thickness + GAP);
+    onProgress?.({ stage: 'shelving', done: i + 1, total });
   }
 
   // --- hover pull-out ----------------------------------------------------

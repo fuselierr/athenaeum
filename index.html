@@ -11,9 +11,86 @@
            src/ui/theme.css. */
         html, body { margin: 0; height: 100%; background: #1a0f1d; overflow: hidden; }
         canvas { display: block; }
+
+        /* --- the loading screen ---------------------------------------------
+           Here rather than in theme.css because it has to be on screen before
+           any script -- theme.css included -- has loaded. The colours repeat
+           theme.css's by value for the same reason; keep the two in step.
+           Moved along by src/ui/loadingScreen.js. */
+        #loading {
+            position: fixed; inset: 0; z-index: 100;
+            display: grid; place-items: center;
+            background:
+                radial-gradient(120% 90% at 25% 15%, rgba(255, 155, 80, 0.16), transparent 60%),
+                radial-gradient(110% 90% at 85% 95%, rgba(166, 107, 255, 0.20), transparent 60%),
+                #1a0f1d;
+            color: #f8ece3;
+            font: 14px/1.5 Georgia, 'Times New Roman', serif;
+            transition: opacity 0.5s ease, visibility 0.5s ease;
+        }
+        #loading.done { opacity: 0; visibility: hidden; pointer-events: none; }
+
+        .loading-card {
+            display: grid; justify-items: center; gap: 14px;
+            width: min(320px, 80vw); text-align: center;
+        }
+        .loading-icon {
+            width: 72px; height: 72px; border-radius: 18px;
+            box-shadow: 0 12px 40px rgba(20, 4, 18, 0.5);
+        }
+        .loading-title { margin: 0; font-size: 28px; font-weight: 400; letter-spacing: 0.08em; }
+        .loading-status { margin: 0; min-height: 1.5em; color: #d9bccb; font-size: 13px; }
+
+        .loading-bar {
+            position: relative; width: 100%; height: 3px; border-radius: 3px;
+            background: rgba(255, 236, 222, 0.12); overflow: hidden;
+        }
+        .loading-fill {
+            position: absolute; top: 0; bottom: 0; left: 0; width: 0;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #ffa257, #e75a8c 55%, #9d5cff);
+            transition: width 0.3s ease;
+        }
+        /* Nothing to count yet: a band sweeps across instead of a bar filling. */
+        .loading-bar.indeterminate .loading-fill {
+            width: 35%;
+            animation: loading-sweep 1.3s ease-in-out infinite;
+        }
+        .loading-bar.failed .loading-fill { background: #ff8f7a; }
+        @keyframes loading-sweep {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(290%); }
+        }
+
+        .loading-skip {
+            margin-top: 6px; padding: 7px 16px;
+            background: rgba(255, 236, 222, 0.06); color: #f8ece3;
+            border: 1px solid rgba(255, 176, 120, 0.34); border-radius: 17px;
+            font: 13px/1.4 Georgia, 'Times New Roman', serif; cursor: pointer;
+        }
+        .loading-skip:hover { background: rgba(255, 170, 110, 0.15); border-color: #ff9b50; }
+        .loading-skip:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(255, 155, 80, 0.6); }
+
+        @media (prefers-reduced-motion: reduce) {
+            #loading { transition: none; }
+            .loading-fill { transition: none; }
+            .loading-bar.indeterminate .loading-fill { animation: none; width: 100%; opacity: 0.45; }
+        }
     </style>
 </head>
 <body>
+
+    <!-- Covers the page from the first paint until the room is built and the
+         shelf has its books. See the styles above and src/ui/loadingScreen.js. -->
+    <div id="loading" aria-busy="true">
+        <div class="loading-card">
+            <img class="loading-icon" src="/appicon.png" alt="">
+            <h1 class="loading-title">Athenaeum</h1>
+            <p class="loading-status" role="status" aria-live="polite">Opening the doors…</p>
+            <div class="loading-bar indeterminate"><div class="loading-fill"></div></div>
+            <button class="loading-skip" type="button" hidden>Enter without waiting</button>
+        </div>
+    </div>
 
     <div id="spine-rotation-panel">
         <label for="spine-rotation">Spine rotation <span id="spine-rotation-value"></span></label>
