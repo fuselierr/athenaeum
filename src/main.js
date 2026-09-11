@@ -43,10 +43,12 @@ loadingScreen.status('Lighting the room…');
 const { scene, camera, renderer, controls, environment } = await createScene();
 const audio = createAudioManager();
 
-// Camera rig first, before anything else claims the canvas: the look
-// modes have to see a pointerdown ahead of dragCover / dragPageTurn /
-// bookManipulator to be able to swallow it, and capture-phase listeners
-// on one element run in registration order.
+// Camera rig first, before anything else listens on the canvas. It does not
+// swallow presses: the book's own handlers get first claim, and a drag only
+// looks around if none of them took it (see cameraModes.js). It still has to
+// be first in line, because it switches OrbitControls off outside orbit
+// mode before any press is handled, and capture-phase listeners on one
+// element run in registration order.
 const cameraPan = createCameraPan({ camera, controls });
 // Settings reach the room through exactly one file, and the backdrop is
 // loaded here rather than inside createScene: it is a SETTING now, so the
@@ -180,13 +182,14 @@ const MIN_CEILING_HEIGHT = 3;
   const floor = addFloor(scene, footprint, { margin: 0 });
   // The floor IS the walkable area, so the first-person mode takes its
   // bounds from the mesh rather than recomputing them.
-  cameraModes.setRoom(new THREE.Box3().setFromObject(floor));
+  const walkable = new THREE.Box3().setFromObject(floor);
+  cameraModes.setRoom(walkable);
 
   // Walls and ceiling on that same footprint. The window goes in the wall
   // opposite the bookshelf -- the shelf stands at -X (see above), so the
   // wall the desk is pushed up against is +X, and the window is then
   // directly in front of anyone sitting at it.
-  addRoom(scene, floor, {
+  const shell = addRoom(scene, floor, {
     height: Math.max(MIN_CEILING_HEIGHT, room.max.y - room.min.y + CEILING_CLEARANCE),
     focus: deskBox.getCenter(new THREE.Vector3()),
     windowSide: '+x',
@@ -195,6 +198,19 @@ const MIN_CEILING_HEIGHT = 3;
     // whatever the model says it is rather than a number written down.
     sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK,
   });
+
+  // Start on your feet in the middle of the room, facing the window. Walk is
+  // the default mode, and this is the first moment it can begin: there is a
+  // floor to stand on and a window to face. Aim slightly below eye level so
+  // the desk remains present in the opening view.
+  const roomMiddle = walkable.getCenter(new THREE.Vector3());
+  cameraModes.setMode(CAMERA_MODE.WALK);
+  cameraModes.standAt(roomMiddle.x, roomMiddle.z);
+  cameraModes.lookAt(new THREE.Vector3(
+    shell.window.centre.x,
+    camera.position.y - 0.4,
+    shell.window.centre.z,
+  ));
 }
 
 // After the shelf has been turned and placed: the books measure it in its

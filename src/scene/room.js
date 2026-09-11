@@ -128,6 +128,17 @@ export function addRoom(scene, floor, {
     head,
   };
 
+  // The middle of the glass, in WORLD space, for anything outside this file
+  // that wants to look out of it. `opening` above is in the wall's own
+  // coordinates; undoing the offset's sign gives back the world position
+  // along the wall, and the plan's `at` supplies the wall's other one.
+  const along = wallCentre + chosenPlan.sign * offset;
+  const windowCentre = new THREE.Vector3(
+    chosenPlan.axis === 'x' ? along : chosenPlan.at[0],
+    floorY + (sill + head) / 2,
+    chosenPlan.axis === 'z' ? along : chosenPlan.at[1],
+  );
+
   // --- the walls ---------------------------------------------------------
   const walls = {};
   for (const [id, plan] of Object.entries(plans)) {
@@ -183,7 +194,7 @@ export function addRoom(scene, floor, {
     walls,
     ceiling,
     light,
-    window: { side: chosen, ...opening, width: windowWidth },
+    window: { side: chosen, ...opening, width: windowWidth, centre: windowCentre },
   };
 }
 

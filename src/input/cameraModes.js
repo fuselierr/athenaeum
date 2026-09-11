@@ -7,8 +7,8 @@ import { settings } from '../state/settings.js';
  *
  *   1  ORBIT  the original rig -- OrbitControls with WASD panning. A table
  *             view: you circle the book rather than standing anywhere.
- *   2  WALK   first person. WASD walks across the floor at eye height,
- *             dragging looks around.
+ *   2  WALK   first person, and the mode the app starts in. WASD walks
+ *             across the floor at eye height, dragging looks around.
  *   3  LOOK   parked in the middle of the room. Dragging looks around, the
  *             wheel zooms in on whatever caught your eye.
  *
@@ -19,6 +19,12 @@ import { settings } from '../state/settings.js';
  * target together. Both are therefore driven from here: update() ticks the
  * pan only in ORBIT, and main.js ticks OrbitControls only while `mode` is
  * ORBIT.
+ *
+ * THE BOOK COMES FIRST. In walk and look modes a drag looks around -- but
+ * only a drag the book did not want. Pressing a cover, a page, or the pile
+ * of pages waiting to be lifted still does what it does in orbit mode, and
+ * only a press that lands on nothing of the book's turns into looking.
+ * See the pointerdown listeners below.
  *
  * HANDING BACK TO ORBIT. The look modes keep controls.target a fixed
  * distance out along the view direction, so switching to 1 pivots around
@@ -87,6 +93,9 @@ export function createCameraModes({
   // never back past -- a setting now, so read rather than captured.
   const baseFov = () => settings.camera.fov;
 
+  // Constructed in orbit even though walk is the default: walking needs the
+  // room's floor, which does not exist yet. main.js switches to WALK as soon
+  // as setRoom() has been given it.
   let mode = CAMERA_MODE.ORBIT;
   let yaw = 0;
   let pitch = 0;
@@ -182,23 +191,45 @@ export function createCameraModes({
   let pressY = 0;
   let pressMoved = false;
 
+  // Registered before anything else on the canvas (see main.js), and it
+  // claims nothing -- it only makes sure OrbitControls is OFF outside orbit
+  // mode before any press is handled. The book's drag handlers switch
+  // OrbitControls off while they hold a press and back ON when they let
+  // go, which is right in orbit mode and wrong in these: left on, the next
+  // press would orbit the camera out from under the look rig.
+  dom.addEventListener('pointerdown', () => {
+    if (mode !== CAMERA_MODE.ORBIT) controls.enabled = false;
+  }, { capture: true });
+
+  // THE BOOK GOES FIRST. A press is only this rig's if nothing on the book
+  // wanted it, so this listens in the BUBBLE phase, after every capture
+  // listener on the canvas has had its turn, instead of grabbing the press
+  // up front. The book's handlers mark a press as theirs with
+  // preventDefault(): dragCover (a board, or a spread waiting to be lifted)
+  // and dragPageTurn (a page) both do, and bookManipulator's shift-drag
+  // slide stops the press before it ever reaches the canvas.
+  //
+  // The same test decides clicks. A press the book took is a drag of the
+  // book, not a click on whatever is behind it -- otherwise pressing a page
+  // would also count as clicking the desk underneath, and set the book down.
   dom.addEventListener('pointerdown', (e) => {
+    if (e.defaultPrevented) return;
+
     pressId = e.pointerId;
     pressX = e.clientX;
     pressY = e.clientY;
     pressMoved = false;
 
-    if (mode === CAMERA_MODE.ORBIT) return;
+    // The primary button only: right-drag is bookManipulator's turn-the-
+    // book gesture, and should not also swing the view round.
+    if (mode === CAMERA_MODE.ORBIT || e.button !== 0) return;
     looking = e.pointerId;
     lastX = e.clientX;
     lastY = e.clientY;
+    // Captured, so a look that runs off the canvas keeps steering.
     dom.setPointerCapture(e.pointerId);
-    // stopImmediatePropagation, not stopPropagation: the book's own drag
-    // handlers are on THIS element too, and only the immediate form stops
-    // listeners that share a node.
     e.preventDefault();
-    e.stopImmediatePropagation();
-  }, { capture: true });
+  });
 
   // On window rather than the canvas so a drag that runs off the edge of the
   // viewport keeps steering until the button comes back up.
@@ -277,6 +308,32 @@ export function createCameraModes({
     setMode,
 
     /**
+     * Turn to face a world point without moving. Only in the two first-
+     * person modes, where yaw and pitch own the view; in orbit the view is
+     * wherever OrbitControls' target is, so this leaves it alone.
+     */
+    lookAt(point) {
+      if (mode === CAMERA_MODE.ORBIT) return;
+      camera.lookAt(point);
+      readLookFromCamera();
+      applyLook();
+    },
+
+    /**
+     * Stand on a spot on the floor, at eye height, still facing the same
+     * way. Walk mode only: look mode has its one fixed spot in the middle of
+     * the room, and orbit does not stand anywhere.
+     */
+    standAt(x, z) {
+      if (mode !== CAMERA_MODE.WALK) return;
+      camera.position.x = x;
+      camera.position.z = z;
+      velocity.set(0, 0, 0);
+      clampToFloor();
+      applyLook();
+    },
+
+    /**
      * The walkable slab. Pass the floor mesh's world bounds: its min.y is the
      * ground the camera stands on and its footprint is exactly how far you
      * can walk, so nothing here has to restate scene/floor.js's margin.
@@ -291,6 +348,11 @@ export function createCameraModes({
         cameraPan.update(dt);
         return;
       }
+      // Every frame as well as on each press: a book drag that ends
+      // re-enables OrbitControls, and the wheel and keys reach it without
+      // any press at all. Outside orbit mode it stays off, whatever a drag
+      // handler last did to it.
+      controls.enabled = false;
       if (mode !== CAMERA_MODE.WALK) return;
 
       // Heading only -- looking down at the floor should not walk you into
