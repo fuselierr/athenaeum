@@ -14,8 +14,16 @@
 
 // `typeof` rather than a bare read, as in auth/session.js: a build that did
 // not define it just talks to its own origin instead of throwing on load.
-const BASE = (typeof __ATHENAEUM_API_URL__ === 'string' ? __ATHENAEUM_API_URL__ : '')
+const CONFIGURED = (typeof __ATHENAEUM_API_URL__ === 'string' ? __ATHENAEUM_API_URL__ : '')
+  .trim()
   .replace(/\/+$/, ''); // "https://host/" and "https://host" mean the same server
+
+// A bare "host.up.railway.app", with no scheme, is not an address to fetch():
+// it is a relative path, resolved against the SITE, and every request would
+// quietly go to the site instead and come back 404. Taken as https.
+const BASE = CONFIGURED && !/^[a-z][a-z\d+.-]*:\/\//i.test(CONFIGURED)
+  ? `https://${CONFIGURED}`
+  : CONFIGURED;
 
 /**
  * A server path ("/api/...") as a url this page can fetch. Anything already
