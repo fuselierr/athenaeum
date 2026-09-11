@@ -13,6 +13,7 @@ import {
   CURL_ROWS, CURL_INDEX, createCurlUV, writeCurlUV, buildCurlStrip, curlTipPoint, closestDistanceToPage,
 } from './curlGeometry.js';
 import { WEDGE_ROWS, WEDGE_INDEX, fillWedgeSide } from './wedgeGeometry.js';
+import { twoSidedShadows } from '../../scene/twoSidedShadows.js';
 
 /**
  * One "spread" is the original 2-page + wedge mechanism: two
@@ -160,9 +161,12 @@ export function createSpread(world, parent, opts) {
   const pageMat = new THREE.MeshStandardMaterial({
     roughness: 0.5, metalness: 0.05, side: THREE.DoubleSide,
   });
-  const matNear = pageMat.clone();
+  // Seen from either side, so shadow lookups have to come from the side in
+  // view -- or A and B, seen from their geometric back, sit in their own
+  // shadow (scene/twoSidedShadows.js). Per clone: clone() drops it.
+  const matNear = twoSidedShadows(pageMat.clone());
   matNear.color.set(colorNear);
-  const matFar = pageMat.clone();
+  const matFar = twoSidedShadows(pageMat.clone());
   matFar.color.set(colorFar);
   const curlMat = curlPage === 'near' ? matNear : matFar;
   const flatMat = curlPage === 'near' ? matFar : matNear;
@@ -188,9 +192,9 @@ export function createSpread(world, parent, opts) {
   // wedge -- renderOrder 0 (the default, spelled out for clarity): drawn
   // BEFORE the pages, so it always loses ties at the seam to whichever
   // page it's touching.
-  const wedgeMat = new THREE.MeshStandardMaterial({
+  const wedgeMat = twoSidedShadows(new THREE.MeshStandardMaterial({
     color: wedgeColor, roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide,
-  });
+  }));
   const wedgeGeo = new THREE.BufferGeometry();
   const wedgePositions = new Float32Array(WEDGE_ROWS * 4 * 3);
   wedgeGeo.setAttribute('position', new THREE.BufferAttribute(wedgePositions, 3));

@@ -3,6 +3,7 @@ import { HINGE_LEN, PANEL_REACH, PIVOT_TO_NEAR_EDGE, SPINE_GAP } from '../pageSi
 import { pageTransform, spineHinge } from '../pageSim/math.js';
 import { sampleBindingColor, renderSpineLabel, toHex, shade, luminance } from './jacketArt.js';
 import { createBoardGeometry, BOARD_FACE_PY, BOARD_FACE_NY } from './boardGeometry.js';
+import { twoSidedShadows } from '../../scene/twoSidedShadows.js';
 
 /**
  * The book's hardcover: two render-only boards with their own H1/H2 angles,
@@ -156,9 +157,10 @@ export function createHardcover({ parent, hardcoverAngles }) {
   const backFaceMaterial = new THREE.MeshStandardMaterial({
     color: BOARD_COLOR, roughness: 0.6, metalness: 0.03,
   });
-  const spineMaterial = new THREE.MeshStandardMaterial({
+  // DoubleSide, so see scene/twoSidedShadows.js.
+  const spineMaterial = twoSidedShadows(new THREE.MeshStandardMaterial({
     color: SPINE_COLOR, roughness: 0.78, metalness: 0.04, side: THREE.DoubleSide,
-  });
+  }));
 
   const H1 = makeBoard(+1, frontFaceMaterial, FACE_PY);
   const H2 = makeBoard(-1, backFaceMaterial, FACE_NY);
