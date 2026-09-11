@@ -31,10 +31,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
  */
 
 const LAYERS = {
-  sand: { url: '/textures/sand.glb', colour: 0xc9b58a },
-  grass: { url: '/textures/grass.glb', colour: 0x5f7a3a },
-  rock: { url: '/textures/rock.glb', colour: 0x7a746c },
-  snow: { url: '/textures/snow.glb', colour: 0xf2f4f7 },
+  // Poly Haven sets exported from Blender, one folder each; the base colour
+  // on each file's material is that set's _diff map.
+  sand: { url: '/textures/sand/coast_sand_01_2k.gltf', colour: 0xc9b58a },
+  grass: { url: '/textures/grass/rocky_terrain_02_2k.gltf', colour: 0x5f7a3a },
+  rock: { url: '/textures/rock/marble_cliff_05_2k.gltf', colour: 0x7a746c },
+  snow: { url: '/textures/snow/snow_02_2k.gltf', colour: 0xf2f4f7 },
 };
 
 // Where the layers change, all tunable.
