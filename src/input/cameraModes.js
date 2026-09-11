@@ -63,7 +63,9 @@ const ORBIT_HANDOFF_DISTANCE = 1.5;
 const MOVE_ACTIONS = ['move.forward', 'move.back', 'move.left', 'move.right', 'move.run'];
 
 // How far a press may travel and still count as a click rather than a drag.
-const CLICK_SLOP = 4; // px
+// Exported so a drag that has to tell the two apart itself (dragPageTurn)
+// draws the line in the same place.
+export const CLICK_SLOP = 4; // px
 
 /**
  * @param {object} opts
@@ -76,7 +78,9 @@ const CLICK_SLOP = 4; // px
  *   did not travel. Reported from here because the look modes swallow
  *   pointerdown on the canvas outright -- nothing downstream would ever see
  *   the click -- and because the rig is the one thing that already knows
- *   whether a gesture turned into a drag.
+ *   whether a gesture turned into a drag. Presses the book claimed count
+ *   too: a press on a page or a cover that never moved was a click on the
+ *   book, and the handler decides what was nearest.
  *
  * IMPORTANT: construct this BEFORE dragCover / dragPageTurn /
  * bookManipulator. All four listen for pointerdown on the same canvas, and
@@ -192,13 +196,28 @@ export function createCameraModes({
   let pressMoved = false;
 
   // Registered before anything else on the canvas (see main.js), and it
-  // claims nothing -- it only makes sure OrbitControls is OFF outside orbit
-  // mode before any press is handled. The book's drag handlers switch
-  // OrbitControls off while they hold a press and back ON when they let
-  // go, which is right in orbit mode and wrong in these: left on, the next
+  // claims nothing. It makes sure OrbitControls is OFF outside orbit mode
+  // before any press is handled: the book's drag handlers switch
+  // OrbitControls off while they hold a press and back ON when they let go,
+  // which is right in orbit mode and wrong in these -- left on, the next
   // press would orbit the camera out from under the look rig.
-  dom.addEventListener('pointerdown', () => {
+  //
+  // And it is where every press starts being watched for a click. It has to
+  // be here, first in the capture phase: the book's handlers stop the press
+  // they take (dragCover with stopImmediatePropagation, dragPageTurn with
+  // stopPropagation), and stopping it during capture at the canvas also
+  // cancels the canvas's own bubble listeners -- so the one below never
+  // hears a press on a page or a cover at all. A press the book took and
+  // then never moved is a click ON the book, which is how the book is taken
+  // up to read (input/bookCarry.js), so it has to be reported like any
+  // other. onClick asks what is nearest under the cursor, so a click on a
+  // page cannot fall through to the desk behind it.
+  dom.addEventListener('pointerdown', (e) => {
     if (mode !== CAMERA_MODE.ORBIT) controls.enabled = false;
+    pressId = e.pointerId;
+    pressX = e.clientX;
+    pressY = e.clientY;
+    pressMoved = false;
   }, { capture: true });
 
   // THE BOOK GOES FIRST. A press is only this rig's if nothing on the book
@@ -208,17 +227,8 @@ export function createCameraModes({
   // preventDefault(): dragCover (a board, or a spread waiting to be lifted)
   // and dragPageTurn (a page) both do, and bookManipulator's shift-drag
   // slide stops the press before it ever reaches the canvas.
-  //
-  // The same test decides clicks. A press the book took is a drag of the
-  // book, not a click on whatever is behind it -- otherwise pressing a page
-  // would also count as clicking the desk underneath, and set the book down.
   dom.addEventListener('pointerdown', (e) => {
-    if (e.defaultPrevented) return;
-
-    pressId = e.pointerId;
-    pressX = e.clientX;
-    pressY = e.clientY;
-    pressMoved = false;
+    if (e.defaultPrevented) return; // the book's to drag, not ours to look with
 
     // The primary button only: right-drag is bookManipulator's turn-the-
     // book gesture, and should not also swing the view round.

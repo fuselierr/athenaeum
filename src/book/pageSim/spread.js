@@ -615,7 +615,7 @@ export function createSpread(world, parent, opts) {
   }
 
   return {
-    drop, moveAnchor, stepPhysics, sync, dispose, enforceNoPassingRef,
+    drop, moveAnchor, refreshHinges, stepPhysics, sync, dispose, enforceNoPassingRef,
     curlTip, curlTipAt, curlTipAtRef, straightAngle, setRefAngleClamp,
     pairGap, curlRadius, setOtherPairGap,
     get bodyNear() { return bodyNear; },

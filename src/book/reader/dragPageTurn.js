@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { HINGE_LEN, PANEL_REACH, bcFixedAngle } from '../pageSim/config.js';
 import { pageAngle, spineHinge } from '../pageSim/math.js';
 import { PageSimulation } from '../pageSim/PageSimulation.js';
+import { CLICK_SLOP } from '../../input/cameraModes.js';
 import {
   CURL_ROWS, CURL_INDEX, createCurlUV, writeCurlUV, buildCurlStrip,
 } from '../pageSim/curlGeometry.js';
@@ -112,6 +113,14 @@ export function createDragPageTurn({
   const turns = [];
   /** The one the pointer is driving, if any -- there is only one cursor. */
   let dragTurn = null;
+
+  // A press on a page that has not moved yet: { panel, pointerId, x, y,
+  // pivotScreen, angle0 }. Nothing happens to the book until it travels past
+  // CLICK_SLOP -- starting the leaf on press repaints the page underneath at
+  // once, so a click on a page (which takes the book up to read) looked like
+  // the start of a turn. The press is still CLAIMED on the way down, so it
+  // never becomes a look-around drag either.
+  let pendingPress = null;
 
   const _anchorLocal = new THREE.Vector3();
   const _anchorWorld = new THREE.Vector3();
@@ -469,18 +478,23 @@ export function createDragPageTurn({
     const panel = hitMesh === pages.pageMeshes.B ? 'B' : 'C';
     if (!content.canTurn(panel)) return; // already at the front/back cover on that side
 
-    const turn = createTurn(panel, pages, { commitNow: false });
-
     // Screen-space pivot the drag's angular sweep is measured around --
     // the shared hinge, projected. Pointer-only: a turn that plays itself
-    // has no cursor to measure against.
+    // has no cursor to measure against. Measured from where the press went
+    // DOWN, so the slop travelled before the turn starts still counts
+    // toward it.
     const bcMid = spineHinge(pages.spreadFront.anchorFar.z).mid;
     _anchorLocal.set(0, bcMid.y, bcMid.z);
     _anchorWorld.copy(_anchorLocal).applyMatrix4(pages.root.matrixWorld);
-    screenPointFor(_anchorWorld, turn.pivotScreen);
-    turn.angle0 = Math.atan2(e.clientY - turn.pivotScreen.y, e.clientX - turn.pivotScreen.x);
-
-    dragTurn = turn;
+    const pivotScreen = screenPointFor(_anchorWorld, new THREE.Vector2());
+    pendingPress = {
+      panel,
+      pointerId: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      pivotScreen,
+      angle0: Math.atan2(e.clientY - pivotScreen.y, e.clientX - pivotScreen.x),
+    };
     controls.enabled = false;
 
     // Stop OrbitControls (bound in the bubble phase on this same element)
@@ -491,7 +505,29 @@ export function createDragPageTurn({
     e.preventDefault();
   }, { capture: true });
 
+  /** The pending press has moved far enough to be a drag: start the leaf. */
+  function beginPendingTurn() {
+    const press = pendingPress;
+    pendingPress = null;
+    const pages = getPages();
+    // Anything could have happened while the button was held still: a
+    // keyboard turn started, the book was rebuilt, the end of the book
+    // reached.
+    if (!pages || turns.length > 0 || !content.canTurn(press.panel)) {
+      controls.enabled = true;
+      return;
+    }
+    const turn = createTurn(press.panel, pages, { commitNow: false });
+    turn.pivotScreen.copy(press.pivotScreen);
+    turn.angle0 = press.angle0;
+    dragTurn = turn;
+  }
+
   window.addEventListener('pointermove', (e) => {
+    if (pendingPress && pendingPress.pointerId === e.pointerId
+      && Math.hypot(e.clientX - pendingPress.x, e.clientY - pendingPress.y) > CLICK_SLOP) {
+      beginPendingTurn();
+    }
     if (!dragTurn || dragTurn.mode !== 'dragging') return;
     const angle = Math.atan2(e.clientY - dragTurn.pivotScreen.y, e.clientX - dragTurn.pivotScreen.x);
     let delta = angle - dragTurn.angle0;
@@ -508,6 +544,11 @@ export function createDragPageTurn({
 
   window.addEventListener('pointerup', (e) => {
     if (e.button !== 0) return;
+    if (pendingPress) {
+      // Never moved: a click, not a turn. Nothing was started to undo.
+      pendingPress = null;
+      controls.enabled = true;
+    }
     if (dragTurn && dragTurn.mode === 'dragging') {
       dragTurn.settleTarget = dragTurn.progress >= 0.5 ? 1 : 0;
       dragTurn.mode = 'settling';

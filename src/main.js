@@ -23,6 +23,7 @@ import { createDragPageTurn } from './book/reader/dragPageTurn.js';
 import { createCameraPan } from './input/cameraPan.js';
 import { createCameraModes, CAMERA_MODE } from './input/cameraModes.js';
 import { createBookManipulator } from './input/bookManipulator.js';
+import { createBookCarry } from './input/bookCarry.js';
 import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
 import { initBookLoader, openLibraryBook, uploadBook } from './loader/bookLoader.js';
@@ -73,6 +74,10 @@ const cameraModes = createCameraModes({
     // The instruction card first: while it is held up, any click is how it
     // goes back, and must not also take a book or set one down.
     if (instructionCard?.handleClick(event)) return;
+    // The book before the shelf: the shelf tests only its own books and
+    // ignores what is in front of them, so a click on the book in your hand
+    // would otherwise take down whichever shelf book is behind it.
+    if (bookCarry?.handleClick(event)) return;
     if (shelfBooks?.handleClick(event)) return;
     putBookDown(event); // a click past the shelf, holding a book
   },
@@ -93,6 +98,10 @@ const bookGroup = new THREE.Group();
 bookGroup.scale.setScalar(BOOK_WORLD_SCALE);
 bookGroup.position.set(0, 0.02, 0); // 2 cm above the desk, so it settles rather than starting flush
 scene.add(bookGroup);
+
+// Taking the book up off the desk to read (input/bookCarry.js). Built once
+// the placement physics exists, further down -- clicks can arrive sooner.
+let bookCarry = null;
 
 // The desk and lamp go straight under `scene`: they are furniture the book
 // rests on, so they stay put in world space when the book itself is moved.
@@ -272,6 +281,8 @@ populateShelf(bookshelf, {
   // and forgotten: `openSequence` inside is what makes a book that was put
   // back mid-render simply never arrive.
   onTake: (record) => {
+    // A book from the desk in the hand goes back first: one book in hand.
+    if (record) bookCarry?.putBack();
     if (record) openFromShelf(record);
     else openSequence += 1;
   },
@@ -317,6 +328,15 @@ const dragPageTurn = createDragPageTurn({
 // turn has anywhere visible to go.
 const bookOpening = createBookOpening({ getPages, dragCover, dragPageTurn });
 const bookManipulator = createBookManipulator({ bookGroup, camera, renderer, getPages });
+bookCarry = createBookCarry({
+  scene, bookGroup, camera, renderer, getPages, placement,
+  // Not while a shelf book has the hand -- it is on its way to becoming
+  // this very book.
+  canTake: () => !shelfBooks?.held,
+  // A shelf book that has become this book is in the hand already, and a
+  // click on it is reading it, not putting it back.
+  inHand: () => handHoldsBook,
+});
 const debugLabels = createDebugLabels({ scene, camera, renderer, getPages });
 const anglePanel = createAnglePanel({ getPages, getPageTurn: () => dragPageTurn });
 
@@ -458,9 +478,21 @@ async function openUploadedFile(file) {
   }
 }
 
+// Which way a book comes off the shelf shut -- see PageSimulation.close.
+// 'front' is shut the ordinary way: cover up, and the first arrow press opens
+// the front board onto page one.
+const SHUT_ON = 'front';
+
 /**
  * Replace the model in hand with the real book, in the same place and at
  * the same size.
+ *
+ * SHUT. The model is a shut book, so the real one arrives shut too, and is
+ * placed by the middle of its page block, which is where the model's own
+ * origin is -- not by bookGroup's origin, which is the spine of the book
+ * lying open. It is HELD shut for as long as it is carried: in the hand it
+ * points wherever the camera does, and gravity would swing the boards open.
+ * Setting it down (or its going back to the shelf) lets go.
  *
  * SCALE. The book is scaled so its pages are exactly as tall as the model's
  * were. The shelf models are built to the same binding proportions as the
@@ -474,14 +506,21 @@ async function openUploadedFile(file) {
 function swapModelForBook() {
   const size = shelfBooks?.heldSize;
   if (!size) return;
-  pages.reset();
-  bookGroup.scale.setScalar(size.length / HINGE_LEN);
-  handHoldsBook = shelfBooks.substitute(bookGroup, stowBook);
+  const shut = pages.close(SHUT_ON);
+  pages.setShutHold(shut.angle);
+  const scale = size.length / HINGE_LEN;
+  bookGroup.scale.setScalar(scale);
+  handHoldsBook = shelfBooks.substitute(bookGroup, stowBook, {
+    position: shut.centre.multiplyScalar(scale),
+    quaternion: shut.quaternion,
+  });
+  if (!handHoldsBook) pages.setShutHold(null);
 }
 
 /** The real book has ridden the model's animation back into the shelf. */
 function stowBook() {
   handHoldsBook = false;
+  pages.setShutHold(null);
   // bookGroup was just posed inside the shelf, where the model has this
   // instant reappeared. Moving it here as well as in the body keeps the two
   // from sharing a slot for the one frame before placement drives it again.
@@ -491,16 +530,18 @@ function stowBook() {
 }
 
 /**
- * Set the held book down where it was clicked, if that was the desk.
- * The model goes back to the shelf; the book stays, and drops the last
- * couple of centimetres under its own weight.
+ * Set the held book down where it was clicked, if that was the desk --
+ * square, whichever way it was lying before. A shelf book's model goes back
+ * to the shelf and the book stays; one taken up off the desk just comes out
+ * of the hand. Either way it drops the last couple of centimetres under its
+ * own weight.
  */
 const _placeRay = new THREE.Raycaster();
 const _placeNdc = new THREE.Vector2();
 const _placePosition = new THREE.Vector3();
 
 function putBookDown(event) {
-  if (!handHoldsBook) return;
+  if (!handHoldsBook && !bookCarry?.held) return;
   const rect = renderer.domElement.getBoundingClientRect();
   _placeNdc.set(
     ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -510,8 +551,15 @@ function putBookDown(event) {
   const hit = _placeRay.intersectObject(desk.object, true)[0];
   if (!hit) return; // only the desk will take a book
 
-  shelfBooks.putDown();
-  handHoldsBook = false;
+  if (handHoldsBook) {
+    shelfBooks.putDown();
+    handHoldsBook = false;
+    // Shut, and now free: lying flat, its own weight keeps it that way until
+    // it is opened.
+    pages.setShutHold(null);
+  } else {
+    bookCarry.letGo();
+  }
   _placePosition.copy(hit.point).setY(hit.point.y + 0.02);
   bookGroup.position.copy(_placePosition);
   bookGroup.quaternion.copy(RESET_QUATERNION);
@@ -551,13 +599,14 @@ const RESET_POSITION = new THREE.Vector3(0, 0.02, 0);
 const RESET_QUATERNION = new THREE.Quaternion();
 
 function resetBook() {
+  bookCarry.letGo(); // out of the hand, or the hand would carry it straight back off
+  pages.setShutHold(null); // or the boards would be pinned shut again on the next step
   pages.reset();
   bookGroup.quaternion.copy(RESET_QUATERNION);
   bookGroup.position.copy(RESET_POSITION); // also undo any shift-drag repositioning
   // The body holds the real placement state -- putting bookGroup back
   // without this would be undone by the next step().
   placement.reset(RESET_POSITION, RESET_QUATERNION);
-  bookManipulator.refreshPickupHold();
   refreshFlipLabel();
 }
 
@@ -609,6 +658,10 @@ mountMenu({
       instructionCard.release();
       return true;
     }
+    if (bookCarry?.held) {
+      bookCarry.putBack();
+      return true;
+    }
     if (!shelfBooks?.held) return false;
     shelfBooks.release();
     return true;
@@ -636,7 +689,10 @@ renderer.setAnimationLoop(() => {
   if (!anglePanel.visible) simulationPaused = false;
 
   cameraModes.update(dt);
-  bookManipulator.update();
+  // Carried -- up off the desk, or a shelf book in hand -- the pages feel down
+  // as though the book were lying flat. See bookManipulator.update.
+  const carried = handHoldsBook || bookCarry.carrying;
+  bookManipulator.update({ carried });
 
   // Mirror the reading position for the Book tab. Assigned only on a real
   // change: writing the same value every frame would wake every watcher
@@ -653,7 +709,7 @@ renderer.setAnimationLoop(() => {
     // A book in hand is carried: the placement body goes kinematic and
     // follows the pose the shelf is writing onto bookGroup, so setting it
     // down lands it on the desk like anything else.
-    placement.step(dt, bookManipulator.grabbed || handHoldsBook);
+    placement.step(dt, bookManipulator.grabbed || carried);
     dragPageTurn.update(dt);
   }
   // OrbitControls poses the camera on every update() -- enabled or not --
@@ -662,6 +718,7 @@ renderer.setAnimationLoop(() => {
   // After the camera has finished moving for the frame: a book in hand is
   // posed from it, and stepping first would leave it a frame behind.
   shelfBooks?.update(dt);
+  bookCarry.update(dt); // posed from the camera too
   instructionCard?.update(dt); // also posed from the camera, so also after it has moved
   renderer.render(scene, camera);
   debugLabels.update();

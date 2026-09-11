@@ -56,6 +56,7 @@ Every key below can be rebound in **Settings → Controls**.
 | Drag | Orbit the camera, or look around in first person |
 | Scroll | Zoom, in look mode |
 | Click a shelf book | Take it — and open it |
+| Click the book | Bring it up to read — `Esc` puts it back |
 | Click the desk | Set the held book down |
 | `←` / `→` | Turn to the previous/next page |
 | Drag a page directly | Turn that page by hand, mid-curl |

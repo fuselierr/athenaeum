@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
-  SPINE_GAP, PANEL_REACH, GRAVITY_MAG, OPEN_LIMIT,
+  SPINE_GAP, PANEL_REACH, HINGE_LEN, GRAVITY_MAG, OPEN_LIMIT,
   HARDCOVER_AIR_CUSHION_RANGE, AIR_CUSHION_MAX_RATE,
   BC_START_GAP, COVER_START_NEAR, COVER_START_FAR, bcFixedAngle,
   PSEUDO_REPEL_RATE, PSEUDO_COLLISION_RESTITUTION,
@@ -573,6 +573,138 @@ export class PageSimulation {
     this.spreadBack.drop(meet + BC_START_GAP / 2, COVER_START_FAR);
     this.setFlipped(false);
     this._lastStep = 0; // next step() re-bases its delta instead of jumping
+  }
+
+  /**
+   * Shut the book, all at once: both boards together, the whole page block
+   * between them, the spine tilted all the way over under it -- the book as
+   * it comes off a shelf.
+   *
+   * `side` is which board ends up on top, the same sense openState uses:
+   *
+   *   'front'  shut normally. Everything has swung over onto H2's side (every
+   *            angle pi), the front board faces up, and SPINE_ROTATION is +1
+   *            -- which is what the page block asks for there anyway
+   *            (spineRotationTarget), so the spine stays put.
+   *   'back'   shut the other way (every angle 0), back board up,
+   *            SPINE_ROTATION -1.
+   *
+   * The reading position (the B/C hinge) is left where it is, so a book
+   * shut on its first page still opens on it.
+   *
+   * Nothing holds it shut afterwards -- see setShutHold.
+   *
+   * Returns where the shut book is, in the parent's space and before any
+   * scale the parent carries: `centre` is the middle of the page block, and
+   * `quaternion` turns X = head, Y = out through the FRONT board, Z = spine
+   * to fore-edge into that space. The same frame a shelf model is built in
+   * (cover/bookModel.js), so one can be put exactly where the other is.
+   *
+   * @param {'front'|'back'} [side='front']
+   * @returns {{ angle: number, centre: THREE.Vector3, quaternion: THREE.Quaternion }}
+   */
+  close(side = 'front') {
+    const angle = side === 'front' ? Math.PI : 0;
+    setSpineRotation(side === 'front' ? 1 : -1);
+
+    this._hardcoverAngles.H1 = angle;
+    this._hardcoverAngles.H2 = angle;
+    this._hardcoverAngularVelocity.H1 = 0;
+    this._hardcoverAngularVelocity.H2 = 0;
+
+    // Square to the spine is `angle` itself once it is tilted right over, so
+    // B and C lie flat in the block with everything else.
+    const meet = bcFixedAngle();
+    this.spreadFront.drop(angle, meet);
+    this.spreadBack.drop(meet, angle);
+    // The anchor bodies are still where the old tilt put them; the pages
+    // were just born at the new one. Bring the anchors across now rather
+    // than on the next step, so nothing is drawn against the old spine.
+    this.spreadFront.refreshHinges();
+    this.spreadBack.refreshHinges();
+    this.setFlipped(false);
+    this._lastStep = 0;
+
+    // Posed immediately, not on the next step, so a frame drawn before that
+    // step already shows the book shut.
+    this.spreadFront.sync();
+    this.spreadBack.sync();
+    this.hardcover.update();
+
+    const centre = this._shutCentre(angle, new THREE.Vector3());
+    const outward = new THREE.Vector3(0, -Math.sin(angle), Math.cos(angle)); // hinge to fore-edge, physics space
+
+    // X along the spine, Z hinge to fore-edge, and Y = Z x X -- which comes
+    // out of H1's outer face (hardcover.js puts H1 on its page's +Y).
+    const axisX = new THREE.Vector3(1, 0, 0);
+    const frame = new THREE.Matrix4().makeBasis(axisX, outward.clone().cross(axisX), outward);
+    const quaternion = new THREE.Quaternion()
+      .setFromRotationMatrix(frame)
+      .premultiply(this.root.quaternion);
+
+    return { angle, centre, quaternion };
+  }
+
+  /**
+   * The middle of a shut page block whose boards lie at `angle`, into `out`,
+   * in the parent's space before its scale. Measured in physics space --
+   * halfway between the covers' hinges, and half a page out from them --
+   * then carried through the root's own half-turn.
+   */
+  _shutCentre(angle, out) {
+    const hingeA = spineHinge(SPINE_GAP).mid;
+    const hingeD = spineHinge(-SPINE_GAP).mid;
+    const reach = PANEL_REACH / 2;
+    out.set(
+      0,
+      (hingeA.y + hingeD.y) / 2 - Math.sin(angle) * reach,
+      (hingeA.z + hingeD.z) / 2 + Math.cos(angle) * reach,
+    );
+    this.root.updateMatrix();
+    return out.applyMatrix4(this.root.matrix);
+  }
+
+  /**
+   * What someone holding the book up to read it is looking at: its middle,
+   * into `out`, and its size -- all in the parent's space, before any scale
+   * the parent carries. For input/bookCarry.js, which frames the book by it.
+   *
+   * No orientation: the book's reading axes (X = head, Y = out of the page,
+   * Z = the reader's right) are the parent's own axes whether it is open or
+   * shut from the front (see close()).
+   *
+   * Shut, the middle is the middle of the block and the size one board.
+   * Otherwise it is the gutter -- the B/C hinge, where the two visible pages
+   * meet -- and the size the whole spread.
+   *
+   * @param {THREE.Vector3} [out]
+   * @returns {{ centre: THREE.Vector3, width: number, height: number }}
+   */
+  readingFrame(out = new THREE.Vector3()) {
+    const { H1, H2 } = this._hardcoverAngles;
+    if (H2 - H1 < CLOSED_GAP) {
+      return { centre: this._shutCentre((H1 + H2) / 2, out), width: PANEL_REACH, height: HINGE_LEN };
+    }
+    const gutter = spineHinge(this._bcZ).mid;
+    this.root.updateMatrix();
+    out.set(0, gutter.y, gutter.z).applyMatrix4(this.root.matrix);
+    return { centre: out, width: 2 * (PANEL_REACH + SPINE_GAP), height: HINGE_LEN };
+  }
+
+  /**
+   * Hold the whole book at `angle` -- both boards and both halves of the
+   * block -- or pass null to let all of it go. For keeping a shut book
+   * (close) shut while it is carried, when gravity pulls whichever way the
+   * hand happens to be pointing it.
+   *
+   * Letting go releases all four holds, including one a cover drag or the
+   * keyboard opener may have taken over since.
+   */
+  setShutHold(angle) {
+    this.setHardcoverHold('H1', angle);
+    this.setHardcoverHold('H2', angle);
+    this.setSpreadHold('front', angle);
+    this.setSpreadHold('back', angle);
   }
 
   /**

@@ -323,8 +323,8 @@ export async function createBookPlacement({ bookGroup, getPages, desk, room = nu
 
   // --- keeping a held book inside the room -------------------------------
   // The slabs above stop a book that is FALLING. They cannot stop one being
-  // held -- moved with shift-drag, turned with right-drag, carried in pickup
-  // mode. A held book is kinematic: it is put where the hand puts it, not
+  // held -- moved with shift-drag, turned with right-drag, carried in the
+  // hand. A held book is kinematic: it is put where the hand puts it, not
   // pushed back by whatever it overlaps. So while it is held, the room is
   // enforced by limiting where it may be put.
   //
@@ -423,7 +423,7 @@ export async function createBookPlacement({ bookGroup, getPages, desk, room = nu
      *
      * @param {number} dt  seconds
      * @param {boolean} isGrabbed  is a pointer gesture currently driving
-     *   bookGroup by hand (drag, arcball, pickup mode)? While true the body
+     *   bookGroup by hand (drag, arcball, carried)? While true the body
      *   is kinematic and COPIES bookGroup; while false it is dynamic and
      *   DRIVES it.
      */

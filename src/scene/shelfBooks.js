@@ -47,7 +47,9 @@ import { createBookModel } from '../book/cover/bookModel.js';
  * model is what you pick up, and once its book has been converted and
  * rendered the caller SUBSTITUTES the real one into the same place --
  * `substitute()` hides the model and mirrors its pose onto the stand-in for
- * as long as it is out. The trip back to the shelf is the model's own
+ * as long as it is out. The stand-in need not be built around the same
+ * origin: the caller says where the model's middle and axes sit inside it,
+ * and it is placed so those land exactly on the model's. The trip back to the shelf is the model's own
  * animation, so the real book rides it home and is handed back at the end.
  *
  * WHY THE BOOKS ARE PARENTED TO THE SHELF. They go inside an anchor that
@@ -454,16 +456,23 @@ export async function populateShelf(bookshelf, {
   const _handScale = new THREE.Vector3();
   const _shelfPosition = new THREE.Vector3();
   const _anchorQuaternion = new THREE.Quaternion();
+  const _fitOffset = new THREE.Vector3();
 
   /**
    * Put `object` where the model is, in WORLD space -- the substitute lives
    * under the scene, not under the shelf, because it is a book in its own
    * right with its own scale and its own physics.
    */
-  function mirrorTo(object, position, quaternion) {
+  function mirrorTo(object, position, quaternion, fit) {
     anchor.getWorldQuaternion(_anchorQuaternion);
     object.position.copy(position).applyMatrix4(anchor.matrixWorld);
     object.quaternion.copy(_anchorQuaternion).multiply(quaternion);
+    if (!fit) return;
+    // The model's pose is where the stand-in's FIT frame has to be, so the
+    // stand-in itself is that pose with the fit taken back out: turned by
+    // the fit's inverse, then moved so its fit centre lands on the model's.
+    object.quaternion.multiply(fit.inverse);
+    object.position.sub(_fitOffset.copy(fit.position).applyQuaternion(object.quaternion));
   }
 
   /**
@@ -525,16 +534,33 @@ export async function populateShelf(bookshelf, {
      * whole way back to the shelf, at the end of which the model reappears
      * and `onStow` fires so the caller can put its object away.
      *
+     * `fit`, if given, is where the model's middle and axes sit in `object`'s
+     * own frame -- `position` already multiplied by `object`'s scale -- for a
+     * stand-in whose origin is not its middle. Left out, the two origins and
+     * orientations are simply matched.
+     *
      * Returns false if nothing is being held, which is the case when a book
      * was put back while its pages were still rendering.
      */
-    substitute(object, onStow) {
+    substitute(object, onStow, fit = null) {
       if (!held) return false;
       // Only one stand-in at a time: an earlier one is handed back where it
       // stands rather than being abandoned mid-flight.
       if (substitution) endSubstitution();
-      substitution = { entry: held, object, onStow };
+      substitution = {
+        entry: held,
+        object,
+        onStow,
+        fit: fit && {
+          position: fit.position.clone(),
+          inverse: fit.quaternion.clone().invert(),
+        },
+      };
       held.group.visible = false;
+      // In place straight away rather than at the next update(): the frame
+      // in between still steps the physics, which would otherwise carry the
+      // book from wherever it last was.
+      mirrorTo(object, held.group.position, held.group.quaternion, substitution.fit);
       return true;
     },
 
@@ -600,7 +626,7 @@ export async function populateShelf(bookshelf, {
         }
 
         if (substitution && substitution.entry === book) {
-          mirrorTo(substitution.object, book.group.position, book.group.quaternion);
+          mirrorTo(substitution.object, book.group.position, book.group.quaternion, substitution.fit);
           // Back in the row: the model reappears and the stand-in is handed
           // over to whoever lent it.
           if (book.hold <= 0) endSubstitution();
