@@ -1,0 +1,17 @@
+# Kept out of the server image.
+
+# Secrets. The server does not need them, and an image is easy to share by
+# accident.
+.env
+.env.*
+
+# Rebuilt inside the image, or not needed by the server at all.
+node_modules
+dist
+.git
+.vercel
+
+# The local conversion cache -- the deployed server builds its own.
+books
+
+*.log

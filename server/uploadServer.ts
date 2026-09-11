@@ -37,6 +37,59 @@ const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100MB -- generous for an epub, ad
 
 const app = express();
 
+// --- who may call this from a browser ---------------------------------------
+// In development the site and this server share an origin (Vite proxies /api),
+// so none of this comes into play. Deployed, the site is on Vercel and this is
+// somewhere else, and a browser refuses any cross-origin response -- the JSON,
+// the PDF, the cover images -- unless the server names the site's origin. So
+// the allowed origins come from CORS_ORIGINS, comma-separated:
+//
+//   CORS_ORIGINS=https://athenaeum.vercel.app,https://athenaeum-*.vercel.app
+//
+// A '*' matches within one part of a hostname, which covers Vercel's
+// per-deploy preview urls without opening the door to every site on vercel.app.
+const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function originAllowed(origin: string | undefined): origin is string {
+  if (!origin) return false;
+  return CORS_ORIGINS.some((allowed) => {
+    if (!allowed.includes('*')) return allowed === origin;
+    const pattern = allowed.split('*').map(escapeRegExp).join('[^./]*');
+    return new RegExp('^' + pattern + '$').test(origin);
+  });
+}
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const allowed = originAllowed(origin);
+  if (allowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    // pdf.js reads these to decide whether it can fetch a PDF in ranges
+    // rather than all at once; cross-origin they are hidden unless exposed.
+    res.setHeader('Access-Control-Expose-Headers', 'Accept-Ranges, Content-Length, Content-Range');
+  }
+  if (req.method === 'OPTIONS') {
+    // The preflight a browser sends before a cross-origin upload or ranged read.
+    if (allowed) {
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        String(req.headers['access-control-request-headers'] ?? 'Content-Type, Range'),
+      );
+      res.setHeader('Access-Control-Max-Age', '600');
+    }
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
 // Disk storage, not memory storage: epubs (and the images inside them) can
 // be tens of MB, and multer's default memory storage would hold the whole
 // file in RAM per concurrent upload -- fine for a demo, worth revisiting
@@ -308,4 +361,11 @@ const EXT_BY_MEDIA_TYPE: Record<string, string> = {
 };
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
-app.listen(PORT, () => console.log(`epub upload server listening on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`epub upload server listening on :${PORT}`);
+  if (CORS_ORIGINS.length === 0) {
+    console.warn('CORS_ORIGINS is not set: only same-origin requests (the Vite dev proxy) will work.');
+  } else {
+    console.log(`accepting browser requests from: ${CORS_ORIGINS.join(', ')}`);
+  }
+});

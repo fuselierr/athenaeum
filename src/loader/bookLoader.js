@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 // gives us a hashed, served URL for the worker file instead of trying to
 // import it as a module. See https://vitejs.dev for the pattern.
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { api } from './api.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
@@ -71,7 +72,7 @@ function findLocalBookUrl() {
 async function uploadEpub(file) {
   const formData = new FormData();
   formData.append('epub', file);
-  const res = await fetch('/api/books', { method: 'POST', body: formData });
+  const res = await fetch(api('/api/books'), { method: 'POST', body: formData });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(body.error || `Upload failed (${res.status})`);
@@ -231,7 +232,7 @@ export async function openLibraryBook(id, {
   const say = (text) => onStatus?.(text);
 
   say('Converting…');
-  const res = await fetch(`/api/library/${encodeURIComponent(id)}/open`, { method: 'POST' });
+  const res = await fetch(api(`/api/library/${encodeURIComponent(id)}/open`), { method: 'POST' });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.pdfUrl) {
     throw new Error(body.error || `Could not open this book (${res.status})`);
@@ -240,7 +241,7 @@ export async function openLibraryBook(id, {
   // Before the pages, as with an upload: the jacket comes from the epub and
   // has been waiting since the shelf was built.
   onJacket?.({
-    coverUrl: body.coverUrl ?? null,
+    coverUrl: api(body.coverUrl) ?? null,
     title: body.title ?? null,
     author: body.author ?? null,
     description: body.description ?? null,
@@ -254,7 +255,7 @@ export async function openLibraryBook(id, {
   if (Array.isArray(body.chapters) && body.chapters.length > 0) onChapters?.(body.chapters);
 
   say('Rendering pages…');
-  const canvases = await renderPdfToCanvases(body.pdfUrl, {
+  const canvases = await renderPdfToCanvases(api(body.pdfUrl), {
     onDimensions,
     onPage: (done, total) => say(`Rendering pages… ${done}/${total}`),
   });
@@ -295,7 +296,7 @@ export async function uploadBook(file, {
   // Before the pages, as for a shelf book: the jacket comes from the epub
   // and is ready the moment conversion is.
   onJacket?.({
-    coverUrl: book.coverUrl ?? null,
+    coverUrl: api(book.coverUrl) ?? null,
     title: book.title ?? null,
     author: book.author ?? null,
     description: book.description ?? null,
@@ -303,7 +304,7 @@ export async function uploadBook(file, {
   if (Array.isArray(book.chapters) && book.chapters.length > 0) onChapters?.(book.chapters);
 
   say('Rendering pages…');
-  const canvases = await renderPdfToCanvases(book.pdfUrl, {
+  const canvases = await renderPdfToCanvases(api(book.pdfUrl), {
     onDimensions,
     onPage: (done, total) => say(`Rendering pages… ${done}/${total}`),
   });

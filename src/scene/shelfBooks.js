@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { api } from '../loader/api.js';
 import { createBookModel } from '../book/cover/bookModel.js';
 
 /**
@@ -176,7 +177,7 @@ function thicknessForPages(pages) {
  */
 async function fetchLibrary() {
   try {
-    const response = await fetch('/api/library');
+    const response = await fetch(api('/api/library'));
     if (!response.ok) return [];
     const books = await response.json();
     return Array.isArray(books) ? books : [];
@@ -329,7 +330,7 @@ export async function populateShelf(bookshelf, {
       title: book.title,
       author: book.author,
       blurb: book.description,
-      coverImage: book.coverUrl,
+      coverImage: api(book.coverUrl),
       // Left null when there IS cover art, so the binding is sampled from
       // it and the spine and back match the jacket rather than a palette.
       bindingColor: book.coverUrl ? null : BINDINGS[i % BINDINGS.length],
