@@ -730,7 +730,8 @@ renderer.setAnimationLoop(() => {
   shelfBooks?.update(dt);
   bookCarry.update(dt); // posed from the camera too
   instructionCard?.update(dt); // also posed from the camera, so also after it has moved
-  renderer.render(scene, camera);
+  // Outside draws through its own fog and exposure chain (scene/outdoorPost.js).
+  if (!outside?.render(dt)) renderer.render(scene, camera);
   debugLabels.update();
   anglePanel.update();
 });

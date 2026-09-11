@@ -22,9 +22,9 @@ import { Sky } from 'three/addons/objects/Sky.js';
  *
  * TONE MAPPING. The sky model outputs real daylight brightness, far past
  * what a screen shows. Without tone mapping the sky and anything in sun
- * clip to white, so going outside also switches on ACES filmic at a fixed
- * exposure -- the setting three's own sky example uses. It is a constant for
- * now; eye adaptation would replace it.
+ * clip to white, so going outside also switches on ACES filmic. Exposure is
+ * not set here: the post-processing chain meters and adapts it
+ * (scene/outdoorPost.js), so the renderer's own exposure stays at 1.
  */
 
 // Where the sun is, in degrees: elevation above the horizon, and azimuth
@@ -45,8 +45,6 @@ const ATMOSPHERE = {
 
 // How strongly the captured sky lights the scene.
 const SKY_LIGHT_INTENSITY = 1;
-
-const EXPOSURE = 0.5;
 
 /**
  * @param {object} opts
@@ -119,9 +117,9 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   sun.shadow.normalBias = 0.15;
   scene.add(sun);
 
-  // --- exposure ----------------------------------------------------------------
+  // --- tone mapping ------------------------------------------------------------
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = EXPOSURE;
+  renderer.toneMappingExposure = 1; // outdoorPost.js's auto exposure does the rest
 
   return { sky, sun, sunDirection };
 }

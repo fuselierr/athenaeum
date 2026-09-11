@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { loadHeightmap, createTerrain, terrainHeightAt } from './terrain.js';
 import { addOutdoorLight } from './outdoorLight.js';
+import { createOutdoorPost } from './outdoorPost.js';
 
 /**
  * Going outside, through the door.
@@ -9,8 +10,11 @@ import { addOutdoorLight } from './outdoorLight.js';
  * door and floor -- and puts terrain from a heightmap in its place, with the
  * ground under the middle of the room at the height the floor was, so you
  * are still standing on something -- lit by a sun, the sky's own light, and
- * an atmosphere to see it through (scene/outdoorLight.js). Walking bounds,
- * the book's physics walls and coming back in are all still the room's.
+ * an atmosphere to see it through (scene/outdoorLight.js), then height fog
+ * and auto exposure over the frame (scene/outdoorPost.js) -- which is why,
+ * once outside, main.js renders through render() here instead of straight
+ * to the screen. Walking bounds, the book's physics walls and coming back in
+ * are all still the room's.
  */
 
 const HEIGHTMAP_URL = '/heightmaps/swissalps.raw'; // public/heightmaps
@@ -28,6 +32,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
   let state = 'inside'; // 'loading' | 'outside'
   let terrain = null;
   let daylight = null;
+  let post = null;
 
   const _raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
@@ -81,6 +86,13 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
         centre: terrain.position.clone().setY(floorBox.max.y),
         reach: TERRAIN.width / 2,
       });
+      post = createOutdoorPost({
+        renderer,
+        scene,
+        camera,
+        sunDirection: daylight.sunDirection,
+        groundHeight: floorBox.max.y,
+      });
       state = 'outside';
     } catch (err) {
       console.error('Going outside failed:', err);
@@ -92,6 +104,16 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
     get outside() { return state === 'outside'; },
     get terrain() { return terrain; },
     get daylight() { return daylight; },
+
+    /**
+     * Draw the frame, if outside: through the fog and exposure chain.
+     * Returns false inside, where the caller renders as it always has.
+     */
+    render(dt) {
+      if (state !== 'outside' || !post) return false;
+      post.render(dt);
+      return true;
+    },
 
     /** A click in the room. Returns true if it was on the door. */
     handleClick(event) {
