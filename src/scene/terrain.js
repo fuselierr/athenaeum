@@ -88,6 +88,8 @@ export function createTerrain(heightmap, { width = 400, height = 60, segments = 
   // Sand, grass, rock and snow, laid on by slope and height.
   const mesh = new THREE.Mesh(geometry, createTerrainMaterial({ height }));
   mesh.name = 'terrain';
+  // Both: a ridge throws its shadow down the valley beside it.
+  mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
 }

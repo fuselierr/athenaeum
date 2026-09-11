@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { loadHeightmap, createTerrain, terrainHeightAt } from './terrain.js';
+import { addOutdoorLight } from './outdoorLight.js';
 
 /**
  * Going outside, through the door.
@@ -7,8 +8,9 @@ import { loadHeightmap, createTerrain, terrainHeightAt } from './terrain.js';
  * BAREBONES. Clicking the door takes the room away -- walls, ceiling, window,
  * door and floor -- and puts terrain from a heightmap in its place, with the
  * ground under the middle of the room at the height the floor was, so you
- * are still standing on something. That is all. Walking bounds, the book's
- * physics walls, light and coming back in are all still the room's.
+ * are still standing on something -- lit by a sun, the sky's own light, and
+ * an atmosphere to see it through (scene/outdoorLight.js). Walking bounds,
+ * the book's physics walls and coming back in are all still the room's.
  */
 
 const HEIGHTMAP_URL = '/heightmaps/swissalps.raw'; // public/heightmaps
@@ -25,6 +27,7 @@ const TERRAIN = { width: 400, height: 60, segments: 255 };
 export function createOutside({ scene, camera, renderer, room, floor }) {
   let state = 'inside'; // 'loading' | 'outside'
   let terrain = null;
+  let daylight = null;
 
   const _raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
@@ -71,6 +74,13 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
       scene.fog = null;
       camera.far = Math.max(camera.far, TERRAIN.width * 1.5);
       camera.updateProjectionMatrix();
+
+      daylight = addOutdoorLight({
+        scene,
+        renderer,
+        centre: terrain.position.clone().setY(floorBox.max.y),
+        reach: TERRAIN.width / 2,
+      });
       state = 'outside';
     } catch (err) {
       console.error('Going outside failed:', err);
@@ -81,6 +91,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
   return {
     get outside() { return state === 'outside'; },
     get terrain() { return terrain; },
+    get daylight() { return daylight; },
 
     /** A click in the room. Returns true if it was on the door. */
     handleClick(event) {
