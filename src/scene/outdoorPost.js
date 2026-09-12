@@ -93,7 +93,8 @@ class HeightFogPass extends Pass {
         fogStart: { value: FOG.startDistance },
         fogMaxOpacity: { value: FOG.maxOpacity },
         skyDistance: { value: FOG.skyDistance },
-        sunDirection: { value: sunDirection.clone().normalize() },
+        // The vector itself, not a copy: moving the sun moves the glow.
+        sunDirection: { value: sunDirection },
         inscatterColor: {
           value: new THREE.Color(FOG.inscatteringColor).multiplyScalar(FOG.inscatteringBrightness),
         },
@@ -151,6 +152,20 @@ class HeightFogPass extends Pass {
       depthWrite: false,
     });
     this.quad = new FullScreenQuad(this.material);
+    this.brightness = FOG.brightness;
+    this.inscatteringBrightness = FOG.inscatteringBrightness;
+  }
+
+  /** The fog colour's brightness, in scene light units. */
+  setBrightness(value) {
+    this.brightness = value;
+    this.material.uniforms.fogColor.value.set(FOG.color).multiplyScalar(value);
+  }
+
+  /** How bright the glow toward the sun is. */
+  setInscatteringBrightness(value) {
+    this.inscatteringBrightness = value;
+    this.material.uniforms.inscatterColor.value.set(FOG.inscatteringColor).multiplyScalar(value);
   }
 
   render(renderer, writeBuffer, readBuffer) {
@@ -317,7 +332,9 @@ class AutoExposurePass extends Pass {
  * @param {THREE.PerspectiveCamera} opts.camera
  * @param {THREE.Vector3} opts.sunDirection  toward the sun
  * @param {number} opts.groundHeight  world height the fog is thickest at
- * @returns {{ render(dt: number): void, dispose(): void }}
+ * @returns {{ render(dt: number): void, dispose(): void,
+ *   fog: HeightFogPass, exposure: AutoExposurePass }}  the two passes, for
+ *   switching them off (`enabled`) and tuning them live
  */
 export function createOutdoorPost({ renderer, scene, camera, sunDirection, groundHeight }) {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
@@ -344,6 +361,8 @@ export function createOutdoorPost({ renderer, scene, camera, sunDirection, groun
   window.addEventListener('resize', onResize);
 
   return {
+    fog,
+    exposure,
     render(dt) {
       composer.render(dt);
     },

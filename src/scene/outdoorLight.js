@@ -53,9 +53,14 @@ const SKY_LIGHT_INTENSITY = 1;
  * @param {THREE.Vector3} opts.centre  the middle of the ground being lit
  * @param {number} opts.reach  half the width of that ground, metres -- what
  *   the sun's shadows have to cover
- * @returns {{ sky: Sky, sun: THREE.DirectionalLight, sunDirection: THREE.Vector3 }}
+ * @returns {{ sky: Sky, sun: THREE.DirectionalLight, sunDirection: THREE.Vector3,
+ *   sunAngles: { elevation: number, azimuth: number },
+ *   setSunAngles(elevation: number, azimuth: number): void, captureSkyLight(): void }}
+ *   sunDirection is updated in place by setSunAngles, so anything holding it
+ *   (the fog's inscattering) follows the sun without being told.
  */
 export function addOutdoorLight({ scene, renderer, centre, reach }) {
+  const sunAngles = { elevation: SUN_ELEVATION, azimuth: SUN_AZIMUTH };
   const sunDirection = new THREE.Vector3().setFromSphericalCoords(
     1,
     THREE.MathUtils.degToRad(90 - SUN_ELEVATION),
@@ -81,17 +86,27 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   // --- sky light: the sky, captured ------------------------------------------
   // Rendered in a scene of its own, and without the sun disc: the disc is the
   // directional light's job, and captured it would be one blinding texel that
-  // speckles every shiny surface.
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const captureScene = new THREE.Scene();
-  captureScene.add(sky);
-  uniforms.showSunDisc.value = 0;
-  const skyLight = pmrem.fromScene(captureScene).texture;
-  uniforms.showSunDisc.value = 1;
-  pmrem.dispose();
+  // speckles every shiny surface. A function, because the sky can change
+  // (the debug panel) and the capture is then out of date.
+  let skyLight = null;
+  function captureSkyLight() {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const captureScene = new THREE.Scene();
+    const wasVisible = sky.visible;
+    sky.visible = true;
+    captureScene.add(sky);
+    uniforms.showSunDisc.value = 0;
+    const next = pmrem.fromScene(captureScene).texture;
+    uniforms.showSunDisc.value = 1;
+    pmrem.dispose();
+    scene.add(sky); // back out of captureScene: an object has one parent
+    sky.visible = wasVisible;
 
-  scene.add(sky); // leaves captureScene: an object has one parent
-  scene.environment = skyLight;
+    scene.environment = next;
+    skyLight?.dispose();
+    skyLight = next;
+  }
+  captureSkyLight();
   scene.environmentIntensity = SKY_LIGHT_INTENSITY;
   scene.background = null; // the Sky is the background now
 
@@ -117,9 +132,24 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   sun.shadow.normalBias = 0.15;
   scene.add(sun);
 
+  /** Move the sun: the sky's disc, the light, and sunDirection all follow. */
+  function setSunAngles(elevation, azimuth) {
+    sunAngles.elevation = elevation;
+    sunAngles.azimuth = azimuth;
+    sunDirection.setFromSphericalCoords(
+      1,
+      THREE.MathUtils.degToRad(90 - elevation),
+      THREE.MathUtils.degToRad(azimuth),
+    );
+    uniforms.sunPosition.value.copy(sunDirection);
+    sun.position.copy(centre).addScaledVector(sunDirection, reach * 2);
+  }
+
   // --- tone mapping ------------------------------------------------------------
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1; // outdoorPost.js's auto exposure does the rest
 
-  return { sky, sun, sunDirection };
+  return {
+    sky, sun, sunDirection, sunAngles, setSunAngles, captureSkyLight,
+  };
 }

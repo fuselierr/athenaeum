@@ -135,6 +135,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
     get outside() { return state === 'outside'; },
     get terrain() { return terrain; },
     get daylight() { return daylight; },
+    get post() { return post; },
 
     /**
      * Draw the frame, if outside: through the fog and exposure chain.
