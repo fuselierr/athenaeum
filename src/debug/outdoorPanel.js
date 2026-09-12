@@ -6,7 +6,7 @@ import * as THREE from 'three';
  * Only there outside, and only while the rest of the debug overlay is
  * showing: a checkbox to switch each effect on and off, and sliders for the
  * settings behind it -- the sky atmosphere, the sun, the sky light, height
- * fog, exposure and tone mapping. Everything changes live except the sky
+ * fog, exposure, color grading and tone mapping. Everything changes live except the sky
  * light, which is a capture of the sky: it is taken again when a slider that
  * changes the sky is let go, not on every step of the drag. A button at the
  * top puts every control back to what it was when the panel was built --
@@ -304,6 +304,65 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       get: () => renderer.toneMappingExposure,
       set: (v) => { renderer.toneMappingExposure = v; },
     });
+
+    // --- post process volume: color grading ----------------------------------------
+    const grading = post.grading;
+    const graded = (apply) => (v) => { apply(v); grading.update(); };
+    section('Color grading', {
+      get: () => grading.enabled,
+      set: (on) => { grading.enabled = on; },
+    });
+    slider('White balance temp (K)', {
+      min: 1500, max: 15000, step: 50,
+      get: () => grading.settings.temperature,
+      set: graded((v) => { grading.settings.temperature = v; }),
+    });
+    slider('White balance tint', {
+      min: -1, max: 1, step: 0.01,
+      get: () => grading.settings.tint,
+      set: graded((v) => { grading.settings.tint = v; }),
+    });
+    for (const channel of ['r', 'g', 'b']) {
+      slider(`Colour gain ${channel.toUpperCase()}`, {
+        min: 0, max: 2, step: 0.01,
+        get: () => grading.settings.colour[channel],
+        set: graded((v) => { grading.settings.colour[channel] = v; }),
+      });
+    }
+
+    const RANGE_SLIDERS = [
+      ['Saturation', 'saturation', 0, 2, 0.01],
+      ['Contrast', 'contrast', 0.2, 2, 0.01],
+      ['Gamma', 'gamma', 0.2, 3, 0.01],
+      ['Gain', 'gain', 0, 3, 0.01],
+      ['Offset', 'offset', -0.2, 0.2, 0.001],
+    ];
+    for (const [title, name] of [
+      ['Global', 'global'], ['Shadows', 'shadows'], ['Midtones', 'midtones'], ['Highlights', 'highlights'],
+    ]) {
+      section(title);
+      if (name === 'shadows') {
+        slider('Shadows max (luminance)', {
+          min: 0, max: 1, step: 0.01,
+          get: () => grading.settings.shadowsMax,
+          set: graded((v) => { grading.settings.shadowsMax = v; }),
+        });
+      }
+      if (name === 'highlights') {
+        slider('Highlights min (luminance)', {
+          min: 0, max: 1.5, step: 0.01,
+          get: () => grading.settings.highlightsMin,
+          set: graded((v) => { grading.settings.highlightsMin = v; }),
+        });
+      }
+      for (const [label, key, min, max, step] of RANGE_SLIDERS) {
+        slider(label, {
+          min, max, step,
+          get: () => grading.settings[name][key],
+          set: graded((v) => { grading.settings[name][key] = v; }),
+        });
+      }
+    }
   }
 
   return {

@@ -14,6 +14,7 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
  *   render     the scene into a half-float target, with its depth kept
  *   fog        height fog laid over it, from that depth
  *   exposure   the frame's brightness measured, adapted to, and applied
+ *   grading    white balance and colour correction (see GRADING)
  *   output     ACES tone mapping and sRGB, onto the screen
  *
  * EXPONENTIAL HEIGHT FOG. Fog whose density falls off exponentially with
@@ -323,6 +324,217 @@ class AutoExposurePass extends Pass {
   }
 }
 
+// --- color grading --------------------------------------------------------------
+// Unreal's Color Grading, done last -- after the lights, fog and exposure have
+// given all they can -- on the exposed HDR image, before tone mapping, which
+// is where Unreal grades too.
+//
+// WHITE BALANCE is a chromatic adaptation: the white point a light of
+// `temperature` (and `tint`, across the temperature line toward green or
+// magenta) would have, adapted to D65 with the Bradford transform. At 6500 K
+// and no tint it changes nothing. Lower temperatures cool the image, as
+// telling a camera the light is warm does.
+//
+// SHADOWS / MIDTONES / HIGHLIGHTS each take saturation, contrast (about
+// middle grey), gamma, gain and offset, combined with the global ones --
+// multiplied, and offsets added -- and blended by the pixel's luminance:
+// shadows fade out by `shadowsMax`, highlights fade in from `highlightsMin`,
+// midtones are what is left.
+const GRADING = {
+  temperature: 6500, // kelvin
+  tint: 0, // -1 green .. 1 magenta
+  colour: { r: 1, g: 1, b: 1 }, // a global colour gain
+  shadowsMax: 0.09,
+  highlightsMin: 0.5,
+  global: { saturation: 1, contrast: 1, gamma: 1, gain: 1, offset: 0 },
+  shadows: { saturation: 1, contrast: 1, gamma: 1, gain: 1, offset: 0 },
+  midtones: { saturation: 1, contrast: 1, gamma: 1, gain: 1, offset: 0 },
+  highlights: { saturation: 1, contrast: 1, gamma: 1, gain: 1, offset: 0 },
+};
+
+const SRGB_TO_XYZ = new THREE.Matrix3().set(
+  0.4124564, 0.3575761, 0.1804375,
+  0.2126729, 0.7151522, 0.0721750,
+  0.0193339, 0.1191920, 0.9503041,
+);
+const XYZ_TO_SRGB = new THREE.Matrix3().set(
+  3.2404542, -1.5371385, -0.4985314,
+  -0.9692660, 1.8760108, 0.0415560,
+  0.0556434, -0.2040259, 1.0572252,
+);
+const BRADFORD = new THREE.Matrix3().set(
+  0.8951, 0.2664, -0.1614,
+  -0.7502, 1.7135, 0.0367,
+  0.0389, -0.0685, 1.0296,
+);
+const BRADFORD_INVERSE = BRADFORD.clone().invert();
+const D65 = [0.3127, 0.3290];
+
+/** CIE 1960 uv on the Planckian locus at `kelvin` (Krystek's fit). */
+function planckianUV(kelvin) {
+  const t = kelvin;
+  const u = (0.860117757 + 1.54118254e-4 * t + 1.28641212e-7 * t * t)
+    / (1 + 8.42420235e-4 * t + 7.08145163e-7 * t * t);
+  const v = (0.317398726 + 4.22806245e-5 * t + 4.20481691e-8 * t * t)
+    / (1 - 2.89741816e-5 * t + 1.61456053e-7 * t * t);
+  return [u, v];
+}
+
+function uvToXY([u, v]) {
+  const d = 2 * u - 8 * v + 4;
+  return [(3 * u) / d, (2 * v) / d];
+}
+
+/** CIE daylight (D series) chromaticity at `kelvin`; good above 4000 K. */
+function daylightXY(kelvin) {
+  const t = kelvin * (1.4388 / 1.438);
+  const x = t <= 7000
+    ? 0.244063 + (0.09911e3 + (2.9678e6 - 4.6070e9 / t) / t) / t
+    : 0.237040 + (0.24748e3 + (1.9018e6 - 2.0064e9 / t) / t) / t;
+  return [x, -3 * x * x + 2.87 * x - 0.275];
+}
+
+/** The locus point at `kelvin`, moved `tint` along its isotherm. */
+function isothermalXY(kelvin, tint) {
+  const t = kelvin;
+  let [u, v] = planckianUV(t);
+  const du = (-1.13758118e9 - 1.91615621e6 * t - 1.53177 * t * t)
+    / (1.41213984e6 + 1189.62 * t + t * t) ** 2;
+  const dv = (1.97471536e9 - 705674.0 * t - 308.607 * t * t)
+    / (6.19363586e6 - 179.456 * t + t * t) ** 2;
+  const length = Math.hypot(du, dv) || 1;
+  // Perpendicular to the locus; CCT only means anything within +-0.05.
+  u += (-dv / length) * tint * 0.05;
+  v += (du / length) * tint * 0.05;
+  return uvToXY([u, v]);
+}
+
+/** Linear sRGB -> linear sRGB, white balanced. Unreal's WhiteBalance. */
+function whiteBalanceMatrix(kelvin, tint, out) {
+  const planck = uvToXY(planckianUV(kelvin));
+  const source = kelvin < 4000 ? planck : daylightXY(kelvin);
+  const iso = isothermalXY(kelvin, tint);
+  source[0] += iso[0] - planck[0];
+  source[1] += iso[1] - planck[1];
+
+  const xyz = ([x, y]) => new THREE.Vector3(x / y, 1, (1 - x - y) / y);
+  const from = xyz(source).applyMatrix3(BRADFORD);
+  const to = xyz(D65).applyMatrix3(BRADFORD);
+  const vonKries = new THREE.Matrix3().set(
+    to.x / from.x, 0, 0,
+    0, to.y / from.y, 0,
+    0, 0, to.z / from.z,
+  );
+  return out.copy(XYZ_TO_SRGB)
+    .multiply(BRADFORD_INVERSE)
+    .multiply(vonKries)
+    .multiply(BRADFORD)
+    .multiply(SRGB_TO_XYZ);
+}
+
+class ColorGradingPass extends Pass {
+  constructor() {
+    super();
+    /** Live settings, GRADING's shape. Change them, then call update(). */
+    this.settings = structuredClone(GRADING);
+
+    const range = () => ({ value: new THREE.Vector4(1, 1, 1, 1) });
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        whiteBalance: { value: new THREE.Matrix3() },
+        colourGain: { value: new THREE.Vector3(1, 1, 1) },
+        shadowsMax: { value: GRADING.shadowsMax },
+        highlightsMin: { value: GRADING.highlightsMin },
+        // saturation, contrast, gamma, gain -- and each range's offset apart
+        gradeGlobal: range(),
+        gradeShadows: range(),
+        gradeMidtones: range(),
+        gradeHighlights: range(),
+        offsetGlobal: { value: 0 },
+        offsetShadows: { value: 0 },
+        offsetMidtones: { value: 0 },
+        offsetHighlights: { value: 0 },
+      },
+      vertexShader: FULLSCREEN_VERTEX,
+      fragmentShader: /* glsl */`
+        uniform sampler2D tDiffuse;
+        uniform mat3 whiteBalance;
+        uniform vec3 colourGain;
+        uniform float shadowsMax;
+        uniform float highlightsMin;
+        uniform vec4 gradeGlobal;
+        uniform vec4 gradeShadows;
+        uniform vec4 gradeMidtones;
+        uniform vec4 gradeHighlights;
+        uniform float offsetGlobal;
+        uniform float offsetShadows;
+        uniform float offsetMidtones;
+        uniform float offsetHighlights;
+        varying vec2 vUv;
+
+        const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+
+        // Unreal's ColorCorrect: saturation, contrast about middle grey,
+        // gamma, then gain and offset.
+        vec3 correct(vec3 c, vec4 range, float offset) {
+          vec4 g = gradeGlobal * range;
+          c = max(vec3(0.0), mix(vec3(dot(c, LUMA)), c, g.x));
+          c = pow(c / 0.18, vec3(g.y)) * 0.18;
+          c = pow(c, vec3(1.0 / max(g.z, 1e-3)));
+          return c * colourGain * g.w + (offsetGlobal + offset);
+        }
+
+        void main() {
+          vec4 source = texture2D(tDiffuse, vUv);
+          vec3 c = max(whiteBalance * source.rgb, vec3(0.0));
+          float luma = dot(c, LUMA);
+
+          float shadowWeight = 1.0 - smoothstep(0.0, shadowsMax, luma);
+          float highlightWeight = smoothstep(highlightsMin, 1.0, luma);
+          float midtoneWeight = max(1.0 - shadowWeight - highlightWeight, 0.0);
+
+          vec3 graded = correct(c, gradeShadows, offsetShadows) * shadowWeight
+            + correct(c, gradeMidtones, offsetMidtones) * midtoneWeight
+            + correct(c, gradeHighlights, offsetHighlights) * highlightWeight;
+          gl_FragColor = vec4(graded, source.a);
+        }`,
+      depthTest: false,
+      depthWrite: false,
+    });
+    this.quad = new FullScreenQuad(this.material);
+    this.update();
+  }
+
+  /** Push `settings` into the shader. */
+  update() {
+    const s = this.settings;
+    const u = this.material.uniforms;
+    whiteBalanceMatrix(s.temperature, s.tint, u.whiteBalance.value);
+    u.colourGain.value.set(s.colour.r, s.colour.g, s.colour.b);
+    u.shadowsMax.value = s.shadowsMax;
+    u.highlightsMin.value = s.highlightsMin;
+    for (const [name, key] of [
+      ['global', 'Global'], ['shadows', 'Shadows'], ['midtones', 'Midtones'], ['highlights', 'Highlights'],
+    ]) {
+      const r = s[name];
+      u[`grade${key}`].value.set(r.saturation, r.contrast, r.gamma, r.gain);
+      u[`offset${key}`].value = r.offset;
+    }
+  }
+
+  render(renderer, writeBuffer, readBuffer) {
+    this.material.uniforms.tDiffuse.value = readBuffer.texture;
+    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.quad.render(renderer);
+  }
+
+  dispose() {
+    this.material.dispose();
+    this.quad.dispose();
+  }
+}
+
 /**
  * @param {object} opts
  * @param {THREE.WebGLRenderer} opts.renderer  its toneMapping is what the
@@ -332,8 +544,8 @@ class AutoExposurePass extends Pass {
  * @param {THREE.PerspectiveCamera} opts.camera
  * @param {THREE.Vector3} opts.sunDirection  toward the sun
  * @param {number} opts.groundHeight  world height the fog is thickest at
- * @returns {{ render(dt: number): void, dispose(): void,
- *   fog: HeightFogPass, exposure: AutoExposurePass }}  the two passes, for
+ * @returns {{ render(dt: number): void, dispose(): void, fog: HeightFogPass,
+ *   exposure: AutoExposurePass, grading: ColorGradingPass }}  the passes, for
  *   switching them off (`enabled`) and tuning them live
  */
 export function createOutdoorPost({ renderer, scene, camera, sunDirection, groundHeight }) {
@@ -355,6 +567,8 @@ export function createOutdoorPost({ renderer, scene, camera, sunDirection, groun
   composer.addPass(fog);
   const exposure = new AutoExposurePass();
   composer.addPass(exposure);
+  const grading = new ColorGradingPass();
+  composer.addPass(grading);
   composer.addPass(new OutputPass());
 
   const onResize = () => composer.setSize(window.innerWidth, window.innerHeight);
@@ -363,6 +577,7 @@ export function createOutdoorPost({ renderer, scene, camera, sunDirection, groun
   return {
     fog,
     exposure,
+    grading,
     render(dt) {
       composer.render(dt);
     },
@@ -370,6 +585,7 @@ export function createOutdoorPost({ renderer, scene, camera, sunDirection, groun
       window.removeEventListener('resize', onResize);
       fog.dispose();
       exposure.dispose();
+      grading.dispose();
       composer.dispose();
     },
   };
