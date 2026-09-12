@@ -179,6 +179,10 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       get: () => blades.grassFarDensity.value,
       set: (v) => { blades.grassFarDensity.value = v; },
     });
+    section('Flowers', {
+      get: () => grass.showFlowers,
+      set: (on) => { grass.showFlowers = on; },
+    });
     slider('Width scale', {
       min: 0, max: 4, step: 0.01,
       get: () => blades.grassWidthScale.value,
