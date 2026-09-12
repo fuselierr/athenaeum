@@ -164,6 +164,16 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       get: () => blades.grassFullHeightAt.value,
       set: (v) => { blades.grassFullHeightAt.value = v; },
     });
+    slider('Full density out to (m)', {
+      min: 0, max: 40, step: 0.5,
+      get: () => blades.grassDenseRadius.value,
+      set: (v) => { blades.grassDenseRadius.value = v; },
+    });
+    slider('Far density (x full)', {
+      min: 0, max: 1, step: 0.01,
+      get: () => blades.grassFarDensity.value,
+      set: (v) => { blades.grassFarDensity.value = v; },
+    });
     slider('Width scale', {
       min: 0, max: 4, step: 0.01,
       get: () => blades.grassWidthScale.value,

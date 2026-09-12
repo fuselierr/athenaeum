@@ -36,8 +36,16 @@ import { sampleTerrain } from './terrain.js';
  *     the same cell always gets the same turn, so a chunk arriving there shows
  *     the same grass the last one did.
  *
- * Three.js skips chunks out of view by their bounds; update() hides the ones
- * past the fade, and draws fewer blades in the far ones that are left.
+ * DENSEST AROUND YOU. A tile holds more blades than distant grass needs, in
+ * random order, and at any spot only the first so many of them stand: all of
+ * them within a few metres of you, thinning smoothly to a fraction by the
+ * fade. The shader decides that blade by blade, so there is no step in
+ * density at a chunk's edge; update() hands each chunk only as many blades
+ * as the densest spot in it needs, by the same curve, so the ones cut on the
+ * CPU are always ones the shader would have dropped anyway.
+ *
+ * Three.js skips chunks out of view by their bounds, and update() hides the
+ * ones past the fade.
  *
  * WIND. The tip leans downwind by a gust that travels across the field, plus
  * a per-blade flutter -- in world space, whichever way a chunk is turned.
@@ -55,7 +63,7 @@ import { sampleTerrain } from './terrain.js';
 
 const GRASS = {
   chunkSize: 10, // metres on a side
-  bladesPerChunk: 2500, // before the ground decides which of them grow
+  bladesPerChunk: 6000, // at full density, before the ground decides which of them grow
   height: [0.3, 0.75], // metres, shortest .. tallest
   width: [0.06, 0.12], // metres at the base
   baseShade: 0.35, // brightness at the root; the tip is 1
@@ -69,8 +77,8 @@ const GRASS = {
   fullHeightAt: 25, // metres out, along the ground, where blades reach full height
   fadeStart: 30, // metres from the camera where blades start to shrink
   fadeEnd: 45, // and where they are gone -- the grid is sized to reach this
-  thinStart: 12, // metres from the camera where chunks start drawing fewer blades
-  thinnest: 0.15, // the fraction of a chunk's blades still drawn at fadeEnd
+  denseRadius: 6, // metres along the ground where full density starts to thin
+  farDensity: 0.12, // the fraction of blades still standing by fadeEnd
   textureLod: 4, // mip of the ground texture a blade reads: one averaged colour
 };
 
@@ -159,6 +167,9 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
     grassHeightScale: { value: 3 },
     grassNearHeight: { value: GRASS.nearHeight },
     grassFullHeightAt: { value: GRASS.fullHeightAt },
+    grassDenseRadius: { value: GRASS.denseRadius },
+    grassFarDensity: { value: GRASS.farDensity },
+    grassBladesPerChunk: { value: GRASS.bladesPerChunk },
     grassWidthScale: { value: 1 },
     grassBaseShade: { value: GRASS.baseShade },
     grassTextureLod: { value: GRASS.textureLod },
@@ -204,6 +215,9 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
         uniform float grassHeightScale;
         uniform float grassNearHeight;
         uniform float grassFullHeightAt;
+        uniform float grassDenseRadius;
+        uniform float grassFarDensity;
+        uniform float grassBladesPerChunk;
         uniform float grassWidthScale;
         uniform float grassBaseShade;
         uniform sampler2D grassSurface;
@@ -237,6 +251,13 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
         vec2 onTerrain = step(vec2(0.0), grid) * step(grid, vec2(grassSegments));
         float grows = step(bladeLocal.y, grassiness) * onTerrain.x * onTerrain.y;
 
+        // Densest around you. The tile's blades are in random order, so
+        // keeping only the first so many of them is an even thinning; how
+        // many falls with distance along the ground.
+        float along = distance(root.xz, cameraPosition.xz);
+        float density = mix(1.0, grassFarDensity, smoothstep(grassDenseRadius, grassFadeEnd, along));
+        grows *= step(float(gl_InstanceID) + 0.5, density * grassBladesPerChunk);
+
         float left = 1.0 - step(0.5, bladeCorner);
         float right = step(0.5, bladeCorner) - step(1.5, bladeCorner);
         float tip = step(1.5, bladeCorner);
@@ -244,8 +265,7 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
         float fade = (1.0 - smoothstep(grassFadeStart, grassFadeEnd, distance(root, cameraPosition))) * grows;
         // Short underfoot, growing to full height outward. Measured along the
         // ground, so standing on a slope or mid-jump does not change it.
-        float growth = mix(grassNearHeight, 1.0,
-          smoothstep(0.0, grassFullHeightAt, distance(root.xz, cameraPosition.xz)));
+        float growth = mix(grassNearHeight, 1.0, smoothstep(0.0, grassFullHeightAt, along));
         float bladeHeight = bladeData.x * grassHeightScale * growth * fade;
         float halfWidth = 0.5 * bladeData.y * grassWidthScale * fade;
         vec3 side = vec3(cos(bladeData.z), 0.0, sin(bladeData.z));
@@ -405,19 +425,25 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
       follow();
 
       // A chunk whose nearest point is past the fade has nothing left to
-      // show; the rest draw fewer blades the further off they are. The
-      // blades are in random order, so the first N of them are an even spread.
+      // show. The rest are handed only as many of their blades as the densest
+      // spot in them needs; the shader thins those further, blade by blade,
+      // by the same curve.
       const fadeEnd = uniforms.grassFadeEnd.value;
+      const denseRadius = uniforms.grassDenseRadius.value;
+      const farDensity = uniforms.grassFarDensity.value;
+      const half = size / 2;
       drawnChunks = 0;
-      for (const { mesh, radius } of chunks) {
-        const distance = Math.max(0, mesh.position.distanceTo(_camera) - radius);
-        mesh.visible = distance < fadeEnd;
+      for (const { mesh } of chunks) {
+        // Along the ground to the nearest point of the chunk's square -- the
+        // shader's own measure, so never further than any blade in it.
+        const dx = Math.max(0, Math.abs(_camera.x - mesh.position.x) - half);
+        const dz = Math.max(0, Math.abs(_camera.z - mesh.position.z) - half);
+        const nearest = Math.hypot(dx, dz);
+        mesh.visible = nearest < fadeEnd;
         if (!mesh.visible) continue;
         drawnChunks += 1;
-        const thinning = smoothstep(distance, GRASS.thinStart, fadeEnd);
-        mesh.geometry.instanceCount = Math.max(
-          1, Math.round(GRASS.bladesPerChunk * (1 - thinning * (1 - GRASS.thinnest))),
-        );
+        const density = lerp(1, farDensity, smoothstep(nearest, denseRadius, fadeEnd));
+        mesh.geometry.instanceCount = Math.max(1, Math.ceil(GRASS.bladesPerChunk * density));
       }
     },
 
