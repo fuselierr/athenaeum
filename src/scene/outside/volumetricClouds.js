@@ -383,6 +383,15 @@ export class VolumetricCloudsPass extends Pass {
     this.quad = new FullScreenQuad(this.material);
   }
 
+  /**
+   * The graphics quality's say: the render size as a fraction of the screen
+   * (taking effect at the next setSize) and the steps per ray.
+   */
+  setQuality({ resolution, steps }) {
+    this.resolution = resolution;
+    this.material.uniforms.stepCount.value = steps;
+  }
+
   setSize(width, height) {
     this.target.setSize(
       Math.max(1, Math.round(width * this.resolution)),

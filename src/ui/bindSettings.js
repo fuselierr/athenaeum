@@ -1,5 +1,6 @@
 import { watch } from 'vue';
 import { settings } from '../state/settings.js';
+import { qualityPreset } from '../state/quality.js';
 import { backgroundUrl, DEFAULT_BACKGROUND, findBackground } from '../scene/inside/backgrounds.js';
 
 /**
@@ -33,6 +34,13 @@ export function bindSettings({ audio, camera, renderer, scene, environment }) {
     camera.updateProjectionMatrix();
   }, { immediate: true });
 
+  // --- graphics quality: resolution -----------------------------------------
+  // First among the quality watchers, so anything that follows the renderer's
+  // pixel ratio (the outdoor effect chain) reads the new one.
+  watch(() => settings.graphics.quality, () => {
+    renderer.setPixelRatio(qualityPreset().pixelRatio(window.devicePixelRatio));
+  }, { immediate: true });
+
   // --- graphics -----------------------------------------------------------
   watch(() => settings.graphics.shadows, (on) => {
     renderer.shadowMap.enabled = on;
@@ -63,6 +71,27 @@ export function bindSettings({ audio, camera, renderer, scene, environment }) {
   // being one of the parts passed in above.
   function bindRoom(room) {
     watch(() => settings.graphics.walls, (on) => room.setWallsVisible(on), { immediate: true });
+    // Here rather than above because the room's lights are only there now.
+    watch(() => settings.graphics.quality, applyShadowQuality, { immediate: true });
+  }
+
+  // --- graphics quality: shadow maps -----------------------------------------
+  // Every light casting a shadow, sized by the preset: the lamp's point
+  // light, the window's daylight, and the sun when outside exists.
+  function applyShadowQuality() {
+    const preset = qualityPreset();
+    scene.traverse((object) => {
+      if (!object.isLight || !object.castShadow || !object.shadow) return;
+      let size = preset.windowShadow;
+      if (object.isPointLight) size = preset.lampShadow;
+      else if (object.name === 'sun') size = preset.sunShadow;
+      if (object.shadow.mapSize.x === size) return;
+      object.shadow.mapSize.set(size, size);
+      // The map is made at its size; freed, it is made again at the new one.
+      object.shadow.map?.dispose();
+      object.shadow.map = null;
+      object.shadow.needsUpdate = true; // the sun's does not redraw unasked
+    });
   }
 
   return {

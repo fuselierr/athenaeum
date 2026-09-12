@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { qualityPreset } from '../../state/quality.js';
 
 /**
  * Daylight outside: the three pieces an Unreal outdoor level starts from.
@@ -143,7 +144,9 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   scene.add(sun.target);
 
   sun.castShadow = true;
-  sun.shadow.mapSize.set(4096, 4096);
+  // Sized by the graphics quality; ui/bindSettings.js resizes it if that changes.
+  const shadowSize = qualityPreset().sunShadow;
+  sun.shadow.mapSize.set(shadowSize, shadowSize);
   // Wide enough for the ground seen corner to corner from a slant.
   const extent = reach * Math.SQRT2;
   sun.shadow.camera.left = -extent;

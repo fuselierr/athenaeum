@@ -183,6 +183,7 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
     grassDenseRadius: { value: GRASS.denseRadius },
     grassFarDensity: { value: GRASS.farDensity },
     grassBladesPerChunk: { value: GRASS.bladesPerChunk },
+    grassDensityScale: { value: 1 }, // the graphics quality's share of the blades
     grassWidthScale: { value: 1 },
     grassBaseShade: { value: GRASS.baseShade },
     grassTextureLod: { value: GRASS.textureLod },
@@ -234,6 +235,7 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
         uniform float grassDenseRadius;
         uniform float grassFarDensity;
         uniform float grassBladesPerChunk;
+        uniform float grassDensityScale;
         uniform float grassWidthScale;
         uniform float grassBaseShade;
         uniform sampler2D grassSurface;
@@ -272,7 +274,7 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
         // many falls with distance along the ground.
         float along = distance(root.xz, cameraPosition.xz);
         float density = mix(1.0, grassFarDensity, smoothstep(grassDenseRadius, grassFadeEnd, along));
-        grows *= step(float(gl_InstanceID) + 0.5, density * grassBladesPerChunk);
+        grows *= step(float(gl_InstanceID) + 0.5, density * grassDensityScale * grassBladesPerChunk);
 
         float left = 1.0 - step(0.5, bladeCorner);
         float right = step(0.5, bladeCorner) - step(1.5, bladeCorner);
@@ -434,6 +436,11 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
     group,
     uniforms,
     bladesPerChunk: GRASS.bladesPerChunk,
+
+    /** How many of the blades stand, 0..1 -- the graphics quality's grass density. */
+    setDensity(scale) {
+      uniforms.grassDensityScale.value = THREE.MathUtils.clamp(scale, 0, 1);
+    },
     get chunkCount() { return chunks.length; },
     /** Chunks near enough to draw, as of the last update (before view culling). */
     get drawnChunks() { return drawnChunks; },
@@ -479,7 +486,9 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
         if (!mesh.visible) continue;
         drawnChunks += 1;
         const density = lerp(1, farDensity, smoothstep(nearest, denseRadius, fadeEnd));
-        mesh.geometry.instanceCount = Math.max(1, Math.ceil(GRASS.bladesPerChunk * density));
+        mesh.geometry.instanceCount = Math.max(
+          1, Math.ceil(GRASS.bladesPerChunk * density * uniforms.grassDensityScale.value),
+        );
       }
     },
 

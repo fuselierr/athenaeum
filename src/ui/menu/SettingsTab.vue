@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 import { settings } from '../../state/settings.js';
 import { ACTIONS, bind, keys, label, resetBindings } from '../../state/keybindings.js';
 import { ui } from '../../state/ui.js';
+import { QUALITY, QUALITY_LEVELS } from '../../state/quality.js';
 
 /**
  * Audio, controls, and the handful of view settings worth exposing.
@@ -101,6 +102,22 @@ const percent = (v) => `${Math.round(v * 100)}%`;
       <span class="value">{{ settings.camera.fov }}°</span>
     </div>
     <div class="menu-row">
+      <span class="label">Graphics quality</span>
+      <div class="quality" role="radiogroup" aria-label="Graphics quality">
+        <button
+          v-for="level in QUALITY_LEVELS"
+          :key="level"
+          type="button"
+          role="radio"
+          class="quality-option"
+          :class="{ current: settings.graphics.quality === level }"
+          :aria-checked="settings.graphics.quality === level"
+          @click="settings.graphics.quality = level"
+        >{{ QUALITY[level].label }}</button>
+      </div>
+    </div>
+    <p class="menu-hint">{{ (QUALITY[settings.graphics.quality] ?? QUALITY.high).note }}</p>
+    <div class="menu-row">
       <span class="label">Shadows</span>
       <input type="checkbox" v-model="settings.graphics.shadows">
     </div>
@@ -143,6 +160,28 @@ const percent = (v) => `${Math.round(v * 100)}%`;
 
 <style scoped>
 .dimmed { opacity: 0.4; }
+
+.quality {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.quality-option {
+  padding: 5px 9px;
+  border: 1px solid var(--ath-line);
+  border-radius: var(--ath-radius-sm);
+  background: var(--ath-control);
+  color: var(--ath-text-soft);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.quality-option:hover { border-color: var(--ath-line-strong); background: var(--ath-control-hover); }
+.quality-option.current {
+  border-color: var(--ath-orange);
+  background: linear-gradient(135deg, rgba(255, 155, 80, 0.20), rgba(166, 107, 255, 0.16));
+  color: var(--ath-text);
+}
 
 .binding-group { margin-bottom: 14px; }
 .binding-group > h4 {

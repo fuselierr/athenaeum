@@ -633,6 +633,23 @@ export function createOutdoorPost({
     fog,
     exposure,
     grading,
+
+    /**
+     * Apply a graphics quality preset (state/quality.js): anti-aliasing on
+     * the HDR buffers, the clouds' resolution and steps, and the renderer's
+     * pixel ratio, which may have changed with it.
+     */
+    applyQuality({ msaa, cloudResolution, cloudSteps }) {
+      for (const buffer of [composer.renderTarget1, composer.renderTarget2]) {
+        if (buffer.samples === msaa) continue;
+        buffer.samples = msaa;
+        buffer.dispose(); // made again at the new sample count when next drawn into
+      }
+      clouds.setQuality({ resolution: cloudResolution, steps: cloudSteps });
+      // Resizes the buffers and every pass -- the clouds' at their new fraction.
+      composer.setPixelRatio(renderer.getPixelRatio());
+    },
+
     render(dt) {
       composer.render(dt);
     },

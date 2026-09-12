@@ -30,6 +30,7 @@ export const settings = reactive({
   graphics: {
     shadows: true,
     walls: true, // the walls and ceiling; hidden, the room opens onto the backdrop
+    quality: 'high', // a state/quality.js preset: lowest, low, medium, high, highest
   },
   scene: {
     background: null, // a background id; null means the one built in

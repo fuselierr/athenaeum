@@ -7,6 +7,9 @@ import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../../ui/loadingScreen.js';
 import { createGrass } from './grass.js';
 import { world } from '../../state/world.js';
+import { watch } from 'vue';
+import { settings } from '../../state/settings.js';
+import { qualityPreset } from '../../state/quality.js';
 
 /**
  * Going outside, through the door.
@@ -81,6 +84,15 @@ export function createOutside({
   let daylight = null;
   let post = null;
   let grass = null;
+
+  // The graphics quality reaches whatever outdoors is built right now; a trip
+  // built later reads the preset as it builds.
+  function applyQuality() {
+    const preset = qualityPreset();
+    post?.applyQuality(preset);
+    grass?.setDensity(preset.grassDensity);
+  }
+  watch(() => settings.graphics.quality, applyQuality);
 
   // The room's scene-wide settings, taken as you leave and restored as you
   // come back.
@@ -243,6 +255,7 @@ export function createOutside({
         camera,
         parting: lying,
       });
+      grass.setDensity(qualityPreset().grassDensity);
       scene.add(grass.group);
 
       loadingScreen.status('Lighting the sky…');
@@ -275,6 +288,7 @@ export function createOutside({
         skyTexture: daylight.skyTexture,
         sun: daylight.sun,
       });
+      post.applyQuality(qualityPreset());
 
       // Compiled now, behind the screen, rather than as a stall on the first
       // frame outside.
