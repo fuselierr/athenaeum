@@ -52,3 +52,6 @@ Thumbs.db
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Parsed Books
+books/*
