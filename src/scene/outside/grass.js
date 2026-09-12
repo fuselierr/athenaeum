@@ -116,7 +116,7 @@ const GRASS = {
   mixedBunches: 0.4, // with two kinds, the share of bunches that hold both
   mixedShare: 0.35, // and in one of those, the share that is the other kind
   petalShading: 0.7, // how much a face is lit by its cup's own curve, 0 flat like the ground .. 1 fully
-  flowerVibrance: 1.45, // saturation of a lit flower: 1 as the light leaves it, more for more colour
+  flowerVibrance: 1.25, // saturation of a lit flower: 1 as the light leaves it, more for more colour
   flowerStemWidth: 0.01, // metres at the root, times the height scale
   flowerTilt: [0.2, 0.95], // radians a face tips over from looking straight up, least .. most
   flowerNod: 0.6, // how far the wind and you tip a face on top of that, as a share of the stem's lean
