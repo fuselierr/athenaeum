@@ -101,6 +101,15 @@ export const SPINE_COLOR = 0x3d2620;
 const FACE_PY = BOARD_FACE_PY;
 const FACE_NY = BOARD_FACE_NY;
 
+// A shared cover's spine image stands up, head at the top, the way a spine
+// is seen shelved (community/covers.js), while the spine strip's u runs
+// along the book's height -- so it takes a quarter turn, as it does on the
+// shelf models (bookModel.js). If shared spine art comes out upside down on
+// the book in your hand, make this -Math.PI / 2; if it reads mirrored, set
+// SPINE_IMAGE_MIRROR.
+const SPINE_IMAGE_ROTATION = Math.PI / 2;
+const SPINE_IMAGE_MIRROR = false;
+
 // How much is taken off a board's edges. Small on purpose: a real board is
 // eased, not rounded over -- it still reads as a rectangle with a definite
 // edge. A fraction of the board's own thickness, since that is all the
@@ -161,6 +170,10 @@ export function createHardcover({ parent, hardcoverAngles }) {
   const spineMaterial = twoSidedShadows(new THREE.MeshStandardMaterial({
     color: SPINE_COLOR, roughness: 0.78, metalness: 0.04, side: THREE.DoubleSide,
   }));
+
+  // Bumped by every setJacket, so one whose images finish loading after a
+  // later call has begun gives way rather than overwriting it.
+  let jacketToken = 0;
 
   const H1 = makeBoard(+1, frontFaceMaterial, FACE_PY);
   const H2 = makeBoard(-1, backFaceMaterial, FACE_NY);
@@ -379,62 +392,95 @@ export function createHardcover({ parent, hardcoverAngles }) {
     },
 
     /**
-     * Dress the book in a jacket. The front board takes the epub's own
-     * cover image; the spine and back board are SYNTHESIZED from it,
-     * because epub carries a front cover and nothing else -- no back and
-     * no spine artwork exists in the format to extract. The binding
-     * colour is sampled from the cover's border so the whole jacket reads
-     * as one object, and the spine gets the title and author printed
+     * Dress the book in a jacket. The front board takes the cover image --
+     * the epub's own, or a shared cover's (the Community tab). A shared
+     * cover brings its own spine and back as well; otherwise those are
+     * SYNTHESIZED, because epub carries a front cover and nothing else -- no
+     * back and no spine artwork exists in the format to extract. The binding
+     * colour is sampled from the cover's border so the whole jacket reads as
+     * one object, and a synthesized spine gets the title and author printed
      * along it the way a shelved book does.
      *
-     * Safe to call with a null coverUrl (or none at all): the spine label
-     * and binding still render, just over the default board colour.
+     * Safe to call with no images at all: the spine label and binding still
+     * render, just over the default board colour. Every call replaces the
+     * whole jacket, so a shared cover taken off leaves the book as it was;
+     * an image that fails to load is left off rather than failing the rest.
      *
-     * @param {{ coverUrl?: string|null, title?: string|null,
+     * @param {{ coverUrl?: string|null, spineUrl?: string|null,
+     *           backUrl?: string|null, title?: string|null,
      *           author?: string|null }} jacket
      */
-    async setJacket({ coverUrl = null, title = null, author = null } = {}) {
-      let binding = { r: 74, g: 47, b: 36 }; // BOARD_COLOR, if there is no art to sample
-
-      if (coverUrl) {
-        const texture = await new THREE.TextureLoader().loadAsync(coverUrl);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.anisotropy = 8;
-        if (texture.image) binding = sampleBindingColor(texture.image);
-
-        frontFaceMaterial.map?.dispose();
-        frontFaceMaterial.map = texture;
-        frontFaceMaterial.color.set(0xffffff); // show the art's own colours, unmultiplied
-        frontFaceMaterial.needsUpdate = true;
+    async setJacket({
+      coverUrl = null, spineUrl = null, backUrl = null, title = null, author = null,
+    } = {}) {
+      const token = (jacketToken += 1);
+      const loader = new THREE.TextureLoader();
+      const load = (url) => {
+        if (!url) return Promise.resolve(null);
+        return loader.loadAsync(url).then((texture) => {
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.anisotropy = 8;
+          return texture;
+        }, (err) => {
+          console.warn(`Jacket image failed to load: ${url}`, err);
+          return null;
+        });
+      };
+      const [cover, spineArt, back] = await Promise.all([load(coverUrl), load(spineUrl), load(backUrl)]);
+      // A later jacket started while these were loading: it wins.
+      if (token !== jacketToken) {
+        for (const texture of [cover, spineArt, back]) texture?.dispose();
+        return null;
       }
 
-      bindingMaterial.color.set(toHex(binding));
-      // A touch darker than the front, the way a back board sits in shadow
-      // and stops the book reading as identical from both sides.
-      backFaceMaterial.color.set(toHex(shade(binding, 0.86)));
+      let binding = { r: 74, g: 47, b: 36 }; // BOARD_COLOR, if there is no art to sample
+      if (cover?.image) binding = sampleBindingColor(cover.image);
 
-      // The label canvas is laid out along the spine's own proportions --
-      // its long axis is the book's height, its short one the thickness --
-      // so the arc it wraps onto is not distorted.
-      // Developed width of the spine, over its height. Was PI * radius,
-      // the arc length of the half-cylinder the old rounded spine traced;
-      // a flat back just spans the chord, which is about 2/3 of that, so
-      // leaving it would have stretched the title along the spine.
-      const spineWidth = 2 * (SPINE_GAP + midOffset);
-      const aspect = Math.max(0.04, spineWidth / (HINGE_LEN + 2 * square));
-      const labelCanvas = renderSpineLabel({
-        title, author, background: binding,
-        lengthPx: 1024, widthPx: Math.round(1024 * aspect),
-      });
+      frontFaceMaterial.map?.dispose();
+      frontFaceMaterial.map = cover;
+      // The art's own colours, unmultiplied -- or, with none, the plain board.
+      frontFaceMaterial.color.set(cover ? 0xffffff : BOARD_COLOR);
+      frontFaceMaterial.needsUpdate = true;
+
+      bindingMaterial.color.set(toHex(binding));
+
+      // A shared cover's own back, turned as the front is. Without one, a
+      // touch darker than the front, the way a back board sits in shadow
+      // and stops the book reading as identical from both sides.
+      backFaceMaterial.map?.dispose();
+      backFaceMaterial.map = back;
+      backFaceMaterial.color.set(back ? 0xffffff : toHex(shade(binding, 0.86)));
+      backFaceMaterial.needsUpdate = true;
+
       spineMaterial.map?.dispose();
-      const labelTexture = new THREE.CanvasTexture(labelCanvas);
-      labelTexture.colorSpace = THREE.SRGBColorSpace;
-      labelTexture.anisotropy = 8;
-      spineMaterial.map = labelTexture;
+      if (spineArt) {
+        spineArt.center.set(0.5, 0.5);
+        spineArt.rotation = SPINE_IMAGE_ROTATION;
+        if (SPINE_IMAGE_MIRROR) spineArt.repeat.set(-1, 1);
+        spineMaterial.map = spineArt;
+      } else {
+        // The label canvas is laid out along the spine's own proportions --
+        // its long axis is the book's height, its short one the thickness --
+        // so the arc it wraps onto is not distorted.
+        // Developed width of the spine, over its height. Was PI * radius,
+        // the arc length of the half-cylinder the old rounded spine traced;
+        // a flat back just spans the chord, which is about 2/3 of that, so
+        // leaving it would have stretched the title along the spine.
+        const spineWidth = 2 * (SPINE_GAP + midOffset);
+        const aspect = Math.max(0.04, spineWidth / (HINGE_LEN + 2 * square));
+        const labelCanvas = renderSpineLabel({
+          title, author, background: binding,
+          lengthPx: 1024, widthPx: Math.round(1024 * aspect),
+        });
+        const labelTexture = new THREE.CanvasTexture(labelCanvas);
+        labelTexture.colorSpace = THREE.SRGBColorSpace;
+        labelTexture.anisotropy = 8;
+        spineMaterial.map = labelTexture;
+      }
       spineMaterial.color.set(0xffffff);
       spineMaterial.needsUpdate = true;
 
-      return { binding, hasCover: Boolean(coverUrl) };
+      return { binding, hasCover: Boolean(cover) };
     },
 
     /** Call once per frame, after the physics step. */

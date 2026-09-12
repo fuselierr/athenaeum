@@ -39,6 +39,10 @@ import { bindSettings } from './ui/bindSettings.js';
 import { book as bookState } from './state/book.js';
 import { matches } from './state/keybindings.js';
 import { settings } from './state/settings.js';
+import { watch } from 'vue';
+import { account } from './state/account.js';
+import { community } from './state/community.js';
+import { loadAttachments } from './community/covers.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
 // tuned around; a loaded PDF's aspect ratio derives HINGE_LEN from this
@@ -323,7 +327,12 @@ populateShelf(bookshelf, {
     else openSequence += 1;
   },
 })
-  .then((result) => { shelfBooks = result; })
+  .then((result) => {
+    shelfBooks = result;
+    // What the Community tab can put a cover on -- and any covers already on them.
+    community.books = result.books;
+    applyDesigns();
+  })
   .catch((err) => {
     console.error('Shelf books failed to load:', err);
     libraryAnswered = false;
@@ -336,6 +345,25 @@ populateShelf(bookshelf, {
 // The room is standing from here on; only the shelf is still to come, and a
 // server that is slow to wake should not keep anyone at the door.
 loadingScreen.allowSkip(8000);
+
+// --- shared covers (the Community tab) -------------------------------------
+// Which shared cover each of your books wears is kept in your account
+// (community/covers.js); the shelf models follow it. It is read again
+// whenever someone signs in or out, and signed out every book wears its own.
+function applyDesigns() {
+  if (!shelfBooks) return;
+  for (const { id } of community.books) {
+    shelfBooks.setDesign(id, community.attachments[id] ?? null)
+      .catch((err) => console.error(`Shared cover failed to apply to ${id}:`, err));
+  }
+}
+watch(() => community.attachments, applyDesigns);
+watch(() => account.user?.id ?? null, () => {
+  loadAttachments().catch((err) => {
+    console.error('Could not read your shared covers:', err);
+    community.error = `Couldn’t read which covers your books wear: ${err.message}`;
+  });
+}, { immediate: true });
 
 // Reassigned by applyPdfDimensions below, so everything downstream takes a
 // `getPages` closure rather than capturing the instance.
@@ -390,10 +418,20 @@ const fpsCounter = createFpsCounter(); // also in the ` overlay
 // away -- hardcover included -- to rebuild at the new size. So it is kept
 // here and re-applied to whichever simulation is current.
 let jacket = null;
+// Which shelf book that jacket came off, so a shared cover it wears (the
+// Community tab) dresses the real book too. Null for an uploaded file.
+let jacketBookId = null;
 
 function applyJacket() {
-  if (jacket) pages.setJacket(jacket).catch((err) => console.error('Jacket failed to apply:', err));
+  if (!jacket) return;
+  const design = jacketBookId ? community.attachments[jacketBookId] : null;
+  const dressed = design
+    ? { ...jacket, coverUrl: design.front, spineUrl: design.spine, backUrl: design.back }
+    : jacket;
+  pages.setJacket(dressed).catch((err) => console.error('Jacket failed to apply:', err));
 }
+// A cover put on or taken off while its book is out re-dresses the real book.
+watch(() => community.attachments, () => { if (jacketBookId) applyJacket(); });
 
 async function applyPdfDimensions(pageWidthPts, pageHeightPts, pageCount) {
   setPageDimensions(BASE_PANEL_REACH * (pageHeightPts / pageWidthPts), BASE_PANEL_REACH);
@@ -444,6 +482,7 @@ async function openFromShelf(record) {
       onJacket: (j) => {
         if (token !== openSequence) return;
         jacket = j;
+        jacketBookId = record.id;
         applyJacket();
       },
       onChapters: (chapters) => {
@@ -496,6 +535,7 @@ async function openUploadedFile(file) {
       onJacket: (j) => {
         if (!current()) return;
         jacket = j;
+        jacketBookId = null;
         applyJacket();
         if (j.title) bookState.title = j.title;
         bookState.author = j.author;

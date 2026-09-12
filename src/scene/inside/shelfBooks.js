@@ -54,6 +54,12 @@ import { createBookModel } from '../../book/cover/bookModel.js';
  * the caller says where the model's middle and axes sit inside it, and it
  * is placed so those land exactly on the model's.
  *
+ * SHARED COVERS. A book can wear a cover another reader shared (the
+ * Community tab, community/covers.js) instead of its own. setDesign()
+ * rebuilds that one model with the new art and swaps it in exactly where the
+ * old one is -- shelved, pulled out, in hand or hidden -- so nothing about
+ * where the book is changes, only what it looks like.
+ *
  * WHY THE BOOKS ARE PARENTED TO THE SHELF. They go inside an anchor that
  * cancels the shelf group's own scale, so their sizes stay in metres while
  * their placement still rides the shelf's rotation and position. That way
@@ -170,6 +176,32 @@ function thicknessForPages(pages) {
   const count = Number.isFinite(pages) && pages > 0 ? pages : FALLBACK_PAGES;
   const scaled = REFERENCE_THICKNESS * Math.sqrt(count / REFERENCE_PAGES);
   return Math.max(MIN_THICKNESS, Math.min(MAX_THICKNESS, scaled));
+}
+
+/**
+ * The model for one shelf book: in its own jacket, or a shared cover's.
+ *
+ * A shared cover (`design`, see community/covers.js) brings all three faces.
+ * Without one the front is the epub's cover, and the spine and back are
+ * generated from it. The palette is only reached by a book with no art at
+ * all to sample a binding colour from.
+ */
+function dressModel(book, index, { length, width, thickness }, design = null) {
+  const cover = design?.front ?? api(book.coverUrl);
+  return createBookModel({
+    length,
+    width,
+    thickness,
+    title: book.title,
+    author: book.author,
+    blurb: book.description,
+    coverImage: cover,
+    spineImage: design?.spine ?? null,
+    backImage: design?.back ?? null,
+    // Left null when there IS cover art, so the binding is sampled from
+    // it and the spine and back match the jacket rather than a palette.
+    bindingColor: cover ? null : BINDINGS[index % BINDINGS.length],
+  });
 }
 
 /**
@@ -337,18 +369,7 @@ export async function populateShelf(bookshelf, {
     // eslint-disable-next-line no-await-in-loop -- deliberately sequential:
     // each model may fetch a cover, and a shelf's worth at once is a burst
     // of parallel decodes for scenery nobody is waiting on.
-    const model = await createBookModel({
-      length,
-      width,
-      thickness,
-      title: book.title,
-      author: book.author,
-      blurb: book.description,
-      coverImage: api(book.coverUrl),
-      // Left null when there IS cover art, so the binding is sampled from
-      // it and the spine and back match the jacket rather than a palette.
-      bindingColor: book.coverUrl ? null : BINDINGS[i % BINDINGS.length],
-    });
+    const model = await dressModel(book, i, { length, width, thickness });
 
     model.group.quaternion.copy(upright);
     // Out of the shelf is the book's own -Z, the side its spine is on (see
@@ -369,8 +390,12 @@ export async function populateShelf(bookshelf, {
     models.push(model);
     hovering.push({
       book, // the library record, handed to onTake
+      index: i,
       size: { length, width, thickness },
+      model,
       group: model.group,
+      designId: null, // the shared cover it wears, or null for its own
+      dressing: 0, // bumped by each setDesign, so only the latest lands
       rest: model.group.position.clone(),
       out,
       travel: width * PULL_FRACTION,
@@ -439,6 +464,7 @@ export async function populateShelf(bookshelf, {
 
   // --- in hand -------------------------------------------------------------
   let held = null; // the entry the player is holding, or null
+  let disposed = false;
 
   function setHeld(entry) {
     if (entry === held) return;
@@ -496,6 +522,58 @@ export async function populateShelf(bookshelf, {
 
     /** The group of the book in hand, or null. */
     get held() { return held?.group ?? null; },
+
+    /**
+     * Every book on the shelf, as `{ id, title, author, size }` with size in
+     * metres -- what the Community tab offers to put a cover on.
+     */
+    get books() {
+      return hovering.map(({ book, size }) => ({
+        id: book.id, title: book.title, author: book.author, size: { ...size },
+      }));
+    },
+
+    /**
+     * Dress a shelf book in a shared cover (community/covers.js), or back in
+     * its own with null. The model is rebuilt with the new art and swapped
+     * in where the old one is, pose and visibility and all.
+     *
+     * Asking for the cover it already wears does nothing, and a later ask
+     * made while a rebuild is still loading wins over the earlier one. A
+     * cover whose images fail to load leaves the book as it was.
+     */
+    async setDesign(bookId, design) {
+      const entry = hovering.find((candidate) => candidate.book.id === bookId);
+      const designId = design?.id ?? null;
+      if (!entry || entry.designId === designId) return;
+      const previous = entry.designId;
+      entry.designId = designId;
+      const token = (entry.dressing += 1);
+
+      let model;
+      try {
+        model = await dressModel(entry.book, entry.index, entry.size, design);
+      } catch (err) {
+        console.error(`Shelf: could not dress "${entry.book.title ?? bookId}" in its cover:`, err);
+        if (token === entry.dressing) entry.designId = previous;
+        return;
+      }
+      if (disposed || token !== entry.dressing) {
+        model.dispose();
+        return;
+      }
+
+      const old = entry.model;
+      model.group.position.copy(old.group.position);
+      model.group.quaternion.copy(old.group.quaternion);
+      model.group.visible = old.group.visible;
+      anchor.remove(old.group);
+      anchor.add(model.group);
+      old.dispose();
+      models[models.indexOf(old)] = model;
+      entry.model = model;
+      entry.group = model.group;
+    },
 
     /**
      * Route a click here. Returns whether it landed on a book, so a caller
@@ -619,6 +697,7 @@ export async function populateShelf(bookshelf, {
     },
 
     dispose() {
+      disposed = true;
       if (onPointerMove) window.removeEventListener('pointermove', onPointerMove);
       if (onPointerLeave) renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
       for (const model of models) model.dispose();

@@ -52,6 +52,11 @@ const PAPER_COLOR = 0xe6dcc4;
  * @param {string|null} [opts.spineImage]  spine
  * @param {string|null} [opts.backImage]   back board
  *
+ * Each image the way it is SEEN: the front and back boards as they face
+ * you, and the spine standing up, head at the top, as on a shelf -- which is
+ * how shared covers are made (community/covers.js). They are turned onto
+ * the faces here.
+ *
  * @param {boolean} [opts.spineTextTowardTail]  which way the spine reads
  * @param {number|null} [opts.bindingColor]  overrides the colour otherwise
  *   sampled from the cover art
@@ -143,12 +148,27 @@ export async function createBookModel({
       heightPx: Math.max(64, Math.round((512 * length) / width)),
     }));
 
-  // English spines read top-to-bottom shelved, which is the opposite way
-  // round from how the canvas lands on the board. Flipping u is cheaper
-  // than re-rendering the label mirrored.
-  if (spineTextTowardTail) {
+  // A spine image stands up, head at the top, but the spine face's u runs
+  // along the length from the head (-X) and its v through the boards toward
+  // the front one (+Y): a quarter turn puts the image's top at the head and
+  // its right-hand edge against the front board, as on a jacket laid flat.
+  if (spineImage) {
+    spineTexture.center.set(0.5, 0.5);
+    spineTexture.rotation = Math.PI / 2;
+  } else if (spineTextTowardTail) {
+    // English spines read top-to-bottom shelved, which is the opposite way
+    // round from how the canvas lands on the board. Flipping u is cheaper
+    // than re-rendering the label mirrored.
     spineTexture.center.set(0.5, 0.5);
     spineTexture.repeat.set(-1, 1);
+  }
+
+  // A back image stands up like the front and takes the same quarter turn:
+  // the back board's v runs the other way across it, which is exactly what
+  // looking at it from the other side needs.
+  if (backImage) {
+    backTexture.center.set(0.5, 0.5);
+    backTexture.rotation = Math.PI * -1 / 2;
   }
 
   // --- materials ---------------------------------------------------------
