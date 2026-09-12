@@ -4,7 +4,8 @@ import { startSession } from '../auth/session.js';
 import { account } from '../state/account.js';
 
 /**
- * Put the account control on screen and load whoever is signed in.
+ * Put the top right corner's controls on screen -- the menu button and the
+ * account -- and load whoever is signed in.
  *
  * Separate from mountMenu: the menu is an overlay that comes and goes, and
  * this is always there. Its own host and its own app, so neither one's

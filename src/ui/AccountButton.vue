@@ -2,15 +2,26 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { account, displayName } from '../state/account.js';
 import { signInWith, signOut } from '../auth/session.js';
+import { ui } from '../state/ui.js';
+import { keys, label } from '../state/keybindings.js';
 
 /**
- * The account control, top right.
+ * The controls in the top right corner: the menu button, and the account.
  *
- * Always on screen, menu open or not, so it is mounted on its own (see
- * ui/mountAccount.js) rather than inside the menu's overlay. Signed out, it
- * opens a small panel offering Google and Discord. Signed in, it shows who
- * you are and the same panel offers a way out.
+ * Always on screen, menu open or not, so they are mounted on their own (see
+ * ui/mountAccount.js) rather than inside the menu's overlay -- which is also
+ * what lets the menu button close the menu it opened.
+ *
+ * The menu button is the way in for anyone who does not know about Escape,
+ * or has no keyboard. It only flips ui.menuOpen, the same flag Escape does
+ * (ui/mountMenu.js).
+ *
+ * The account: signed out, it opens a small panel offering Google and
+ * Discord. Signed in, it shows who you are and the same panel offers a way
+ * out.
  */
+
+const menuKey = computed(() => label(keys['menu.toggle']));
 
 const open = ref(false);
 const root = ref(null);
@@ -40,6 +51,23 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
 </script>
 
 <template>
+  <div class="corner">
+  <button
+    class="menu-trigger"
+    type="button"
+    :title="`${ui.menuOpen ? 'Close the menu' : 'Menu'} (${menuKey})`"
+    :aria-label="ui.menuOpen ? 'Close the menu' : 'Open the menu'"
+    :aria-expanded="ui.menuOpen"
+    @click="ui.menuOpen = !ui.menuOpen"
+  >
+    <svg v-if="!ui.menuOpen" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+      <path d="M3 5.5h14M3 10h14M3 14.5h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    </svg>
+    <svg v-else viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+      <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    </svg>
+  </button>
+
   <div v-if="account.ready" ref="root" class="account">
     <button
       v-if="!account.user"
@@ -98,18 +126,47 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
       <p v-if="account.error" class="account-error">{{ account.error }}</p>
     </div>
   </div>
+  </div>
 </template>
 
 <style scoped>
-.account {
+.corner {
   position: fixed;
   top: 12px;
   right: 12px;
-  /* Above the menu's scrim (10), so it stays usable with the menu open. */
+  /* Above the menu's scrim (10), so both stay usable with the menu open. */
   z-index: 11;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   font: var(--ath-font);
   color: var(--ath-text);
 }
+
+/* The account panel hangs off this. */
+.account { position: relative; }
+
+.menu-trigger {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  /* The same glass and ring as the account trigger beside it. */
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background:
+    linear-gradient(var(--ath-glass-ring), var(--ath-glass-ring)) padding-box,
+    var(--ath-accent-gradient) border-box;
+  backdrop-filter: var(--ath-glass-blur);
+  -webkit-backdrop-filter: var(--ath-glass-blur);
+  box-shadow: 0 6px 20px rgba(20, 4, 18, 0.35);
+  color: var(--ath-text);
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.menu-trigger:hover { filter: brightness(1.15); }
+.menu-trigger:focus-visible { outline: none; box-shadow: var(--ath-focus); }
 
 .account-trigger {
   display: flex;
