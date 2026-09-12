@@ -5,7 +5,7 @@ import * as THREE from 'three';
  *
  * Only there outside, and only while the rest of the debug overlay is
  * showing: a checkbox to switch each effect on and off, and sliders for the
- * settings behind it -- the grass, the terrain's tiling tricks, the sky atmosphere, the
+ * settings behind it -- the grass, the terrain's tiling tricks, the clouds, the sky atmosphere, the
  * sun, the sky light, height fog, exposure, color grading and tone mapping. Everything changes live except the sky
  * light, which is a capture of the sky: it is taken again when a slider that
  * changes the sky is let go, not on every step of the drag. A button at the
@@ -308,9 +308,48 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     });
 
     // --- exponential height fog ------------------------------------------------
+    // --- volumetric clouds -------------------------------------------------------
+    const cloud = post.clouds.material.uniforms;
+    section('Volumetric clouds', {
+      get: () => post.clouds.enabled,
+      set: (on) => { post.clouds.enabled = on; },
+    });
+    for (const [label, name, min, max, step] of [
+      ['Coverage', 'coverage', 0, 1, 0.01],
+      ['Density (per m)', 'density', 0, 0.1, 0.0005],
+      ['Bottom (m)', 'bottom', 100, 6000, 10],
+      ['Top (m)', 'top', 200, 9000, 10],
+      ['Shape scale (m)', 'shapeScale', 500, 20000, 50],
+      ['Detail scale (m)', 'detailScale', 50, 5000, 10],
+      ['Detail erosion', 'detailStrength', 0, 1, 0.01],
+      ['Sun light', 'sunLight', 0, 5, 0.01],
+      ['Sky light', 'ambient', 0, 4, 0.01],
+      ['Absorption', 'absorption', 0, 4, 0.01],
+      ['Powder (dark edges)', 'powder', 0, 1, 0.01],
+      ['Silver lining (g)', 'forwardScattering', 0, 0.99, 0.01],
+      ['Steps', 'stepCount', 8, 64, 1],
+      ['Max distance (m)', 'maxDistance', 2000, 80000, 500],
+    ]) {
+      slider(label, {
+        min, max, step,
+        get: () => cloud[name].value,
+        set: (v) => { cloud[name].value = v; },
+      });
+    }
+    slider('Wind x (m/s)', {
+      min: -60, max: 60, step: 0.5,
+      get: () => cloud.wind.value.x,
+      set: (v) => { cloud.wind.value.x = v; },
+    });
+    slider('Wind z (m/s)', {
+      min: -60, max: 60, step: 0.5,
+      get: () => cloud.wind.value.y,
+      set: (v) => { cloud.wind.value.y = v; },
+    });
+
     section('Exponential height fog', {
-      get: () => post.fog.enabled,
-      set: (on) => { post.fog.enabled = on; },
+      get: () => post.fog.fogEnabled,
+      set: (on) => { post.fog.fogEnabled = on; },
     });
     slider('Density', {
       min: 0, max: 0.05, step: 0.0005,

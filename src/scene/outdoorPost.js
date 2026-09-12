@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { VolumetricCloudsPass } from './volumetricClouds.js';
 
 /**
  * Outside's post-processing: exponential height fog, and a post process
@@ -12,7 +13,11 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
  * THE CHAIN, all in linear HDR until the very end:
  *
  *   render     the scene into a half-float target, with its depth kept
- *   fog        height fog laid over it, from that depth
+ *   clouds     volumetric clouds, ray-marched into a target of their own
+ *              (scene/volumetricClouds.js)
+ *   fog        the clouds laid onto the sky, then height fog over it all,
+ *              from that depth -- the clouds are composited here rather than
+ *              in a pass of their own because this is where the depth is
  *   exposure   the frame's brightness measured, adapted to, and applied
  *   grading    white balance and colour correction (see GRADING)
  *   output     ACES tone mapping and sRGB, onto the screen
@@ -88,13 +93,16 @@ const FULLSCREEN_VERTEX = /* glsl */`
   }`;
 
 class HeightFogPass extends Pass {
-  constructor({ camera, sunDirection, groundHeight, skyTexture }) {
+  constructor({ camera, sunDirection, groundHeight, skyTexture, clouds = null }) {
     super();
     this.camera = camera;
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         tDiffuse: { value: null },
         tDepth: { value: null },
+        tClouds: { value: null },
+        cloudsOn: { value: 0 },
+        fogOn: { value: 1 },
         projectionInverse: { value: new THREE.Matrix4() },
         cameraWorld: { value: new THREE.Matrix4() },
         cameraPos: { value: new THREE.Vector3() }, // not three's cameraPosition: that is the quad's camera
@@ -118,6 +126,9 @@ class HeightFogPass extends Pass {
       fragmentShader: /* glsl */`
         uniform sampler2D tDiffuse;
         uniform sampler2D tDepth;
+        uniform sampler2D tClouds;
+        uniform float cloudsOn;
+        uniform float fogOn;
         uniform mat4 projectionInverse;
         uniform mat4 cameraWorld;
         uniform vec3 cameraPos;
@@ -149,6 +160,11 @@ class HeightFogPass extends Pass {
           // far plane (the sky) the reconstruction divides by zero.
           vec3 direction = normalize(worldAt(0.0) - cameraPos);
           bool isSky = depth >= 0.99999;
+          // The clouds, onto the sky only: they are always above the ground.
+          if (isSky && cloudsOn > 0.5) {
+            vec4 clouds = texture2D(tClouds, vUv);
+            scene.rgb = scene.rgb * clouds.a + clouds.rgb;
+          }
           // Not called "distance": that is a GLSL built-in.
           float rayLength = isSky ? skyDistance : length(worldAt(depth * 2.0 - 1.0) - cameraPos);
           rayLength = max(rayLength - fogStart, 0.0);
@@ -158,7 +174,7 @@ class HeightFogPass extends Pass {
           float rise = fogFalloff * direction.y * rayLength;
           float spread = abs(rise) > 1e-4 ? (1.0 - exp(-rise)) / rise : 1.0 - 0.5 * rise;
           float amount = atCamera * rayLength * spread;
-          float opacity = min(1.0 - exp(-amount), fogMaxOpacity);
+          float opacity = min(1.0 - exp(-amount), fogMaxOpacity) * fogOn;
 
           // The sky in this direction -- never below the horizon, where the
           // sky model goes dark, since what lies between is still air.
@@ -172,6 +188,7 @@ class HeightFogPass extends Pass {
       depthWrite: false,
     });
     this.quad = new FullScreenQuad(this.material);
+    this.clouds = clouds;
     this.brightness = FOG.brightness;
     this.inscatteringBrightness = FOG.inscatteringBrightness;
   }
@@ -181,6 +198,13 @@ class HeightFogPass extends Pass {
     this.brightness = value;
     this.material.uniforms.fogColor.value.set(FOG.color).multiplyScalar(value);
   }
+
+  /**
+   * Whether the fog itself is on. Not the pass's `enabled`: the pass also
+   * lays the clouds onto the sky, which have to keep showing without fog.
+   */
+  get fogEnabled() { return this.material.uniforms.fogOn.value > 0.5; }
+  set fogEnabled(on) { this.material.uniforms.fogOn.value = on ? 1 : 0; }
 
   /** How bright the glow toward the sun is. */
   setInscatteringBrightness(value) {
@@ -192,6 +216,8 @@ class HeightFogPass extends Pass {
     const u = this.material.uniforms;
     u.tDiffuse.value = readBuffer.texture;
     u.tDepth.value = readBuffer.depthTexture;
+    u.cloudsOn.value = this.clouds?.enabled ? 1 : 0;
+    u.tClouds.value = this.clouds?.texture ?? null;
     u.projectionInverse.value.copy(this.camera.projectionMatrixInverse);
     u.cameraWorld.value.copy(this.camera.matrixWorld);
     u.cameraPos.value.setFromMatrixPosition(this.camera.matrixWorld);
@@ -564,12 +590,15 @@ class ColorGradingPass extends Pass {
  * @param {THREE.Vector3} opts.sunDirection  toward the sun
  * @param {number} opts.groundHeight  world height the fog is thickest at
  * @param {THREE.CubeTexture} opts.skyTexture  the sky, for the fog's colour
+ *   and the clouds' ambient light
+ * @param {THREE.DirectionalLight} opts.sun  the clouds are lit by its colour
+ *   and intensity
  * @returns {{ render(dt: number): void, dispose(): void, fog: HeightFogPass,
  *   exposure: AutoExposurePass, grading: ColorGradingPass }}  the passes, for
  *   switching them off (`enabled`) and tuning them live
  */
 export function createOutdoorPost({
-  renderer, scene, camera, sunDirection, groundHeight, skyTexture,
+  renderer, scene, camera, sunDirection, groundHeight, skyTexture, sun,
 }) {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   // Half float for HDR, multisampled because a render target does not get the
@@ -585,7 +614,9 @@ export function createOutdoorPost({
   composer.setSize(window.innerWidth, window.innerHeight);
 
   composer.addPass(new RenderPass(scene, camera));
-  const fog = new HeightFogPass({ camera, sunDirection, groundHeight, skyTexture });
+  const clouds = new VolumetricCloudsPass({ camera, sun, sunDirection, skyTexture });
+  composer.addPass(clouds);
+  const fog = new HeightFogPass({ camera, sunDirection, groundHeight, skyTexture, clouds });
   composer.addPass(fog);
   const exposure = new AutoExposurePass();
   composer.addPass(exposure);
@@ -597,6 +628,7 @@ export function createOutdoorPost({
   window.addEventListener('resize', onResize);
 
   return {
+    clouds,
     fog,
     exposure,
     grading,
@@ -605,6 +637,7 @@ export function createOutdoorPost({
     },
     dispose() {
       window.removeEventListener('resize', onResize);
+      clouds.dispose();
       fog.dispose();
       exposure.dispose();
       grading.dispose();

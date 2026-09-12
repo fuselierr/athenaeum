@@ -198,6 +198,9 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
         centre: terrain.position.clone().setY(floorBox.max.y),
         reach: TERRAIN.width / 2,
       });
+      // The cloud noise is generated here, which takes a moment.
+      loadingScreen.status('Gathering clouds…');
+      await nextFrame();
       post = createOutdoorPost({
         renderer,
         scene,
@@ -205,6 +208,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
         sunDirection: daylight.sunDirection,
         groundHeight: floorBox.max.y,
         skyTexture: daylight.skyTexture,
+        sun: daylight.sun,
       });
 
       // Compiled now, behind the screen, rather than as a stall on the first
