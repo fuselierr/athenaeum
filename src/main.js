@@ -28,6 +28,7 @@ import { createBookCarry } from './input/bookCarry.js';
 import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
 import { createOutdoorPanel } from './debug/outdoorPanel.js';
+import { createFpsCounter } from './debug/fpsCounter.js';
 import { initBookLoader, openLibraryBook, uploadBook } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
 import './ui/theme.css'; // the interface's colours, for every panel
@@ -352,6 +353,7 @@ const debugLabels = createDebugLabels({ scene, camera, renderer, getPages });
 const anglePanel = createAnglePanel({ getPages, getPageTurn: () => dragPageTurn });
 // Outdoor lighting switches and sliders, in the same ` overlay -- outside only.
 const outdoorPanel = createOutdoorPanel({ getOutside: () => outside, renderer, scene });
+const fpsCounter = createFpsCounter(); // also in the ` overlay
 
 // --- book loading ---
 // HINGE_LEN/PANEL_REACH/SPINE_GAP are baked into physics bodies and
@@ -738,6 +740,7 @@ renderer.setAnimationLoop(() => {
   debugLabels.update();
   anglePanel.update();
   outdoorPanel.update(anglePanel.visible);
+  fpsCounter.update(anglePanel.visible);
 });
 
 if (import.meta.env.DEV) {

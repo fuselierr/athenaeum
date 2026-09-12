@@ -5,7 +5,7 @@ import * as THREE from 'three';
  *
  * Only there outside, and only while the rest of the debug overlay is
  * showing: a checkbox to switch each effect on and off, and sliders for the
- * settings behind it -- the terrain's tiling tricks, the sky atmosphere, the
+ * settings behind it -- the grass, the terrain's tiling tricks, the sky atmosphere, the
  * sun, the sky light, height fog, exposure, color grading and tone mapping. Everything changes live except the sky
  * light, which is a capture of the sky: it is taken again when a slider that
  * changes the sky is let go, not on every step of the drag. A button at the
@@ -27,7 +27,7 @@ import * as THREE from 'three';
 export function createOutdoorPanel({ getOutside, renderer, scene }) {
   let el = null;
 
-  function build(daylight, post, terrain) {
+  function build(daylight, post, terrain, grass) {
     el = document.createElement('div');
     Object.assign(el.style, {
       position: 'fixed',
@@ -128,6 +128,53 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       row.append(name, value, input);
       el.append(row);
     }
+
+    // --- grass --------------------------------------------------------------------
+    const blades = grass.uniforms;
+    section(`Grass (${grass.count.toLocaleString()} blades, ${grass.chunkCount} chunks)`, {
+      get: () => grass.group.visible,
+      set: (on) => { grass.group.visible = on; },
+    });
+    slider('Wind strength', {
+      min: 0, max: 1.5, step: 0.01,
+      get: () => blades.grassWindStrength.value,
+      set: (v) => { blades.grassWindStrength.value = v; },
+    });
+    slider('Wind speed', {
+      min: 0, max: 5, step: 0.05,
+      get: () => blades.grassWindSpeed.value,
+      set: (v) => { blades.grassWindSpeed.value = v; },
+    });
+    slider('Height scale', {
+      min: 0, max: 3, step: 0.01,
+      get: () => blades.grassHeightScale.value,
+      set: (v) => { blades.grassHeightScale.value = v; },
+    });
+    slider('Width scale', {
+      min: 0, max: 4, step: 0.01,
+      get: () => blades.grassWidthScale.value,
+      set: (v) => { blades.grassWidthScale.value = v; },
+    });
+    slider('Ground texture influence', {
+      min: 0, max: 1, step: 0.01,
+      get: () => blades.grassGroundInfluence.value,
+      set: (v) => { blades.grassGroundInfluence.value = v; },
+    });
+    slider('Root shade (AO)', {
+      min: 0, max: 1, step: 0.01,
+      get: () => blades.grassBaseShade.value,
+      set: (v) => { blades.grassBaseShade.value = v; },
+    });
+    slider('Fade start (m)', {
+      min: 0, max: 100, step: 1,
+      get: () => blades.grassFadeStart.value,
+      set: (v) => { blades.grassFadeStart.value = v; },
+    });
+    slider('Fade end (m)', {
+      min: 1, max: 100, step: 1,
+      get: () => blades.grassFadeEnd.value,
+      set: (v) => { blades.grassFadeEnd.value = v; },
+    });
 
     // --- terrain: distance tiling and macro variation -----------------------------
     const ground = terrain.material.userData.uniforms;
@@ -423,7 +470,7 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     update(debugVisible) {
       const outside = getOutside();
       const show = Boolean(debugVisible && outside?.outside && outside.daylight && outside.post);
-      if (show && !el) build(outside.daylight, outside.post, outside.terrain);
+      if (show && !el) build(outside.daylight, outside.post, outside.terrain, outside.grass);
       if (el) el.style.display = show ? 'block' : 'none';
     },
   };

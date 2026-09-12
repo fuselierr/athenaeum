@@ -3,6 +3,7 @@ import { loadHeightmap, createTerrain, terrainHeightAt } from './terrain.js';
 import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../ui/loadingScreen.js';
+import { createGrass } from './grass.js';
 
 /**
  * Going outside, through the door.
@@ -39,6 +40,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
   let terrain = null;
   let daylight = null;
   let post = null;
+  let grass = null;
 
   const _raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
@@ -83,15 +85,28 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
       });
       await terrain.material.userData.ready;
 
-      loadingScreen.status('Lighting the sky…');
-      await nextFrame();
-
       // The ground under the middle of the room goes where the floor was.
       const floorBox = new THREE.Box3().setFromObject(floor);
       const middle = floorBox.getCenter(new THREE.Vector3());
       terrain.position.set(middle.x, 0, middle.z);
       terrain.position.y = floorBox.max.y - terrainHeightAt(heightmap, terrain, middle.x, middle.z, TERRAIN);
+      terrain.updateMatrixWorld();
       scene.add(terrain);
+
+      // Planted once the ground is in place, around where you will be standing.
+      loadingScreen.status('Growing the grass…');
+      await nextFrame();
+      grass = createGrass({
+        terrain,
+        centre: middle,
+        terrainWidth: TERRAIN.width,
+        segments: TERRAIN.segments,
+        camera,
+      });
+      scene.add(grass.group);
+
+      loadingScreen.status('Lighting the sky…');
+      await nextFrame();
 
       room.group.visible = false;
       floor.visible = false;
@@ -137,6 +152,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
     get terrain() { return terrain; },
     get daylight() { return daylight; },
     get post() { return post; },
+    get grass() { return grass; },
 
     /**
      * Draw the frame, if outside: through the fog and exposure chain.
@@ -144,6 +160,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
      */
     render(dt) {
       if (state !== 'outside' || !post) return false;
+      grass?.update(dt);
       post.render(dt);
       return true;
     },
