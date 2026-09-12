@@ -5,7 +5,7 @@ import * as THREE from 'three';
  *
  * To stop shadow acne, three.js looks a surface up in the shadow map from a
  * point pushed a little way off it along its normal (a light's
- * shadow.normalBias -- the window's daylight uses 2 cm, scene/room.js). But
+ * shadow.normalBias -- the window's daylight uses 2 cm, scene/inside/room.js). But
  * it pushes along the GEOMETRIC normal, the one the triangles were wound
  * with, and on a DoubleSide material that is only the side you are looking
  * at half the time. On the other half the point is pushed through to the

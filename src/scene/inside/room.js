@@ -3,7 +3,7 @@ import * as THREE from 'three';
 /**
  * The room the desk is standing in: four walls, a ceiling, and a window.
  *
- * BUILT ON THE FLOOR, literally. scene/floor.js already sizes a slab from
+ * BUILT ON THE FLOOR, literally. scene/inside/floor.js already sizes a slab from
  * whatever has to stand on it, and cameraModes walks you around inside that
  * same slab -- so the walls take their footprint from the floor mesh rather
  * than recomputing it. One margin, one footprint, and the walls land

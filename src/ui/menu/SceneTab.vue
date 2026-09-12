@@ -3,7 +3,7 @@ import { ref } from 'vue';
 import { settings } from '../../state/settings.js';
 import { ui } from '../../state/ui.js';
 import { world } from '../../state/world.js';
-import { BACKGROUNDS, DEFAULT_BACKGROUND } from '../../scene/backgrounds.js';
+import { BACKGROUNDS, DEFAULT_BACKGROUND } from '../../scene/inside/backgrounds.js';
 
 /**
  * Where the reading happens: in the room or outside, and the room's

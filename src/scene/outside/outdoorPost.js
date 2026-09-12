@@ -8,13 +8,13 @@ import { VolumetricCloudsPass } from './volumetricClouds.js';
 /**
  * Outside's post-processing: exponential height fog, and a post process
  * volume that controls exposure -- the two Unreal pieces an outdoor level
- * adds on top of its sun, sky light and atmosphere (scene/outdoorLight.js).
+ * adds on top of its sun, sky light and atmosphere (scene/outside/outdoorLight.js).
  *
  * THE CHAIN, all in linear HDR until the very end:
  *
  *   render     the scene into a half-float target, with its depth kept
  *   clouds     volumetric clouds, ray-marched into a target of their own
- *              (scene/volumetricClouds.js)
+ *              (scene/outside/volumetricClouds.js)
  *   fog        the clouds laid onto the sky, then height fog over it all,
  *              from that depth -- the clouds are composited here rather than
  *              in a pass of their own because this is where the depth is
@@ -40,7 +40,7 @@ import { VolumetricCloudsPass } from './volumetricClouds.js';
  * ITS COLOUR IS THE SKY'S. A flat fog colour never matches the sky behind
  * it: fogging the horizon with one grey paints a grey ring round the whole
  * scene. So the fog is coloured by a cubemap of the sky itself
- * (scene/outdoorLight.js), read in the direction you are looking -- level
+ * (scene/outside/outdoorLight.js), read in the direction you are looking -- level
  * with the horizon when you look down, since that is the air in between --
  * and blurred, so it is the sky's colour rather than its detail. The horizon
  * then fogs into the horizon, which is how distance reads as haze. Unreal's
@@ -64,7 +64,7 @@ const FOG = {
   maxOpacity: 1,
   color: 0xffffff, // a tint on the sky's own colour
   brightness: 1, // times the sky's brightness
-  skyBlur: 3, // mip level of the sky cubemap read: 3 is 8 px a face, soft
+  skyBlur: 3, // mip level of the sky cubemap read: 3 is 16 px a face, soft
   // Toward the sun: its colour, how strongly, and how tight a glow.
   inscatteringColor: 0xffe2b8,
   inscatteringBrightness: 0.8,

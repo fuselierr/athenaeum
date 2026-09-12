@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FURNITURE_SCALE } from './worldScale.js';
+import { FURNITURE_SCALE } from '../worldScale.js';
 
 /**
  * Loads the desk the book sits on (public/desk.glb) and scales/positions it

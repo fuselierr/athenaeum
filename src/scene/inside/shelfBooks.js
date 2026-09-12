@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { api } from '../loader/api.js';
-import { createBookModel } from '../book/cover/bookModel.js';
+import { api } from '../../loader/api.js';
+import { createBookModel } from '../../book/cover/bookModel.js';
 
 /**
  * Fills a slot in the bookshelf with static book models.

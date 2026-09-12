@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FURNITURE_SCALE } from './worldScale.js';
+import { FURNITURE_SCALE } from '../worldScale.js';
 
 // Metres. A real bookshelf is about 1.9 m; this was 4.2 back when the
 // world was scaled to the book's own units rather than the other way

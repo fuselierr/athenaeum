@@ -26,7 +26,7 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
  *            thinnest edges; a two-lobe Henyey-Greenstein phase makes the
  *            silver lining toward the sun.
  *   ambient  the sky's own colour from above, from the same cubemap the fog
- *            uses (scene/outdoorLight.js), brighter toward the tops.
+ *            uses (scene/outside/outdoorLight.js), brighter toward the tops.
  *
  * Scattering is integrated the energy-conserving way (each step adds what
  * that step's extinction scatters, weighted by how much light still gets

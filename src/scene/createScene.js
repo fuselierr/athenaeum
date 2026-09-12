@@ -96,6 +96,6 @@ function createEnvironment(scene, renderer) {
 // lamp's own point light (see lamp.js).
 function addLights(scene) {
   const fill = new THREE.HemisphereLight(0xaabbff, 0x1a1a1a, 0.15);
-  fill.name = 'roomFill'; // found by name to switch off outside (scene/outside.js)
+  fill.name = 'roomFill'; // found by name to switch off outside (scene/outside/outside.js)
   scene.add(fill);
 }

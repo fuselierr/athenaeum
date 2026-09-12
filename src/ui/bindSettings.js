@@ -1,6 +1,6 @@
 import { watch } from 'vue';
 import { settings } from '../state/settings.js';
-import { backgroundUrl, DEFAULT_BACKGROUND, findBackground } from '../scene/backgrounds.js';
+import { backgroundUrl, DEFAULT_BACKGROUND, findBackground } from '../scene/inside/backgrounds.js';
 
 /**
  * The one place a setting becomes an effect.

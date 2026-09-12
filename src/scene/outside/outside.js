@@ -4,9 +4,9 @@ import {
 } from './terrain.js';
 import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
-import { loadingScreen } from '../ui/loadingScreen.js';
+import { loadingScreen } from '../../ui/loadingScreen.js';
 import { createGrass } from './grass.js';
-import { world } from '../state/world.js';
+import { world } from '../../state/world.js';
 
 /**
  * Going outside, through the door.
@@ -15,8 +15,8 @@ import { world } from '../state/world.js';
  * door and floor -- and puts terrain from a heightmap in its place, with the
  * ground under the middle of the room at the height the floor was, so you
  * are still standing on something -- lit by a sun, the sky's own light, and
- * an atmosphere to see it through (scene/outdoorLight.js), then height fog
- * and auto exposure over the frame (scene/outdoorPost.js) -- which is why,
+ * an atmosphere to see it through (scene/outside/outdoorLight.js), then height fog
+ * and auto exposure over the frame (scene/outside/outdoorPost.js) -- which is why,
  * once outside, main.js renders through render() here instead of straight
  * to the screen. Walking bounds and the book's physics walls are still the
  * room's.
@@ -40,7 +40,13 @@ import { world } from '../state/world.js';
  */
 
 const HEIGHTMAP_URL = '/heightmaps/swissalps.raw'; // public/heightmaps
-const TERRAIN = { width: 400, height: 60, segments: 255 };
+const TERRAIN = {
+  width: 400, // metres on a side
+  height: 60, // metres from the map's lowest point to its highest, before exaggeration
+  exaggeration: 2.2, // every height times this: taller mountains, steeper slopes
+  sharpness: 1.5, // above 1, valley floors pressed down and their walls steepened
+  segments: 255,
+};
 // How far in from the terrain's edge you can walk, in metres -- short of
 // where the ground ends and the void begins.
 const GROUND_EDGE_MARGIN = 10;

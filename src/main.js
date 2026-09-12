@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { createScene } from './scene/createScene.js';
-import { loadDesk } from './scene/desk.js';
-import { loadLamp } from './scene/lamp.js';
-import { loadBookshelf } from './scene/bookshelf.js';
-import { addFloor } from './scene/floor.js';
-import { addRoom, WINDOW_SILL_PROJECTION } from './scene/room.js';
-import { populateShelf } from './scene/shelfBooks.js';
-import { addInstructionCard } from './scene/instructionCard.js';
-import { createOutside } from './scene/outside.js';
+import { loadDesk } from './scene/inside/desk.js';
+import { loadLamp } from './scene/inside/lamp.js';
+import { loadBookshelf } from './scene/inside/bookshelf.js';
+import { addFloor } from './scene/inside/floor.js';
+import { addRoom, WINDOW_SILL_PROJECTION } from './scene/inside/room.js';
+import { populateShelf } from './scene/inside/shelfBooks.js';
+import { addInstructionCard } from './scene/inside/instructionCard.js';
+import { createOutside } from './scene/outside/outside.js';
 import { PageSimulation } from './book/pageSim/PageSimulation.js';
 import { createBookPlacement } from './book/placement/bookPlacement.js';
 import {
@@ -161,7 +161,7 @@ let roomInterior = null;
 // The framed instructions on the desk. Set in the block below, once the desk
 // has been measured; clicks and Escape reach it through here.
 let instructionCard = null;
-// The door out, and what is beyond it (scene/outside.js). Set in the block
+// The door out, and what is beyond it (scene/outside/outside.js). Set in the block
 // below, once the room exists.
 let outside = null;
 {
@@ -687,7 +687,7 @@ mountMenu({
   ),
   setBackground: (id) => scenery.setBackground(id),
   uploadBook: (file) => openUploadedFile(file),
-  // The Scene tab's room / outside switch (scene/outside.js).
+  // The Scene tab's room / outside switch (scene/outside/outside.js).
   goOutside: () => outside?.goOutside(),
   goInside: () => outside?.goInside(),
 
@@ -761,7 +761,7 @@ renderer.setAnimationLoop(() => {
   shelfBooks?.update(dt);
   bookCarry.update(dt); // posed from the camera too
   instructionCard?.update(dt); // also posed from the camera, so also after it has moved
-  // Outside draws through its own fog and exposure chain (scene/outdoorPost.js).
+  // Outside draws through its own fog and exposure chain (scene/outside/outdoorPost.js).
   if (!outside?.render(dt)) renderer.render(scene, camera);
   debugLabels.update();
   anglePanel.update();

@@ -1,7 +1,7 @@
 /**
  * The loading screen: what covers the page from the first paint until the
  * room is built and the shelf has its books -- and again, via show(), while
- * the outdoors is loaded behind the door (scene/outside.js).
+ * the outdoors is loaded behind the door (scene/outside/outside.js).
  *
  * Its markup and styles live in index.html, not here. They have to be on
  * screen before any script has loaded, and this module only arrives with

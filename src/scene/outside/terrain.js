@@ -86,20 +86,41 @@ export async function loadHeightmap(url, onProgress = null) {
 }
 
 /**
- * A heightmap as a mesh, `width` metres on a side and `height` metres from
- * its lowest point to its highest, centred on the origin with its lowest
- * point at y = 0.
+ * How high the ground stands for a heightmap sample (0..1), in metres.
+ *
+ * `sharpness` bends the sample before anything else: above 1 it presses the
+ * low ground down harder than the high ground, so valley floors stay low and
+ * the walls climbing out of them steepen, while the peaks keep their height.
+ * `exaggeration` then multiplies the whole of it -- every mountain taller and
+ * every slope steeper by that factor. Both 1 is the map as it is, `height`
+ * metres from lowest to highest.
+ */
+export function displacement(sample, { height = 60, exaggeration = 1, sharpness = 1 } = {}) {
+  return Math.pow(sample, sharpness) * height * exaggeration;
+}
+
+/** The terrain's full height, lowest point to highest, once exaggerated. */
+export function terrainRelief({ height = 60, exaggeration = 1 } = {}) {
+  return height * exaggeration;
+}
+
+/**
+ * A heightmap as a mesh, `width` metres on a side, standing
+ * terrainRelief(opts) metres from its lowest point to its highest, centred on
+ * the origin with its lowest point at y = 0.
  *
  * @param {{ size: number, heights: Float32Array }} heightmap
- * @param {{ width?: number, height?: number, segments?: number,
- *   onTextureProgress?: (loaded: number, total: number) => void }} [opts]
+ * @param {{ width?: number, height?: number, exaggeration?: number, sharpness?: number,
+ *   segments?: number, onTextureProgress?: (loaded: number, total: number) => void }} [opts]
+ *   height, exaggeration and sharpness: see displacement
  *   onTextureProgress: each ground texture as it arrives (or gives up);
  *   mesh.material.userData.ready resolves once they all have
  * @returns {THREE.Mesh}
  */
 export function createTerrain(heightmap, {
-  width = 400, height = 60, segments = 255, onTextureProgress = null,
+  width = 400, height = 60, exaggeration = 1, sharpness = 1, segments = 255, onTextureProgress = null,
 } = {}) {
+  const relief = { height, exaggeration, sharpness };
   const geometry = new THREE.PlaneGeometry(width, width, segments, segments);
   // Flat on the ground. The plane's rows run from its +Y edge down, which
   // after this turn is from -Z toward +Z: row 0 of the image is the far edge.
@@ -114,7 +135,7 @@ export function createTerrain(heightmap, {
     // Nearest sample under the vertex.
     const x = Math.round((column / segments) * last);
     const y = Math.round((row / segments) * last);
-    position.setY(i, heightmap.heights[y * heightmap.size + x] * height);
+    position.setY(i, displacement(heightmap.heights[y * heightmap.size + x], relief));
   }
   position.needsUpdate = true;
   geometry.computeVertexNormals();
@@ -122,7 +143,12 @@ export function createTerrain(heightmap, {
   geometry.computeBoundingSphere();
 
   // Sand, grass, rock and snow, laid on by slope and height.
-  const mesh = new THREE.Mesh(geometry, createTerrainMaterial({ height, onProgress: onTextureProgress }));
+  // The material's height bands (sand, snow) are fractions of the full,
+  // exaggerated height, so they rise with the mountains.
+  const mesh = new THREE.Mesh(geometry, createTerrainMaterial({
+    height: terrainRelief(relief),
+    onProgress: onTextureProgress,
+  }));
   mesh.name = 'terrain';
   // Both: a ridge throws its shadow down the valley beside it.
   mesh.castShadow = true;
@@ -134,8 +160,8 @@ export function createTerrain(heightmap, {
  * A value off the terrain's grid at a world x/z, blended between the four
  * vertices around it -- so it is exactly the surface the mesh draws, where
  * terrainHeightAt reads the heightmap the mesh was sampled from. For standing
- * on the ground (input/cameraModes.js, through scene/outside.js) and planting
- * in it (scene/grass.js). Outside the grid it clamps to the edge.
+ * on the ground (input/cameraModes.js, through scene/outside/outside.js) and planting
+ * in it (scene/outside/grass.js). Outside the grid it clamps to the edge.
  *
  * @param {THREE.Mesh} mesh  createTerrain's mesh, placed
  * @param {'position'|'normal'} attribute
@@ -176,10 +202,12 @@ export function disposeTerrain(mesh) {
  * The terrain's height at a world x/z, read off the heightmap the mesh was
  * built from -- for standing something on it.
  */
-export function terrainHeightAt(heightmap, terrain, x, z, { width = 400, height = 60 } = {}) {
+export function terrainHeightAt(heightmap, terrain, x, z, {
+  width = 400, height = 60, exaggeration = 1, sharpness = 1,
+} = {}) {
   const u = THREE.MathUtils.clamp((x - terrain.position.x) / width + 0.5, 0, 1);
   const v = THREE.MathUtils.clamp((z - terrain.position.z) / width + 0.5, 0, 1);
   const last = heightmap.size - 1;
   const sample = heightmap.heights[Math.round(v * last) * heightmap.size + Math.round(u * last)];
-  return terrain.position.y + sample * height;
+  return terrain.position.y + displacement(sample, { height, exaggeration, sharpness });
 }

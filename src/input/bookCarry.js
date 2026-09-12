@@ -4,7 +4,7 @@ import * as THREE from 'three';
  * Taking the book up off the desk to read it.
  *
  * Clicking the book brings it up in front of you, the way clicking a shelf
- * book does (scene/shelfBooks.js) -- and turned the way a book is read: head
+ * book does (scene/inside/shelfBooks.js) -- and turned the way a book is read: head
  * up, the open spread (or, shut, the front board) toward you, the right-hand
  * page on the right. However it was lying, even upside down after a tumble,
  * it arrives square. Press Escape and it goes back to where it lay; click

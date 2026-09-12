@@ -42,7 +42,7 @@ const RUN_MULTIPLIER = 2.1;
 const WALK_ACCELERATION = 14;
 const WALK_DAMPING = 11;
 // How far in from the floor's edge you can walk. The floor is a finite slab
-// (scene/floor.js), so without this you can step off it into the void.
+// (scene/inside/floor.js), so without this you can step off it into the void.
 const WALL_MARGIN = 0.15;
 // A jump: straight up at this speed, then falling under gravity until the
 // feet meet the ground -- wherever the ground is by then, so a jump onto a
@@ -386,7 +386,7 @@ export function createCameraModes({
     /**
      * The walkable slab. Pass the floor mesh's world bounds: its min.y is the
      * ground the camera stands on and its footprint is exactly how far you
-     * can walk, so nothing here has to restate scene/floor.js's margin.
+     * can walk, so nothing here has to restate scene/inside/floor.js's margin.
      */
     setRoom(bounds) {
       room = bounds;
@@ -395,7 +395,7 @@ export function createCameraModes({
 
     /**
      * Stand on uneven ground instead of the room's floor -- outside, the
-     * terrain (scene/outside.js) -- or pass null to go back to the floor.
+     * terrain (scene/outside/outside.js) -- or pass null to go back to the floor.
      * `heightAt(x, z)` is the ground's world height under a point, followed
      * every step; `bounds` is how far you may walk, in x and z. Either way
      * you are put back on your feet at once.

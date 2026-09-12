@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { watch } from 'vue';
-import { keys, label } from '../state/keybindings.js';
+import { keys, label } from '../../state/keybindings.js';
 
 /**
  * A framed card of instructions, standing on the desk's back-right corner.
@@ -27,7 +27,7 @@ import { keys, label } from '../state/keybindings.js';
  * PICKING IT UP. Small print on a desk across the room is not readable, so a
  * click brings the card up in front of the camera, where it follows you as
  * you move and look; a second click, or Escape, puts it back. It works the
- * way a book taken off the shelf does (scene/shelfBooks.js): a `hold` that
+ * way a book taken off the shelf does (scene/inside/shelfBooks.js): a `hold` that
  * eases between 0 and 1, and a pose blended between where the card rests and
  * where it is held. While it is up it is drawn over everything else, so
  * walking up to a wall or standing behind the lamp never cuts into it.

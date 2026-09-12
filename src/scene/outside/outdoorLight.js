@@ -24,7 +24,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
  * what a screen shows. Without tone mapping the sky and anything in sun
  * clip to white, so going outside also switches on ACES filmic. Exposure is
  * not set here: the post-processing chain meters and adapts it
- * (scene/outdoorPost.js), so the renderer's own exposure stays at 1.
+ * (scene/outside/outdoorPost.js), so the renderer's own exposure stays at 1.
  */
 
 // Where the sun is, in degrees: elevation above the horizon, and azimuth
@@ -91,9 +91,16 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   // (the debug panel) and the capture is then out of date.
   let skyLight = null;
   // The sky as a plain cubemap as well -- small, linear HDR, sun disc left
-  // out -- for the height fog to take its colour from (scene/outdoorPost.js).
+  // out -- for the height fog to take its colour from (scene/outside/outdoorPost.js).
   // One target, re-rendered in place, so the fog keeps the same texture.
-  const skyTarget = new THREE.WebGLCubeRenderTarget(64, {
+  //
+  // The fog reads it heavily blurred, a mip only a handful of texels across,
+  // so anything small and bright in it turns into a bright square: the sun's
+  // halo did, and the fog painted a block of haze round the sun. So it is
+  // captured WITHOUT the halo -- the sky's haze kept, its forward glow taken
+  // out -- and the fog adds its own smooth, round glow toward the sun instead.
+  // 128 a face rather than 64, so that blurred mip is less blocky too.
+  const skyTarget = new THREE.WebGLCubeRenderTarget(128, {
     type: THREE.HalfFloatType,
     generateMipmaps: true,
     minFilter: THREE.LinearMipmapLinearFilter,
@@ -107,7 +114,14 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
     captureScene.add(sky);
     uniforms.showSunDisc.value = 0;
     const next = pmrem.fromScene(captureScene).texture;
+    // The fog's copy, with the halo round the sun taken out (see skyTarget):
+    // Mie scattering made even in every direction keeps the haze but loses
+    // the glow. The sky light above keeps it -- that capture is filtered
+    // properly, not read a few texels across.
+    const glow = uniforms.mieDirectionalG.value;
+    uniforms.mieDirectionalG.value = 0;
     skyCamera.update(renderer, captureScene);
+    uniforms.mieDirectionalG.value = glow;
     uniforms.showSunDisc.value = 1;
     pmrem.dispose();
     scene.add(sky); // back out of captureScene: an object has one parent

@@ -13,7 +13,7 @@ import * as THREE from 'three';
  * the values the outdoor scene starts with.
  *
  * Built the first time it is needed on each trip outside, from whatever
- * scene/outdoorLight.js and scene/outdoorPost.js hand back. The outdoors is
+ * scene/outside/outdoorLight.js and scene/outside/outdoorPost.js hand back. The outdoors is
  * unloaded when you go in and rebuilt when you come out, so a panel from an
  * earlier trip would be steering objects that no longer exist: it is thrown
  * away and built again for the new ones.

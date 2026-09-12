@@ -30,7 +30,7 @@ import { sampleTerrain } from './terrain.js';
  *   - Whether a blade GROWS is decided there too: each has a random number,
  *     and it stands only where that is under how grassy the ground is --
  *     no steep rock, no snow, by the terrain material's own thresholds
- *     (scene/terrainMaterial.js), so it thins out toward them.
+ *     (scene/outside/terrainMaterial.js), so it thins out toward them.
  *   - A chunk is turned a quarter, a half or three quarters by a hash of its
  *     world cell, so the one tile does not read as a repeating pattern -- and
  *     the same cell always gets the same turn, so a chunk arriving there shows
@@ -100,7 +100,7 @@ function cellTurn(cx, cz) {
 
 /**
  * @param {object} opts
- * @param {THREE.Mesh} opts.terrain  scene/terrain.js's mesh, already placed
+ * @param {THREE.Mesh} opts.terrain  scene/outside/terrain.js's mesh, already placed
  * @param {number} opts.terrainWidth  metres on a side
  * @param {number} opts.segments  the terrain grid's segments on a side
  * @param {THREE.Camera} opts.camera  what the field follows
