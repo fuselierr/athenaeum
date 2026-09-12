@@ -131,6 +131,19 @@ export function createTerrain(heightmap, {
 }
 
 /**
+ * Free everything createTerrain made on the GPU: its geometry, its material,
+ * and every texture the material holds -- the four ground layers (or their
+ * blank stand-ins) and the macro variation noise.
+ */
+export function disposeTerrain(mesh) {
+  mesh.geometry.dispose();
+  for (const uniform of Object.values(mesh.material.userData.uniforms ?? {})) {
+    if (uniform.value?.isTexture) uniform.value.dispose();
+  }
+  mesh.material.dispose();
+}
+
+/**
  * The terrain's height at a world x/z, read off the heightmap the mesh was
  * built from -- for standing something on it.
  */

@@ -12,8 +12,11 @@ import * as THREE from 'three';
  * top puts every control back to what it was when the panel was built --
  * the values the outdoor scene starts with.
  *
- * Built the first time it is needed, from whatever scene/outdoorLight.js and
- * scene/outdoorPost.js hand back; nothing here is remembered between visits.
+ * Built the first time it is needed on each trip outside, from whatever
+ * scene/outdoorLight.js and scene/outdoorPost.js hand back. The outdoors is
+ * unloaded when you go in and rebuilt when you come out, so a panel from an
+ * earlier trip would be steering objects that no longer exist: it is thrown
+ * away and built again for the new ones.
  * Unlike the angle readout it takes the pointer -- it is for dragging -- and
  * the key bindings already ignore keys typed into its inputs.
  */
@@ -26,6 +29,7 @@ import * as THREE from 'three';
  */
 export function createOutdoorPanel({ getOutside, renderer, scene }) {
   let el = null;
+  let builtFor = null; // the post chain the current panel controls
 
   function build(daylight, post, terrain, grass) {
     el = document.createElement('div');
@@ -509,7 +513,16 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     update(debugVisible) {
       const outside = getOutside();
       const show = Boolean(debugVisible && outside?.outside && outside.daylight && outside.post);
-      if (show && !el) build(outside.daylight, outside.post, outside.terrain, outside.grass);
+      // A new trip outside means new objects: drop the old panel.
+      if (el && (!outside?.post || outside.post !== builtFor)) {
+        el.remove();
+        el = null;
+        builtFor = null;
+      }
+      if (show && !el) {
+        build(outside.daylight, outside.post, outside.terrain, outside.grass);
+        builtFor = outside.post;
+      }
       if (el) el.style.display = show ? 'block' : 'none';
     },
   };

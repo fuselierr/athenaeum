@@ -165,5 +165,20 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
     skyTexture: skyTarget.texture,
     /** The sky light's current capture -- what scene.environment is, outside. */
     get skyLight() { return skyLight; },
+
+    /**
+     * Out of the scene and off the GPU: the sky, the sun and its shadow map,
+     * and both captures of the sky. The scene's environment and background
+     * must already point elsewhere.
+     */
+    dispose() {
+      scene.remove(sky, sun, sun.target);
+      sky.geometry.dispose();
+      sky.material.dispose();
+      sun.shadow.dispose();
+      skyLight?.dispose();
+      skyLight = null;
+      skyTarget.dispose();
+    },
   };
 }

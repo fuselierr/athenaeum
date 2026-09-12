@@ -82,6 +82,10 @@ const cameraModes = createCameraModes({
     // ignores what is in front of them, so a click on the book in your hand
     // would otherwise take down whichever shelf book is behind it.
     if (bookCarry?.handleClick(event)) return;
+    // Outside, the shelf and the desk are not there to click -- the shelf's
+    // own test does not know its books are hidden, and the desk's would set
+    // the book down on nothing.
+    if (outside?.outside) return;
     if (shelfBooks?.handleClick(event)) return;
     putBookDown(event); // a click past the shelf, holding a book
   },
@@ -112,7 +116,7 @@ let bookCarry = null;
 // Loaded alongside the page simulation since none of the three waits on
 // the others.
 loadingScreen.status('Arranging the furniture…');
-const [pagesInstance, desk, , bookshelf] = await Promise.all([
+const [pagesInstance, desk, lamp, bookshelf] = await Promise.all([
   PageSimulation.create(bookGroup),
   loadDesk(scene),
   // Lamp stays its authored size; only its position follows the desk's
@@ -233,7 +237,24 @@ let outside = null;
     // wall, level with the desk.
     door: { side: '+z', along: (deskBox.min.x + deskBox.max.x) / 2 },
   });
-  outside = createOutside({ scene, camera, renderer, room: shell, floor });
+  outside = createOutside({
+    scene,
+    camera,
+    renderer,
+    room: shell,
+    floor,
+    // The rest of the room, not drawn while outside. The shelf's books ride
+    // on the shelf, and the lamp's lights on the lamp.
+    inside: [
+      desk.object,
+      lamp,
+      bookshelf,
+      instructionCard.group,
+      scene.getObjectByName('roomFill'),
+    ].filter(Boolean),
+    // It comes outside with you only in your hand.
+    book: { object: bookGroup, isCarried: () => Boolean(bookCarry?.carrying) },
+  });
   // The walls-and-ceiling setting (the key, or Settings -> View) reaches the
   // room from here on.
   scenery.bindRoom(shell);

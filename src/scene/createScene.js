@@ -95,5 +95,7 @@ function createEnvironment(scene, renderer) {
 // now lit only by the EXR environment (+ this fill) and, once loaded, the
 // lamp's own point light (see lamp.js).
 function addLights(scene) {
-  scene.add(new THREE.HemisphereLight(0xaabbff, 0x1a1a1a, 0.15));
+  const fill = new THREE.HemisphereLight(0xaabbff, 0x1a1a1a, 0.15);
+  fill.name = 'roomFill'; // found by name to switch off outside (scene/outside.js)
+  scene.add(fill);
 }

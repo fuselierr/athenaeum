@@ -622,7 +622,8 @@ export function createOutdoorPost({
   composer.addPass(exposure);
   const grading = new ColorGradingPass();
   composer.addPass(grading);
-  composer.addPass(new OutputPass());
+  const output = new OutputPass();
+  composer.addPass(output);
 
   const onResize = () => composer.setSize(window.innerWidth, window.innerHeight);
   window.addEventListener('resize', onResize);
@@ -641,7 +642,8 @@ export function createOutdoorPost({
       fog.dispose();
       exposure.dispose();
       grading.dispose();
-      composer.dispose();
+      output.dispose();
+      composer.dispose(); // its two render targets, depth textures included
     },
   };
 }

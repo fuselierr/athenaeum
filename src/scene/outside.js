@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { loadHeightmap, createTerrain, terrainHeightAt } from './terrain.js';
+import {
+  loadHeightmap, createTerrain, terrainHeightAt, disposeTerrain,
+} from './terrain.js';
 import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../ui/loadingScreen.js';
@@ -19,11 +21,22 @@ import { world } from '../state/world.js';
  * to the screen. Walking bounds and the book's physics walls are still the
  * room's.
  *
- * AND BACK. goInside() hides everything outdoors and puts the room's look
- * back -- its fog, its view distance, its backdrop and light, no tone
- * mapping -- exactly as they were when you left. Nothing outdoors is thrown
- * away, so going out a second time is instant, and comes back as you left it
- * (the debug panel's settings included).
+ * ONE PLACE AT A TIME. Outside, nothing of the room is drawn: its shell and
+ * floor, and whatever else the caller counts as indoors -- the furniture, the
+ * shelf and its books, the instruction card, the room's lights. Inside,
+ * nothing outdoors is. The book is the one thing that can come with you: it
+ * shows outside only while it is in your hand, and disappears with the desk
+ * once it goes back to it.
+ *
+ * AND BACK. goInside() puts the room's look back -- its fog, its view
+ * distance, its backdrop and light, no tone mapping -- exactly as they were
+ * when you left, and then UNLOADS the outdoors: terrain, grass, sky, sun, and
+ * the whole post-processing chain, off the GPU and out of memory. That is for
+ * machines without much of either: nothing outdoors costs anything while you
+ * are in the room. The price is that every trip outside is a full load again
+ * (the files come from the browser's cache after the first time, but the
+ * terrain, grass and cloud noise are rebuilt), and the debug panel's settings
+ * start from their defaults each visit.
  */
 
 const HEIGHTMAP_URL = '/heightmaps/swissalps.raw'; // public/heightmaps
@@ -41,20 +54,46 @@ function nextFrame() {
  * @param {THREE.WebGLRenderer} opts.renderer
  * @param {{ group: THREE.Group, door: THREE.Object3D|null }} opts.room  addRoom's result
  * @param {THREE.Mesh} opts.floor
+ * @param {THREE.Object3D[]} [opts.inside]  everything else of the room's that
+ *   is drawn, to hide while outside
+ * @param {{ object: THREE.Object3D, isCarried(): boolean }|null} [opts.book]
+ *   the book, shown outside only while isCarried()
  */
-export function createOutside({ scene, camera, renderer, room, floor }) {
+export function createOutside({
+  scene, camera, renderer, room, floor, inside = [], book = null,
+}) {
   let state = 'inside'; // 'loading' | 'outside'
   let terrain = null;
   let daylight = null;
   let post = null;
   let grass = null;
 
-  // The scene-wide settings each place needs, taken as you leave it and
-  // restored as you come back.
+  // The room's scene-wide settings, taken as you leave and restored as you
+  // come back.
   let insideLook = null;
-  let outsideLook = null;
-  // The outdoor objects, and whether each was showing when you went in.
-  let outdoorVisibility = null;
+
+  // Everything of the room's that is drawn, and whether each was showing when
+  // you went out -- so the walls switch (H), say, comes back as it was.
+  const indoors = [room.group, floor, ...inside];
+  let indoorVisibility = null; // null while the room is showing
+
+  function hideInside() {
+    indoorVisibility = indoors.map((object) => [object, object.visible]);
+    for (const object of indoors) object.visible = false;
+    followBook();
+  }
+
+  function showInside() {
+    if (!indoorVisibility) return;
+    for (const [object, visible] of indoorVisibility) object.visible = visible;
+    indoorVisibility = null;
+    if (book) book.object.visible = true;
+  }
+
+  /** Outside, the book is there only while you are holding it. */
+  function followBook() {
+    if (book) book.object.visible = book.isCarried();
+  }
 
   const _raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
@@ -101,31 +140,34 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
     renderer.toneMappingExposure = look.toneMappingExposure;
   }
 
-  /** Back outside, with everything already built. */
-  function returnOutside() {
-    room.group.visible = false;
-    floor.visible = false;
-    for (const [object, visible] of outdoorVisibility) object.visible = visible;
-    restoreLook(outsideLook);
-    // Its capture may have been retaken since this look was saved.
-    scene.environment = daylight.skyLight;
-    // Meter afresh rather than adapting from the room's brightness.
-    post.exposure.firstFrame = true;
-    state = 'outside';
-    world.place = 'outside';
+  /**
+   * Free everything a trip outside built. Safe on a half-built trip: whatever
+   * got made is freed, whatever did not is skipped. The room's look has to be
+   * back first -- the scene's environment is the sky light until then.
+   */
+  function unloadOutside() {
+    post?.dispose();
+    daylight?.dispose();
+    if (grass) {
+      scene.remove(grass.group);
+      grass.dispose();
+    }
+    if (terrain) {
+      scene.remove(terrain);
+      disposeTerrain(terrain);
+    }
+    post = null;
+    daylight = null;
+    grass = null;
+    terrain = null;
   }
 
-  /** Back into the room, as it was when you left it. */
+  /** Back into the room, as it was when you left it -- and the outdoors unloaded. */
   function goInside() {
     if (state !== 'outside') return;
-    outsideLook = captureLook();
-    outdoorVisibility = [terrain, grass?.group, daylight.sky, daylight.sun]
-      .filter(Boolean)
-      .map((object) => [object, object.visible]);
-    for (const [object] of outdoorVisibility) object.visible = false;
     restoreLook(insideLook);
-    room.group.visible = true;
-    floor.visible = true;
+    showInside();
+    unloadOutside();
     state = 'inside';
     world.place = 'room';
   }
@@ -137,10 +179,6 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
     // Before anything outdoors touches the scene: this is what coming back in
     // restores.
     insideLook = captureLook();
-    if (terrain && post) {
-      returnOutside();
-      return;
-    }
     state = 'loading';
     world.place = 'loading';
     loadingScreen.show('Opening the door…');
@@ -182,8 +220,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
       loadingScreen.status('Lighting the sky…');
       await nextFrame();
 
-      room.group.visible = false;
-      floor.visible = false;
+      hideInside();
       // The room never needed to see further than its own walls: its fog
       // (createScene.js) is near-black and fully in by 20 m, which turns
       // everything past that into a silhouette, and the camera stopped
@@ -221,10 +258,12 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
       loadingScreen.finish();
     } catch (err) {
       console.error('Going outside failed:', err);
-      if (state === 'loading') {
-        state = 'inside';
-        world.place = 'room';
-      }
+      // Back as you were, with whatever had been built so far freed.
+      restoreLook(insideLook);
+      showInside();
+      unloadOutside();
+      state = 'inside';
+      world.place = 'room';
       loadingScreen.fail('The way outside is blocked for now.');
     }
   }
@@ -242,6 +281,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
      */
     render(dt) {
       if (state !== 'outside' || !post) return false;
+      followBook();
       grass?.update(dt);
       post.render(dt);
       return true;
