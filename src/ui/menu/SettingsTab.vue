@@ -88,6 +88,10 @@ const percent = (v) => `${Math.round(v * 100)}%`;
       <span class="value">{{ settings.camera.lookSensitivity.toFixed(2) }}×</span>
     </div>
     <div class="menu-row">
+      <span class="label">Invert horizontal look</span>
+      <input type="checkbox" v-model="settings.camera.invertX">
+    </div>
+    <div class="menu-row">
       <span class="label">Invert vertical look</span>
       <input type="checkbox" v-model="settings.camera.invertY">
     </div>

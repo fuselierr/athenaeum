@@ -50,6 +50,7 @@ export const ACTIONS = [
   { id: 'move.right', group: 'Movement', label: 'Right', default: 'KeyD' },
   { id: 'move.run', group: 'Movement', label: 'Run', default: 'ShiftLeft' },
   { id: 'move.jump', group: 'Movement', label: 'Jump (walk)', default: 'Space' },
+  { id: 'move.lieDown', group: 'Movement', label: 'Sit / lie down / stand up (walk, outside)', default: 'KeyX' },
 
   { id: 'book.pageForward', group: 'Book', label: 'Turn forward', default: 'ArrowRight' },
   { id: 'book.pageBack', group: 'Book', label: 'Turn back', default: 'ArrowLeft' },

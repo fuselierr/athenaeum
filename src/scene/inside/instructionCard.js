@@ -93,7 +93,7 @@ function sections() {
       title: 'Moving around',
       rows: [
         { keys: [k('camera.orbit'), k('camera.walk'), k('camera.look')], text: 'Orbit the desk · walk · look from the middle' },
-        { keys: [k('move.forward'), k('move.left'), k('move.back'), k('move.right')], text: `Walk, hold ${k('move.run')} to run, ${k('move.jump')} to jump` },
+        { keys: [k('move.forward'), k('move.left'), k('move.back'), k('move.right')], text: `Walk, hold ${k('move.run')} to run, ${k('move.jump')} to jump, ${k('move.lieDown')} to sit, lie down or stand, outside` },
         { gesture: 'Drag', text: 'Look around' },
         { gesture: 'Scroll', text: 'Zoom in, from the middle of the room' },
       ],

@@ -54,6 +54,7 @@ Every key below can be rebound in **Settings → Controls**.
 | `1` / `2` / `3` | Orbit / walk / look camera |
 | `W` `A` `S` `D` | Move (hold `Shift` to run) |
 | `Space` | Jump, in walk mode |
+| `X` | Sit down, then lie down, then stand up again, in walk mode outside |
 | Drag | Orbit the camera, or look around in first person |
 | Scroll | Zoom, in look mode |
 | Click a shelf book | Take it — and open it |

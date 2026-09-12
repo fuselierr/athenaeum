@@ -10,7 +10,9 @@ import { settings } from '../state/settings.js';
  *   2  WALK   first person, and the mode the app starts in. WASD walks
  *             across the floor at eye height -- or, outside, over the
  *             ground, up and down its slopes (setGround) -- Space jumps,
- *             and dragging looks around.
+ *             X sits down on the ground outside, then lies down, then
+ *             stands up again, and
+ *             dragging looks around.
  *   3  LOOK   parked in the middle of the room. Dragging looks around, the
  *             wheel zooms in on whatever caught your eye.
  *
@@ -49,6 +51,16 @@ const WALL_MARGIN = 0.15;
 // slope lands on it, and one off a ridge falls the whole way down.
 const JUMP_SPEED = 4.2; // m/s: about 0.9 m high
 const GRAVITY = 9.81; // m/s^2
+// Getting down onto the ground, outside. X steps through these in order and
+// back round to standing; the eye eases to each one's height. Walking and
+// jumping wait until you are on your feet, and looking around carries on.
+const POSTURES = [
+  { name: 'standing', eye: EYE_HEIGHT },
+  { name: 'sitting', eye: 0.95 },
+  { name: 'lying', eye: 0.35 },
+];
+const LYING_EYE_HEIGHT = POSTURES[2].eye;
+const POSTURE_RATE = 3; // 1/s, easing from one height to the next
 
 const LOOK_SENSITIVITY = 0.0024; // radians per pixel, at the base fov
 const PITCH_LIMIT = Math.PI / 2 - 0.05; // short of straight up/down, which gimbals
@@ -121,6 +133,19 @@ export function createCameraModes({
   let airborneFeet = null;
   let verticalSpeed = 0;
   let jumpRequested = false;
+  // Standing, sitting or lying (an index into POSTURES), and the eye height
+  // on its way to that posture's.
+  let posture = 0;
+  let eye = EYE_HEIGHT;
+
+  /** Eye height above the ground, wherever it has got to. */
+  const eyeHeight = () => eye;
+
+  /** On your feet at once -- for anything that moves you somewhere else. */
+  function standUp() {
+    posture = 0;
+    eye = EYE_HEIGHT;
+  }
 
   /** On the ground again, now -- for anything that places the camera. */
   function land() {
@@ -170,13 +195,13 @@ export function createCameraModes({
       ? ground.heightAt(camera.position.x, camera.position.z)
       : floorY();
     if (airborneFeet !== null && airborneFeet <= underfoot) land();
-    camera.position.y = (airborneFeet ?? underfoot) + EYE_HEIGHT;
+    camera.position.y = (airborneFeet ?? underfoot) + eyeHeight();
   }
 
   // --- switching -----------------------------------------------------------
   const LABELS = {
     [CAMERA_MODE.ORBIT]: '[1] orbit -- drag to orbit, WASD to pan',
-    [CAMERA_MODE.WALK]: '[2] walk -- WASD to move, shift to run, space to jump, drag to look',
+    [CAMERA_MODE.WALK]: '[2] walk -- WASD to move, shift to run, space to jump, x to sit or lie down outside, drag to look',
     [CAMERA_MODE.LOOK]: '[3] look -- drag to look, scroll to zoom',
   };
 
@@ -188,6 +213,7 @@ export function createCameraModes({
     controls.enabled = mode === CAMERA_MODE.ORBIT;
     velocity.set(0, 0, 0);
     land();
+    standUp();
     looking = null;
 
     // The zoom belongs to the two first-person modes; orbit uses its normal lens.
@@ -206,7 +232,7 @@ export function createCameraModes({
       if (bounds) bounds.getCenter(_centre);
       else _centre.set(0, 0, 0);
       const underfoot = ground ? ground.heightAt(_centre.x, _centre.z) : floorY();
-      camera.position.set(_centre.x, underfoot + EYE_HEIGHT, _centre.z);
+      camera.position.set(_centre.x, underfoot + eyeHeight(), _centre.z);
       camera.lookAt(FOCUS);
       readLookFromCamera();
       applyLook();
@@ -291,8 +317,11 @@ export function createCameraModes({
     // The user's own multiplier rides on top of the fov term.
     const scale = LOOK_SENSITIVITY * settings.camera.lookSensitivity * (camera.fov / baseFov());
     const dragDirection = mode === CAMERA_MODE.LOOK ? 1 : -1;
+    // Either axis can be flipped in Settings: whether dragging left should
+    // turn you left or drag the world past you is a matter of taste.
+    const horizontal = settings.camera.invertX ? -dx : dx;
     const vertical = settings.camera.invertY ? -dy : dy;
-    yaw += dragDirection * dx * scale;
+    yaw += dragDirection * horizontal * scale;
     pitch = THREE.MathUtils.clamp(
       pitch + dragDirection * vertical * scale,
       -PITCH_LIMIT,
@@ -342,6 +371,12 @@ export function createCameraModes({
       jumpRequested = true;
       e.preventDefault(); // or Space scrolls the page, or presses a focused button
     }
+    // Sit, then lie, then stand. Only on uneven ground -- outside -- and not
+    // in mid-air.
+    if (mode === CAMERA_MODE.WALK && ground && airborneFeet === null
+      && !e.repeat && matches('move.lieDown', e)) {
+      posture = (posture + 1) % POSTURES.length;
+    }
   });
   // Release is matched on the raw code, without the guards `matches`
   // applies: a key let go after the menu opened, or after focus moved into
@@ -355,6 +390,18 @@ export function createCameraModes({
   return {
     get mode() { return mode; },
     setMode,
+
+    /** 'standing', 'sitting' or 'lying' -- where X has taken you. */
+    get posture() { return POSTURES[posture].name; },
+
+    /**
+     * How far down toward the ground you are, 0 standing .. 1 lying flat,
+     * from the eye's height -- so sitting is most of the way, and a change
+     * of posture moves it smoothly.
+     */
+    get lying() {
+      return THREE.MathUtils.clamp((EYE_HEIGHT - eye) / (EYE_HEIGHT - LYING_EYE_HEIGHT), 0, 1);
+    },
 
     /**
      * Turn to face a world point without moving. Only in the two first-
@@ -402,6 +449,7 @@ export function createCameraModes({
      */
     setGround(next) {
       ground = next;
+      standUp();
       if (mode === CAMERA_MODE.ORBIT) return;
       velocity.set(0, 0, 0);
       land();
@@ -428,9 +476,11 @@ export function createCameraModes({
 
       const forwardInput = (held.has('move.forward') ? 1 : 0) - (held.has('move.back') ? 1 : 0);
       const strafeInput = (held.has('move.right') ? 1 : 0) - (held.has('move.left') ? 1 : 0);
+      // Sitting or lying, you stay where you are.
+      const canWalk = posture === 0 ? 1 : 0;
       _wish.set(0, 0, 0)
-        .addScaledVector(_forward, forwardInput)
-        .addScaledVector(_right, strafeInput);
+        .addScaledVector(_forward, forwardInput * canWalk)
+        .addScaledVector(_right, strafeInput * canWalk);
       // Normalised so walking a diagonal is not faster than walking straight.
       if (_wish.lengthSq() > 0) {
         _wish.normalize().multiplyScalar(
@@ -442,10 +492,14 @@ export function createCameraModes({
       velocity.x = THREE.MathUtils.damp(velocity.x, _wish.x, response, dt);
       velocity.z = THREE.MathUtils.damp(velocity.z, _wish.z, response, dt);
 
+      const targetEye = POSTURES[posture].eye;
+      eye = THREE.MathUtils.damp(eye, targetEye, POSTURE_RATE, dt);
+      if (Math.abs(eye - targetEye) < 1e-3) eye = targetEye;
+
       if (jumpRequested) {
         jumpRequested = false;
-        if (airborneFeet === null) {
-          airborneFeet = camera.position.y - EYE_HEIGHT;
+        if (airborneFeet === null && posture === 0 && eye === EYE_HEIGHT) {
+          airborneFeet = camera.position.y - eyeHeight();
           verticalSpeed = JUMP_SPEED;
         }
       }

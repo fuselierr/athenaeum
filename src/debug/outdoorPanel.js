@@ -169,6 +169,11 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       get: () => blades.grassDenseRadius.value,
       set: (v) => { blades.grassDenseRadius.value = v; },
     });
+    slider('Parting radius, sat or lying (m)', {
+      min: 0, max: 4, step: 0.05,
+      get: () => blades.grassPartRadius.value,
+      set: (v) => { blades.grassPartRadius.value = v; },
+    });
     slider('Far density (x full)', {
       min: 0, max: 1, step: 0.01,
       get: () => blades.grassFarDensity.value,

@@ -70,9 +70,11 @@ function nextFrame() {
  * @param {((ground: { heightAt(x: number, z: number): number, bounds: THREE.Box3 }|null) => void)|null} [opts.setGround]
  *   given the terrain to walk on when you arrive outside, and null when you
  *   leave -- input/cameraModes.js's setGround
+ * @param {() => number} [opts.lying]  how far down the player is lying, 0..1,
+ *   for the grass to part round them
  */
 export function createOutside({
-  scene, camera, renderer, room, floor, inside = [], book = null, setGround = null,
+  scene, camera, renderer, room, floor, inside = [], book = null, setGround = null, lying = () => 0,
 }) {
   let state = 'inside'; // 'loading' | 'outside'
   let terrain = null;
@@ -239,6 +241,7 @@ export function createOutside({
         terrainWidth: TERRAIN.width,
         segments: TERRAIN.segments,
         camera,
+        parting: lying,
       });
       scene.add(grass.group);
 

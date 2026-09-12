@@ -256,6 +256,8 @@ let outside = null;
     book: { object: bookGroup, isCarried: () => Boolean(bookCarry?.carrying) },
     // Outside, you walk on the terrain rather than the room's floor.
     setGround: (ground) => cameraModes.setGround(ground),
+    // Sitting or lying down (X), for the grass to part round you.
+    lying: () => cameraModes.lying,
   });
   // The walls-and-ceiling setting (the key, or Settings -> View) reaches the
   // room from here on.

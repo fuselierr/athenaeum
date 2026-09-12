@@ -23,6 +23,7 @@ export const settings = reactive({
   },
   camera: {
     lookSensitivity: 1, // multiplies the rig's own radians-per-pixel
+    invertX: false, // flips which way a sideways drag turns the view
     invertY: false,
     fov: 50, // degrees, and the widest the LOOK mode will zoom back out to
   },

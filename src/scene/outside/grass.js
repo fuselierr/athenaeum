@@ -47,6 +47,12 @@ import { sampleTerrain } from './terrain.js';
  * Three.js skips chunks out of view by their bounds, and update() hides the
  * ones past the fade.
  *
+ * PARTING. Sit or lie down (input/cameraModes.js) and the blades around you
+ * are pushed flat and outward, the nearest furthest -- partly for sitting,
+ * fully for lying -- in a patch centred a little behind your head, where
+ * your body would be, so you are down in a hollow in the grass rather than
+ * with blades through your face.
+ *
  * WIND. The tip leans downwind by a gust that travels across the field, plus
  * a per-blade flutter -- in world space, whichever way a chunk is turned.
  * HEIGHT WITH DISTANCE. Right where you stand the grass is short, so it never
@@ -75,6 +81,8 @@ const GRASS = {
   windDirection: [1, 0.3],
   nearHeight: 0.5, // a blade's height right where you stand, as a fraction of its full height
   fullHeightAt: 25, // metres out, along the ground, where blades reach full height
+  partRadius: 1.4, // metres round you the grass parts when you sit or lie down
+  partBehind: 0.6, // how far behind your head the parted patch is centred -- your body
   fadeStart: 30, // metres from the camera where blades start to shrink
   fadeEnd: 45, // and where they are gone -- the grid is sized to reach this
   denseRadius: 6, // metres along the ground where full density starts to thin
@@ -104,11 +112,13 @@ function cellTurn(cx, cz) {
  * @param {number} opts.terrainWidth  metres on a side
  * @param {number} opts.segments  the terrain grid's segments on a side
  * @param {THREE.Camera} opts.camera  what the field follows
+ * @param {() => number} [opts.parting]  how far you are lying down, 0..1 --
+ *   how much the grass parts round you
  * @returns {{ group: THREE.Group, uniforms: object, bladesPerChunk: number,
  *   chunkCount: number, drawnChunks: number, maxFadeEnd: number,
  *   update(dt: number): void, dispose(): void }}
  */
-export function createGrass({ terrain, terrainWidth, segments, camera }) {
+export function createGrass({ terrain, terrainWidth, segments, camera, parting = () => 0 }) {
   const ground = terrain.material.userData.uniforms;
   const size = GRASS.chunkSize;
   const { lerp, smoothstep } = THREE.MathUtils;
@@ -167,6 +177,9 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
     grassHeightScale: { value: 3 },
     grassNearHeight: { value: GRASS.nearHeight },
     grassFullHeightAt: { value: GRASS.fullHeightAt },
+    grassPartCentre: { value: new THREE.Vector2() },
+    grassPartRadius: { value: GRASS.partRadius },
+    grassPartStrength: { value: 0 },
     grassDenseRadius: { value: GRASS.denseRadius },
     grassFarDensity: { value: GRASS.farDensity },
     grassBladesPerChunk: { value: GRASS.bladesPerChunk },
@@ -215,6 +228,9 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
         uniform float grassHeightScale;
         uniform float grassNearHeight;
         uniform float grassFullHeightAt;
+        uniform vec2 grassPartCentre;
+        uniform float grassPartRadius;
+        uniform float grassPartStrength;
         uniform float grassDenseRadius;
         uniform float grassFarDensity;
         uniform float grassBladesPerChunk;
@@ -275,6 +291,11 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
         float gust = sin(dot(root.xz, grassWindDirection) * 0.25 - grassTime * grassWindSpeed) * 0.5 + 0.5;
         float flutter = sin(grassTime * 2.7 * grassWindSpeed + bladeData.w) * 0.25;
         vec2 leanWorld = grassWindDirection * (gust + flutter) * grassWindStrength * bladeHeight;
+        // Parted round you when you lie down: pushed away from you and flat,
+        // the nearest the most.
+        vec2 fromYou = root.xz - grassPartCentre;
+        float parted = grassPartStrength * (1.0 - smoothstep(0.0, grassPartRadius, length(fromYou)));
+        leanWorld += normalize(fromYou + vec2(1e-4)) * parted * bladeHeight * 1.4;
         vec3 lean = transpose(mat3(modelMatrix)) * vec3(leanWorld.x, 0.0, leanWorld.y);
         // Leaning, the tip also drops, so the blade keeps roughly its length.
         float rise = max(bladeHeight - 0.5 * dot(leanWorld, leanWorld) / max(bladeHeight, 1e-3), 0.0);
@@ -380,6 +401,7 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
   }
 
   const _camera = new THREE.Vector3();
+  const _facing = new THREE.Vector3();
   let centreX = null; // the camera's cell, as of the last update
   let centreZ = null;
   let drawnChunks = 0;
@@ -423,6 +445,20 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
       uniforms.grassTime.value += dt;
       camera.getWorldPosition(_camera);
       follow();
+
+      // Lying down, the grass parts round where your body is: a little
+      // behind the eye, along the way you face.
+      const lying = parting();
+      uniforms.grassPartStrength.value = lying;
+      if (lying > 0) {
+        camera.getWorldDirection(_facing);
+        _facing.y = 0;
+        if (_facing.lengthSq() > 1e-6) _facing.normalize();
+        uniforms.grassPartCentre.value.set(
+          _camera.x - _facing.x * GRASS.partBehind,
+          _camera.z - _facing.z * GRASS.partBehind,
+        );
+      }
 
       // A chunk whose nearest point is past the fade has nothing left to
       // show. The rest are handed only as many of their blades as the densest
