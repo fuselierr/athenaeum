@@ -115,6 +115,7 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
         camera,
         sunDirection: daylight.sunDirection,
         groundHeight: floorBox.max.y,
+        skyTexture: daylight.skyTexture,
       });
 
       // Compiled now, behind the screen, rather than as a stall on the first

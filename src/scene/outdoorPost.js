@@ -30,8 +30,18 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
  *
  *   D * exp(-F * (c - H)) * L * (1 - exp(-F * r)) / (F * r)
  *
- * which becomes opacity through 1 - exp(-amount). Looking toward the sun the
- * fog also takes on the sun's colour -- Unreal's directional inscattering.
+ * which becomes opacity through 1 - exp(-amount).
+ *
+ * ITS COLOUR IS THE SKY'S. A flat fog colour never matches the sky behind
+ * it: fogging the horizon with one grey paints a grey ring round the whole
+ * scene. So the fog is coloured by a cubemap of the sky itself
+ * (scene/outdoorLight.js), read in the direction you are looking -- level
+ * with the horizon when you look down, since that is the air in between --
+ * and blurred, so it is the sky's colour rather than its detail. The horizon
+ * then fogs into the horizon, which is how distance reads as haze. Unreal's
+ * height fog does the same with its sky atmosphere. Looking toward the sun
+ * the fog also takes on the sun's colour -- Unreal's directional
+ * inscattering.
  *
  * EXPOSURE (eye adaptation). The frame's average brightness is measured on
  * the GPU: each pixel's log luminance is written into a small target whose
@@ -47,8 +57,9 @@ const FOG = {
   heightFalloff: 0.06, // per metre: density falls by e every 1/0.06 ~ 17 m up
   startDistance: 5, // metres of clear air in front of the camera
   maxOpacity: 1,
-  color: 0xbfd0e3,
-  brightness: 0.6, // the fog colour is in scene light units, before exposure
+  color: 0xffffff, // a tint on the sky's own colour
+  brightness: 1, // times the sky's brightness
+  skyBlur: 3, // mip level of the sky cubemap read: 3 is 8 px a face, soft
   // Toward the sun: its colour, how strongly, and how tight a glow.
   inscatteringColor: 0xffe2b8,
   inscatteringBrightness: 0.8,
@@ -77,7 +88,7 @@ const FULLSCREEN_VERTEX = /* glsl */`
   }`;
 
 class HeightFogPass extends Pass {
-  constructor({ camera, sunDirection, groundHeight }) {
+  constructor({ camera, sunDirection, groundHeight, skyTexture }) {
     super();
     this.camera = camera;
     this.material = new THREE.ShaderMaterial({
@@ -88,6 +99,8 @@ class HeightFogPass extends Pass {
         cameraWorld: { value: new THREE.Matrix4() },
         cameraPos: { value: new THREE.Vector3() }, // not three's cameraPosition: that is the quad's camera
         fogColor: { value: new THREE.Color(FOG.color).multiplyScalar(FOG.brightness) },
+        skyColour: { value: skyTexture },
+        skyBlur: { value: FOG.skyBlur },
         fogDensity: { value: FOG.density },
         fogFalloff: { value: FOG.heightFalloff },
         fogHeight: { value: groundHeight },
@@ -109,6 +122,8 @@ class HeightFogPass extends Pass {
         uniform mat4 cameraWorld;
         uniform vec3 cameraPos;
         uniform vec3 fogColor;
+        uniform samplerCube skyColour;
+        uniform float skyBlur;
         uniform float fogDensity;
         uniform float fogFalloff;
         uniform float fogHeight;
@@ -133,9 +148,9 @@ class HeightFogPass extends Pass {
           // The ray's direction from a point well inside the frustum: at the
           // far plane (the sky) the reconstruction divides by zero.
           vec3 direction = normalize(worldAt(0.0) - cameraPos);
-          bool sky = depth >= 0.99999;
+          bool isSky = depth >= 0.99999;
           // Not called "distance": that is a GLSL built-in.
-          float rayLength = sky ? skyDistance : length(worldAt(depth * 2.0 - 1.0) - cameraPos);
+          float rayLength = isSky ? skyDistance : length(worldAt(depth * 2.0 - 1.0) - cameraPos);
           rayLength = max(rayLength - fogStart, 0.0);
 
           // Density at the camera, then the closed-form integral along the ray.
@@ -145,7 +160,11 @@ class HeightFogPass extends Pass {
           float amount = atCamera * rayLength * spread;
           float opacity = min(1.0 - exp(-amount), fogMaxOpacity);
 
-          vec3 colour = fogColor
+          // The sky in this direction -- never below the horizon, where the
+          // sky model goes dark, since what lies between is still air.
+          vec3 airDirection = normalize(vec3(direction.x, max(direction.y, 0.0), direction.z));
+          vec3 sky = textureLod(skyColour, airDirection, skyBlur).rgb;
+          vec3 colour = sky * fogColor
             + inscatterColor * pow(max(dot(direction, sunDirection), 0.0), inscatterExponent);
           gl_FragColor = vec4(mix(scene.rgb, colour, opacity), scene.a);
         }`,
@@ -544,11 +563,14 @@ class ColorGradingPass extends Pass {
  * @param {THREE.PerspectiveCamera} opts.camera
  * @param {THREE.Vector3} opts.sunDirection  toward the sun
  * @param {number} opts.groundHeight  world height the fog is thickest at
+ * @param {THREE.CubeTexture} opts.skyTexture  the sky, for the fog's colour
  * @returns {{ render(dt: number): void, dispose(): void, fog: HeightFogPass,
  *   exposure: AutoExposurePass, grading: ColorGradingPass }}  the passes, for
  *   switching them off (`enabled`) and tuning them live
  */
-export function createOutdoorPost({ renderer, scene, camera, sunDirection, groundHeight }) {
+export function createOutdoorPost({
+  renderer, scene, camera, sunDirection, groundHeight, skyTexture,
+}) {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   // Half float for HDR, multisampled because a render target does not get the
   // canvas's own antialiasing, and a float depth texture: at 300 m with a
@@ -563,7 +585,7 @@ export function createOutdoorPost({ renderer, scene, camera, sunDirection, groun
   composer.setSize(window.innerWidth, window.innerHeight);
 
   composer.addPass(new RenderPass(scene, camera));
-  const fog = new HeightFogPass({ camera, sunDirection, groundHeight });
+  const fog = new HeightFogPass({ camera, sunDirection, groundHeight, skyTexture });
   composer.addPass(fog);
   const exposure = new AutoExposurePass();
   composer.addPass(exposure);

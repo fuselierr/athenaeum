@@ -54,6 +54,7 @@ const SKY_LIGHT_INTENSITY = 1;
  * @param {number} opts.reach  half the width of that ground, metres -- what
  *   the sun's shadows have to cover
  * @returns {{ sky: Sky, sun: THREE.DirectionalLight, sunDirection: THREE.Vector3,
+ *   skyTexture: THREE.CubeTexture,
  *   sunAngles: { elevation: number, azimuth: number },
  *   setSunAngles(elevation: number, azimuth: number): void, captureSkyLight(): void }}
  *   sunDirection is updated in place by setSunAngles, so anything holding it
@@ -89,6 +90,15 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   // speckles every shiny surface. A function, because the sky can change
   // (the debug panel) and the capture is then out of date.
   let skyLight = null;
+  // The sky as a plain cubemap as well -- small, linear HDR, sun disc left
+  // out -- for the height fog to take its colour from (scene/outdoorPost.js).
+  // One target, re-rendered in place, so the fog keeps the same texture.
+  const skyTarget = new THREE.WebGLCubeRenderTarget(64, {
+    type: THREE.HalfFloatType,
+    generateMipmaps: true,
+    minFilter: THREE.LinearMipmapLinearFilter,
+  });
+  const skyCamera = new THREE.CubeCamera(0.1, 1000, skyTarget);
   function captureSkyLight() {
     const pmrem = new THREE.PMREMGenerator(renderer);
     const captureScene = new THREE.Scene();
@@ -97,6 +107,7 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
     captureScene.add(sky);
     uniforms.showSunDisc.value = 0;
     const next = pmrem.fromScene(captureScene).texture;
+    skyCamera.update(renderer, captureScene);
     uniforms.showSunDisc.value = 1;
     pmrem.dispose();
     scene.add(sky); // back out of captureScene: an object has one parent
@@ -151,5 +162,6 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
 
   return {
     sky, sun, sunDirection, sunAngles, setSunAngles, captureSkyLight,
+    skyTexture: skyTarget.texture,
   };
 }

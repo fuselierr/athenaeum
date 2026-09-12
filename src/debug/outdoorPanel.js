@@ -290,10 +290,15 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       get: () => fog.fogMaxOpacity.value,
       set: (v) => { fog.fogMaxOpacity.value = v; },
     });
-    slider('Fog brightness', {
+    slider('Fog brightness (x sky)', {
       min: 0, max: 3, step: 0.01,
       get: () => post.fog.brightness,
       set: (v) => post.fog.setBrightness(v),
+    });
+    slider('Fog sky blur (mip)', {
+      min: 0, max: 6, step: 0.1,
+      get: () => fog.skyBlur.value,
+      set: (v) => { fog.skyBlur.value = v; },
     });
     slider('Inscattering brightness', {
       min: 0, max: 5, step: 0.01,
