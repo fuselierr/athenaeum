@@ -135,7 +135,7 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
 
     // --- grass --------------------------------------------------------------------
     const blades = grass.uniforms;
-    section(`Grass (${grass.count.toLocaleString()} blades, ${grass.chunkCount} chunks)`, {
+    section(`Grass (${grass.chunkCount} chunks of ${grass.bladesPerChunk.toLocaleString()})`, {
       get: () => grass.group.visible,
       set: (on) => { grass.group.visible = on; },
     });
@@ -175,7 +175,8 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       set: (v) => { blades.grassFadeStart.value = v; },
     });
     slider('Fade end (m)', {
-      min: 1, max: 100, step: 1,
+      // No further than the grid of chunks reaches, or its edge would show.
+      min: 1, max: Math.floor(grass.maxFadeEnd), step: 1,
       get: () => blades.grassFadeEnd.value,
       set: (v) => { blades.grassFadeEnd.value = v; },
     });

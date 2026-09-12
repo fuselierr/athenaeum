@@ -230,7 +230,6 @@ export function createOutside({
       await nextFrame();
       grass = createGrass({
         terrain,
-        centre: middle,
         terrainWidth: TERRAIN.width,
         segments: TERRAIN.segments,
         camera,
