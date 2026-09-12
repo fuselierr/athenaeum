@@ -288,7 +288,10 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     });
     section('Sun shadows', {
       get: () => daylight.sun.castShadow,
-      set: (on) => { daylight.sun.castShadow = on; },
+      set: (on) => {
+        daylight.sun.castShadow = on;
+        daylight.requestShadowUpdate(); // the map only redraws when asked
+      },
     });
     slider('Shadow normal bias', {
       min: 0, max: 1, step: 0.01,

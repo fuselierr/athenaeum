@@ -141,6 +141,11 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   // A texel of this map is about 14 cm across the ground, so the offset that
   // stops a slope shadowing itself has to be of that order.
   sun.shadow.normalBias = 0.15;
+  // Rendered once, not every frame: outside, nothing that casts a shadow
+  // moves -- the terrain is still and the grass does not cast. It is redrawn
+  // when the sun moves (setSunAngles) or something asks (requestShadowUpdate).
+  sun.shadow.autoUpdate = false;
+  sun.shadow.needsUpdate = true;
   scene.add(sun);
 
   /** Move the sun: the sky's disc, the light, and sunDirection all follow. */
@@ -154,6 +159,7 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
     );
     uniforms.sunPosition.value.copy(sunDirection);
     sun.position.copy(centre).addScaledVector(sunDirection, reach * 2);
+    sun.shadow.needsUpdate = true;
   }
 
   // --- tone mapping ------------------------------------------------------------
@@ -165,6 +171,11 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
     skyTexture: skyTarget.texture,
     /** The sky light's current capture -- what scene.environment is, outside. */
     get skyLight() { return skyLight; },
+
+    /** Redraw the sun's shadow map on the next frame -- after something that casts moved. */
+    requestShadowUpdate() {
+      sun.shadow.needsUpdate = true;
+    },
 
     /**
      * Out of the scene and off the GPU: the sky, the sun and its shadow map,

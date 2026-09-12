@@ -55,6 +55,8 @@ const GRASS = {
   windDirection: [1, 0.3],
   fadeStart: 30, // metres from the camera where blades start to shrink
   fadeEnd: 45, // and where they are gone -- chunks past this are not drawn
+  thinStart: 12, // metres from the camera where chunks start drawing fewer blades
+  thinnest: 0.15, // the fraction of a chunk's blades still drawn at fadeEnd
   chunkSize: 10, // metres on a side
   textureLod: 4, // mip of the ground texture a blade reads: one averaged colour
 };
@@ -293,7 +295,7 @@ export function createGrass({ terrain, centre, terrainWidth, segments, camera })
     // Nothing clicks on grass, and a raycast would test the base triangle.
     mesh.raycast = () => {};
     group.add(mesh);
-    chunks.push({ mesh, bounds: geometry.boundingSphere });
+    chunks.push({ mesh, bounds: geometry.boundingSphere, blades: roots.length / 3 });
   }
 
   const _cameraPosition = new THREE.Vector3();
@@ -314,9 +316,16 @@ export function createGrass({ terrain, centre, terrainWidth, segments, camera })
       camera.getWorldPosition(_cameraPosition);
       const fadeEnd = uniforms.grassFadeEnd.value;
       drawnChunks = 0;
-      for (const { mesh, bounds } of chunks) {
-        mesh.visible = bounds.distanceToPoint(_cameraPosition) < fadeEnd;
-        if (mesh.visible) drawnChunks += 1;
+      for (const { mesh, bounds, blades } of chunks) {
+        const distance = bounds.distanceToPoint(_cameraPosition);
+        mesh.visible = distance < fadeEnd;
+        if (!mesh.visible) continue;
+        drawnChunks += 1;
+        // Thinned with distance: out there blades are small and shrinking, and
+        // a chunk's blades were planted in random order, so drawing only the
+        // first N of them still spreads them evenly across it.
+        const thinning = THREE.MathUtils.smoothstep(distance, GRASS.thinStart, fadeEnd);
+        mesh.geometry.instanceCount = Math.max(1, Math.round(blades * (1 - thinning * (1 - GRASS.thinnest))));
       }
     },
 

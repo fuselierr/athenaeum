@@ -90,9 +90,16 @@ export function createOutside({
     if (book) book.object.visible = true;
   }
 
-  /** Outside, the book is there only while you are holding it. */
+  /**
+   * Outside, the book is there only while you are holding it. It is the one
+   * thing out there that casts a moving shadow, so while it shows -- and on
+   * the frame it goes -- the sun's otherwise frozen shadow map is redrawn.
+   */
   function followBook() {
-    if (book) book.object.visible = book.isCarried();
+    if (!book) return;
+    const was = book.object.visible;
+    book.object.visible = book.isCarried();
+    if (book.object.visible || was) daylight?.requestShadowUpdate();
   }
 
   const _raycaster = new THREE.Raycaster();

@@ -268,21 +268,30 @@ export function createTerrainMaterial({ height, onProgress = null }) {
         uniform vec3 rockTint;
         uniform vec3 snowTint;
 
-        // A texture projected along all three axes, each weighted by how
-        // squarely the surface faces that axis.
-        vec3 terrainTriplanar(sampler2D map, vec3 p, vec3 weights, float tile) {
-          vec3 alongX = texture2D(map, p.zy / tile).rgb;
-          vec3 alongY = texture2D(map, p.xz / tile).rgb;
-          vec3 alongZ = texture2D(map, p.xy / tile).rgb;
-          return alongX * weights.x + alongY * weights.y + alongZ * weights.z;
+        // ONLY WHAT SHOWS. Every sample below sits behind a branch that skips
+        // it when its weight is nothing -- a projection the surface does not
+        // face, a tile size out of range, a layer that is not there -- which
+        // leaves most pixels one or two texture reads instead of 24. The
+        // samples use textureGrad with derivatives taken once, before any
+        // branch: inside a branch the implicit ones are undefined, and the mip
+        // choice would break along every seam.
+
+        // A texture projected along the axes the surface faces.
+        vec3 terrainTriplanar(sampler2D map, vec3 p, vec3 dpdx, vec3 dpdy, vec3 weights, float tile) {
+          vec3 colour = vec3(0.0);
+          if (weights.x > 0.0) colour += textureGrad(map, p.zy / tile, dpdx.zy / tile, dpdy.zy / tile).rgb * weights.x;
+          if (weights.y > 0.0) colour += textureGrad(map, p.xz / tile, dpdx.xz / tile, dpdy.xz / tile).rgb * weights.y;
+          if (weights.z > 0.0) colour += textureGrad(map, p.xy / tile, dpdx.xy / tile, dpdy.xy / tile).rgb * weights.z;
+          return colour;
         }
 
-        // One layer, at the near tile crossfading to the far one. Both are
-        // always sampled -- a branch would break the mip selection at the seam.
-        vec3 terrainLayer(sampler2D map, vec3 p, vec3 weights, float farBlend) {
-          vec3 near = terrainTriplanar(map, p, weights, terrainTile);
-          vec3 far = terrainTriplanar(map, p, weights, terrainFarTile);
-          return mix(near, far, farBlend);
+        // One layer, at the near tile crossfading to the far one -- each only
+        // where it is in range.
+        vec3 terrainLayer(sampler2D map, vec3 p, vec3 dpdx, vec3 dpdy, vec3 weights, float farBlend) {
+          vec3 colour = vec3(0.0);
+          if (farBlend < 0.999) colour += terrainTriplanar(map, p, dpdx, dpdy, weights, terrainTile) * (1.0 - farBlend);
+          if (farBlend > 0.001) colour += terrainTriplanar(map, p, dpdx, dpdy, weights, terrainFarTile) * farBlend;
+          return colour;
         }`)
       .replace('#include <map_fragment>', `
         vec3 terrainN = normalize(vTerrainNormal);
@@ -290,23 +299,35 @@ export function createTerrainMaterial({ height, onProgress = null }) {
         // not blur into each other across a slope.
         vec3 weights = pow(abs(terrainN), vec3(4.0));
         weights /= max(weights.x + weights.y + weights.z, 1e-5);
+        // A projection contributing under 2% is dropped, and the rest scaled
+        // back up to make the whole again.
+        weights *= step(vec3(0.02), weights);
+        weights /= max(weights.x + weights.y + weights.z, 1e-5);
+
+        vec3 dpdx = dFdx(vTerrainPosition);
+        vec3 dpdy = dFdy(vTerrainPosition);
 
         float farBlend = terrainDistanceTiling * smoothstep(
           terrainFarBlendStart, terrainFarBlendEnd, distance(vTerrainWorld, cameraPosition));
 
-        vec3 sand = terrainLayer(sandMap, vTerrainPosition, weights, farBlend) * sandTint;
-        vec3 grass = terrainLayer(grassMap, vTerrainPosition, weights, farBlend) * grassTint;
-        vec3 rock = terrainLayer(rockMap, vTerrainPosition, weights, farBlend) * rockTint;
-        vec3 snow = terrainLayer(snowMap, vTerrainPosition, weights, farBlend) * snowTint;
-
+        // The layer blend, worked out as four weights before anything is
+        // sampled -- the same result as mixing sand to grass by height, then
+        // in snow by height, then rock by slope.
         float up = terrainN.y; // dot(normal, up): 1 flat, 0 a cliff
         float heightFraction = clamp(vTerrainPosition.y / max(terrainHeight, 1e-5), 0.0, 1.0);
+        float toGrass = smoothstep(terrainSandTop, terrainSandTop + terrainSandFade, heightFraction);
+        float toSnow = smoothstep(terrainSnowLine, terrainSnowLine + terrainSnowFade, heightFraction);
+        float notRock = smoothstep(terrainRockSteep, terrainRockFlat, up);
+        float sandWeight = (1.0 - toGrass) * (1.0 - toSnow) * notRock;
+        float grassWeight = toGrass * (1.0 - toSnow) * notRock;
+        float snowWeight = toSnow * notRock;
+        float rockWeight = 1.0 - notRock;
 
-        vec3 ground = mix(sand, grass,
-          smoothstep(terrainSandTop, terrainSandTop + terrainSandFade, heightFraction));
-        ground = mix(ground, snow,
-          smoothstep(terrainSnowLine, terrainSnowLine + terrainSnowFade, heightFraction));
-        ground = mix(rock, ground, smoothstep(terrainRockSteep, terrainRockFlat, up));
+        vec3 ground = vec3(0.0);
+        if (sandWeight > 0.001) ground += terrainLayer(sandMap, vTerrainPosition, dpdx, dpdy, weights, farBlend) * sandTint * sandWeight;
+        if (grassWeight > 0.001) ground += terrainLayer(grassMap, vTerrainPosition, dpdx, dpdy, weights, farBlend) * grassTint * grassWeight;
+        if (snowWeight > 0.001) ground += terrainLayer(snowMap, vTerrainPosition, dpdx, dpdy, weights, farBlend) * snowTint * snowWeight;
+        if (rockWeight > 0.001) ground += terrainLayer(rockMap, vTerrainPosition, dpdx, dpdy, weights, farBlend) * rockTint * rockWeight;
 
         // Macro variation: three samples of the noise, each 0.5..1.5 so
         // their product averages 1 and the ground's overall brightness holds.

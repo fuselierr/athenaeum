@@ -297,16 +297,24 @@ export class VolumetricCloudsPass extends Pass {
           return (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosTheta, 1e-4), 1.5);
         }
 
+        // How much of the sky is cloud around p: coverage, varied by the
+        // weather noise. It changes over kilometres, so the sun march reuses
+        // the value from the point it starts at instead of reading it again.
+        float coverageAt(vec3 p) {
+          vec3 q = p + vec3(wind.x, 0.0, wind.y) * time;
+          float weather = texture(shapeNoise, vec3(q.x, 0.0, q.z) / (shapeScale * 5.0) + vec3(0.0, 0.37, 0.0)).r;
+          return clamp(coverage + (weather - 0.5) * 0.6, 0.0, 1.0);
+        }
+
         // Extinction per metre at p. Without detail: the cheap shape only,
         // for the sun march.
-        float cloudDensity(vec3 p, bool withDetail) {
+        float cloudDensity(vec3 p, float localCoverage, bool withDetail) {
           float height = clamp((p.y - bottom) / max(top - bottom, 1.0), 0.0, 1.0);
           // Rounded bottoms, softer tops.
           float profile = smoothstep(0.0, 0.12, height) * (1.0 - smoothstep(0.55, 1.0, height));
+          // Outside the layer, or none to be had: no texture reads at all.
+          if (profile <= 0.0 || localCoverage <= 0.0) return 0.0;
           vec3 q = p + vec3(wind.x, 0.0, wind.y) * time;
-
-          float weather = texture(shapeNoise, vec3(q.x, 0.0, q.z) / (shapeScale * 5.0) + vec3(0.0, 0.37, 0.0)).r;
-          float localCoverage = clamp(coverage + (weather - 0.5) * 0.6, 0.0, 1.0);
 
           float shape = texture(shapeNoise, q / shapeScale).r * profile;
           float cloud = clamp(remap(shape, 1.0 - localCoverage, 1.0, 0.0, 1.0), 0.0, 1.0);
@@ -346,11 +354,12 @@ export class VolumetricCloudsPass extends Pass {
           for (int i = 0; i < MAX_STEPS; i++) {
             if (i >= steps || transmittance < 0.02) break;
             vec3 p = cameraPos + direction * t;
-            float extinction = cloudDensity(p, true);
+            float localCoverage = coverageAt(p);
+            float extinction = cloudDensity(p, localCoverage, true);
             if (extinction > 0.0) {
               float opticalDepth = 0.0;
               for (int j = 0; j < LIGHT_STEPS; j++) {
-                opticalDepth += cloudDensity(p + sunDirection * lightStep * (float(j) + 0.5), false) * lightStep;
+                opticalDepth += cloudDensity(p + sunDirection * lightStep * (float(j) + 0.5), localCoverage, false) * lightStep;
               }
               float toSun = exp(-opticalDepth * absorption);
               float powdered = mix(1.0, 1.0 - exp(-opticalDepth * absorption * 2.0), powder);
