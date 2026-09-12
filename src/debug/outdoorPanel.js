@@ -154,6 +154,16 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       get: () => blades.grassHeightScale.value,
       set: (v) => { blades.grassHeightScale.value = v; },
     });
+    slider('Height underfoot (x full)', {
+      min: 0, max: 1, step: 0.01,
+      get: () => blades.grassNearHeight.value,
+      set: (v) => { blades.grassNearHeight.value = v; },
+    });
+    slider('Full height at (m)', {
+      min: 0.5, max: 40, step: 0.5,
+      get: () => blades.grassFullHeightAt.value,
+      set: (v) => { blades.grassFullHeightAt.value = v; },
+    });
     slider('Width scale', {
       min: 0, max: 4, step: 0.01,
       get: () => blades.grassWidthScale.value,

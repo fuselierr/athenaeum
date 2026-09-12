@@ -41,8 +41,11 @@ import { sampleTerrain } from './terrain.js';
  *
  * WIND. The tip leans downwind by a gust that travels across the field, plus
  * a per-blade flutter -- in world space, whichever way a chunk is turned.
- * Blades shrink away between two distances from the camera, which hides the
- * edge of the field and the shimmer of far blades.
+ * HEIGHT WITH DISTANCE. Right where you stand the grass is short, so it never
+ * walls off the view at your feet, and it grows to full height over the
+ * first several metres out. Far off, blades shrink away again between two
+ * distances from the camera, which hides the edge of the field and the
+ * shimmer of far blades.
  *
  * LIGHT. Every blade is lit as the ground under it is -- its normal points
  * straight up, from both sides -- so it takes the sun, the sky light and the
@@ -59,9 +62,11 @@ const GRASS = {
   rootColour: 0x2e5a1c,
   tipColour: 0x9cc24f,
   groundInfluence: 0.25, // how much of the ground texture shows in a blade, 0..1
-  windStrength: 0.35, // how far a tip leans, as a fraction of its height
-  windSpeed: 1.2,
+  windStrength: 0.6, // how far a tip leans, as a fraction of its height
+  windSpeed: 0.7,
   windDirection: [1, 0.3],
+  nearHeight: 0.5, // a blade's height right where you stand, as a fraction of its full height
+  fullHeightAt: 25, // metres out, along the ground, where blades reach full height
   fadeStart: 30, // metres from the camera where blades start to shrink
   fadeEnd: 45, // and where they are gone -- the grid is sized to reach this
   thinStart: 12, // metres from the camera where chunks start drawing fewer blades
@@ -151,7 +156,9 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
     grassWindDirection: { value: new THREE.Vector2(...GRASS.windDirection).normalize() },
     grassFadeStart: { value: GRASS.fadeStart },
     grassFadeEnd: { value: GRASS.fadeEnd },
-    grassHeightScale: { value: 1 },
+    grassHeightScale: { value: 3 },
+    grassNearHeight: { value: GRASS.nearHeight },
+    grassFullHeightAt: { value: GRASS.fullHeightAt },
     grassWidthScale: { value: 1 },
     grassBaseShade: { value: GRASS.baseShade },
     grassTextureLod: { value: GRASS.textureLod },
@@ -195,6 +202,8 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
         uniform float grassFadeStart;
         uniform float grassFadeEnd;
         uniform float grassHeightScale;
+        uniform float grassNearHeight;
+        uniform float grassFullHeightAt;
         uniform float grassWidthScale;
         uniform float grassBaseShade;
         uniform sampler2D grassSurface;
@@ -233,7 +242,11 @@ export function createGrass({ terrain, terrainWidth, segments, camera }) {
         float tip = step(1.5, bladeCorner);
 
         float fade = (1.0 - smoothstep(grassFadeStart, grassFadeEnd, distance(root, cameraPosition))) * grows;
-        float bladeHeight = bladeData.x * grassHeightScale * fade;
+        // Short underfoot, growing to full height outward. Measured along the
+        // ground, so standing on a slope or mid-jump does not change it.
+        float growth = mix(grassNearHeight, 1.0,
+          smoothstep(0.0, grassFullHeightAt, distance(root.xz, cameraPosition.xz)));
+        float bladeHeight = bladeData.x * grassHeightScale * growth * fade;
         float halfWidth = 0.5 * bladeData.y * grassWidthScale * fade;
         vec3 side = vec3(cos(bladeData.z), 0.0, sin(bladeData.z));
 
