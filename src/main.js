@@ -664,6 +664,9 @@ mountMenu({
   ),
   setBackground: (id) => scenery.setBackground(id),
   uploadBook: (file) => openUploadedFile(file),
+  // The Scene tab's room / outside switch (scene/outside.js).
+  goOutside: () => outside?.goOutside(),
+  goInside: () => outside?.goInside(),
 
   // Escape, innermost meaning first: a book in the hand goes back before
   // the menu will open. Returning true means the press was spent.

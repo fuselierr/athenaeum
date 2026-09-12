@@ -4,6 +4,7 @@ import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../ui/loadingScreen.js';
 import { createGrass } from './grass.js';
+import { world } from '../state/world.js';
 
 /**
  * Going outside, through the door.
@@ -15,8 +16,14 @@ import { createGrass } from './grass.js';
  * an atmosphere to see it through (scene/outdoorLight.js), then height fog
  * and auto exposure over the frame (scene/outdoorPost.js) -- which is why,
  * once outside, main.js renders through render() here instead of straight
- * to the screen. Walking bounds, the book's physics walls and coming back in
- * are all still the room's.
+ * to the screen. Walking bounds and the book's physics walls are still the
+ * room's.
+ *
+ * AND BACK. goInside() hides everything outdoors and puts the room's look
+ * back -- its fog, its view distance, its backdrop and light, no tone
+ * mapping -- exactly as they were when you left. Nothing outdoors is thrown
+ * away, so going out a second time is instant, and comes back as you left it
+ * (the debug panel's settings included).
  */
 
 const HEIGHTMAP_URL = '/heightmaps/swissalps.raw'; // public/heightmaps
@@ -42,6 +49,13 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
   let post = null;
   let grass = null;
 
+  // The scene-wide settings each place needs, taken as you leave it and
+  // restored as you come back.
+  let insideLook = null;
+  let outsideLook = null;
+  // The outdoor objects, and whether each was showing when you went in.
+  let outdoorVisibility = null;
+
   const _raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
 
@@ -64,11 +78,71 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
     return false;
   }
 
+  function captureLook() {
+    return {
+      fog: scene.fog,
+      far: camera.far,
+      background: scene.background,
+      environment: scene.environment,
+      environmentIntensity: scene.environmentIntensity,
+      toneMapping: renderer.toneMapping,
+      toneMappingExposure: renderer.toneMappingExposure,
+    };
+  }
+
+  function restoreLook(look) {
+    scene.fog = look.fog;
+    camera.far = look.far;
+    camera.updateProjectionMatrix();
+    scene.background = look.background;
+    scene.environment = look.environment;
+    scene.environmentIntensity = look.environmentIntensity;
+    renderer.toneMapping = look.toneMapping;
+    renderer.toneMappingExposure = look.toneMappingExposure;
+  }
+
+  /** Back outside, with everything already built. */
+  function returnOutside() {
+    room.group.visible = false;
+    floor.visible = false;
+    for (const [object, visible] of outdoorVisibility) object.visible = visible;
+    restoreLook(outsideLook);
+    // Its capture may have been retaken since this look was saved.
+    scene.environment = daylight.skyLight;
+    // Meter afresh rather than adapting from the room's brightness.
+    post.exposure.firstFrame = true;
+    state = 'outside';
+    world.place = 'outside';
+  }
+
+  /** Back into the room, as it was when you left it. */
+  function goInside() {
+    if (state !== 'outside') return;
+    outsideLook = captureLook();
+    outdoorVisibility = [terrain, grass?.group, daylight.sky, daylight.sun]
+      .filter(Boolean)
+      .map((object) => [object, object.visible]);
+    for (const [object] of outdoorVisibility) object.visible = false;
+    restoreLook(insideLook);
+    room.group.visible = true;
+    floor.visible = true;
+    state = 'inside';
+    world.place = 'room';
+  }
+
   // Everything that can fail -- the downloads -- happens before the room is
   // touched, so a failed trip leaves you standing in the room as it was.
   async function goOutside() {
     if (state !== 'inside') return;
+    // Before anything outdoors touches the scene: this is what coming back in
+    // restores.
+    insideLook = captureLook();
+    if (terrain && post) {
+      returnOutside();
+      return;
+    }
     state = 'loading';
+    world.place = 'loading';
     loadingScreen.show('Opening the door…');
     try {
       const heightmap = await loadHeightmap(HEIGHTMAP_URL, (fraction) => {
@@ -139,10 +213,14 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
       await renderer.compileAsync(scene, camera);
 
       state = 'outside';
+      world.place = 'outside';
       loadingScreen.finish();
     } catch (err) {
       console.error('Going outside failed:', err);
-      if (state === 'loading') state = 'inside';
+      if (state === 'loading') {
+        state = 'inside';
+        world.place = 'room';
+      }
       loadingScreen.fail('The way outside is blocked for now.');
     }
   }
@@ -173,5 +251,6 @@ export function createOutside({ scene, camera, renderer, room, floor }) {
     },
 
     goOutside,
+    goInside,
   };
 }

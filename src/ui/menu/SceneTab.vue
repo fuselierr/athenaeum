@@ -1,11 +1,17 @@
 <script setup>
 import { ref } from 'vue';
 import { settings } from '../../state/settings.js';
+import { ui } from '../../state/ui.js';
+import { world } from '../../state/world.js';
 import { BACKGROUNDS, DEFAULT_BACKGROUND } from '../../scene/backgrounds.js';
 
 /**
- * Where the reading happens. Backgrounds for now -- furniture, time of day
- * and the rest of a real scene picker can hang off the same list later.
+ * Where the reading happens: in the room or outside, and the room's
+ * backdrop.
+ *
+ * Going somewhere closes the menu -- the point is to look at where you went.
+ * The backdrops are only offered in the room: each one is the room's light as
+ * well as its view, and outside the sky is both.
  *
  * Loading is shown per card rather than as a global spinner: these are 4K
  * EXRs and the big ones take a moment, and the useful thing to know is
@@ -34,14 +40,63 @@ async function choose(background) {
 function current(id) {
   return (settings.scene.background ?? DEFAULT_BACKGROUND) === id;
 }
+
+function go(place) {
+  if (world.place === place || world.place === 'loading') return;
+  ui.menuOpen = false;
+  if (place === 'outside') props.bridge.goOutside();
+  else props.bridge.goInside();
+}
 </script>
 
 <template>
   <section class="menu-section">
+    <h3>Where</h3>
+    <ul class="scenes">
+      <li>
+        <button
+          type="button"
+          class="scene"
+          :class="{ current: world.place === 'room' }"
+          :disabled="world.place !== 'outside'"
+          @click="go('room')"
+        >
+          <span class="scene-name">The room</span>
+          <span class="scene-note">The desk, the lamp and the shelf of books.</span>
+          <span class="scene-meta">{{ world.place === 'room' ? 'you are here' : 'go back inside' }}</span>
+        </button>
+      </li>
+      <li>
+        <button
+          type="button"
+          class="scene"
+          :class="{ current: world.place === 'outside', busy: world.place === 'loading' }"
+          :disabled="world.place !== 'room'"
+          @click="go('outside')"
+        >
+          <span class="scene-name">Outside</span>
+          <span class="scene-note">Through the door: mountains, grass and open sky.</span>
+          <span class="scene-meta">
+            <template v-if="world.place === 'loading'">loading…</template>
+            <template v-else-if="world.place === 'outside'">you are here</template>
+            <template v-else>go outside</template>
+          </span>
+        </button>
+      </li>
+    </ul>
+  </section>
+
+  <section class="menu-section">
     <h3>Background</h3>
     <p class="menu-hint" style="margin-bottom: 12px;">
-      The backdrop is also the room's light — every one of these relights
-      the desk as well as changing the view.
+      <template v-if="world.place === 'room'">
+        The backdrop is also the room's light — every one of these relights
+        the desk as well as changing the view.
+      </template>
+      <template v-else>
+        Backdrops light the room. Outside, the sky does that — go back inside
+        to change them.
+      </template>
     </p>
 
     <ul class="scenes">
@@ -50,7 +105,7 @@ function current(id) {
           type="button"
           class="scene"
           :class="{ current: current(background.id), busy: loading === background.id }"
-          :disabled="Boolean(loading)"
+          :disabled="Boolean(loading) || world.place !== 'room'"
           @click="choose(background)"
         >
           <span class="scene-name">{{ background.name }}</span>

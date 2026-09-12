@@ -163,5 +163,7 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   return {
     sky, sun, sunDirection, sunAngles, setSunAngles, captureSkyLight,
     skyTexture: skyTarget.texture,
+    /** The sky light's current capture -- what scene.environment is, outside. */
+    get skyLight() { return skyLight; },
   };
 }

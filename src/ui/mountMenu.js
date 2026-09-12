@@ -19,7 +19,7 @@ import { matches } from '../state/keybindings.js';
  *
  * @param {object} bridge  what the tabs are allowed to do to the room:
  *   goToPage(page), turnPage(direction), setBackground(id),
- *   uploadBook(file), escape().
+ *   uploadBook(file), goOutside(), goInside(), escape().
  * @returns {{ unmount(): void }}
  */
 export function mountMenu(bridge) {
