@@ -5,8 +5,8 @@ import * as THREE from 'three';
  *
  * Only there outside, and only while the rest of the debug overlay is
  * showing: a checkbox to switch each effect on and off, and sliders for the
- * settings behind it -- the sky atmosphere, the sun, the sky light, height
- * fog, exposure, color grading and tone mapping. Everything changes live except the sky
+ * settings behind it -- the terrain's tiling tricks, the sky atmosphere, the
+ * sun, the sky light, height fog, exposure, color grading and tone mapping. Everything changes live except the sky
  * light, which is a capture of the sky: it is taken again when a slider that
  * changes the sky is let go, not on every step of the drag. A button at the
  * top puts every control back to what it was when the panel was built --
@@ -27,7 +27,7 @@ import * as THREE from 'three';
 export function createOutdoorPanel({ getOutside, renderer, scene }) {
   let el = null;
 
-  function build(daylight, post) {
+  function build(daylight, post, terrain) {
     el = document.createElement('div');
     Object.assign(el.style, {
       position: 'fixed',
@@ -128,6 +128,54 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       row.append(name, value, input);
       el.append(row);
     }
+
+    // --- terrain: distance tiling and macro variation -----------------------------
+    const ground = terrain.material.userData.uniforms;
+    section('Distance tiling', {
+      get: () => ground.terrainDistanceTiling.value > 0,
+      set: (on) => { ground.terrainDistanceTiling.value = on ? 1 : 0; },
+    });
+    slider('Near tile (m)', {
+      min: 1, max: 30, step: 0.5,
+      get: () => ground.terrainTile.value,
+      set: (v) => { ground.terrainTile.value = v; },
+    });
+    slider('Far tile (m)', {
+      min: 5, max: 200, step: 1,
+      get: () => ground.terrainFarTile.value,
+      set: (v) => { ground.terrainFarTile.value = v; },
+    });
+    slider('Crossfade start (m)', {
+      min: 0, max: 300, step: 1,
+      get: () => ground.terrainFarBlendStart.value,
+      set: (v) => { ground.terrainFarBlendStart.value = v; },
+    });
+    slider('Crossfade end (m)', {
+      min: 1, max: 600, step: 1,
+      get: () => ground.terrainFarBlendEnd.value,
+      set: (v) => { ground.terrainFarBlendEnd.value = v; },
+    });
+
+    let macroStrength = ground.terrainMacroStrength.value;
+    section('Macro variation', {
+      get: () => ground.terrainMacroStrength.value > 0,
+      set: (on) => { ground.terrainMacroStrength.value = on ? macroStrength : 0; },
+    });
+    slider('Strength', {
+      min: 0, max: 1, step: 0.01,
+      get: () => macroStrength,
+      set: (v) => {
+        macroStrength = v;
+        if (ground.terrainMacroStrength.value > 0 || v > 0) ground.terrainMacroStrength.value = v;
+      },
+    });
+    ['x', 'y', 'z'].forEach((axis, i) => {
+      slider(`Scale ${i + 1} (m)`, {
+        min: 2, max: 1000, step: 1,
+        get: () => ground.terrainMacroScales.value[axis],
+        set: (v) => { ground.terrainMacroScales.value[axis] = v; },
+      });
+    });
 
     const fog = post.fog.material.uniforms;
     const apply = post.exposure.applyMaterial.uniforms;
@@ -370,7 +418,7 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     update(debugVisible) {
       const outside = getOutside();
       const show = Boolean(debugVisible && outside?.outside && outside.daylight && outside.post);
-      if (show && !el) build(outside.daylight, outside.post);
+      if (show && !el) build(outside.daylight, outside.post, outside.terrain);
       if (el) el.style.display = show ? 'block' : 'none';
     },
   };

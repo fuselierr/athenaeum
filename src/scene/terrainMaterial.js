@@ -23,6 +23,19 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
  * normal. A plain top-down projection smears a texture into streaks on a
  * steep face -- exactly where the rock is.
  *
+ * BREAKING UP THE REPEAT, two landscape tricks from Unreal:
+ *
+ *   Distance tiling  every layer is sampled twice, at a small tile and a
+ *                    large one, and crossfades from the first to the second
+ *                    with distance from the camera -- detailed underfoot, and
+ *                    no visible grid of repeats across a valley.
+ *
+ *   Macro variation  a light-to-dark noise texture sampled at three large,
+ *                    unrelated scales, multiplied together and laid over the
+ *                    ground, so the same texture reads as patchy rather than
+ *                    uniform. The noise is generated here (macroVariation),
+ *                    tileable, rather than loaded.
+ *
  * THE TEXTURES come from public/textures, one file per layer. A .glb is read
  * for the first base-colour texture on any material inside it; any other
  * extension is loaded as an image. Until a layer's texture arrives (or if
@@ -54,6 +67,75 @@ const BLEND = {
 
 // Metres of ground one texture repeat covers.
 const TILE_SIZE = 6;
+
+// Distance tiling: the repeat grows to FAR_TILE_SIZE, crossfading between
+// these distances from the camera, in metres.
+const DISTANCE_TILING = {
+  farTile: 40,
+  blendStart: 15,
+  blendEnd: 120,
+};
+
+// Macro variation: how strongly it darkens and lightens the ground (0 off),
+// and the three sizes, in metres, its noise repeats at -- far apart and not
+// multiples of each other, so the three never line up into a pattern.
+const MACRO_VARIATION = {
+  strength: 0.5,
+  scales: [23, 97, 331],
+};
+
+/**
+ * Tileable light-to-dark noise: a few octaves of value noise on lattices that
+ * wrap exactly at the edge, normalised to the full 0..1 range. Grey, linear,
+ * sampled with repeat wrapping.
+ */
+function macroVariation(size = 256) {
+  let seed = 1337;
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+  const fade = (t) => t * t * (3 - 2 * t);
+
+  const values = new Float32Array(size * size);
+  let amplitude = 1;
+  for (let cells = 4; cells <= 64; cells *= 2) {
+    const lattice = Float32Array.from({ length: cells * cells }, random);
+    const at = (x, y) => lattice[(y % cells) * cells + (x % cells)];
+    for (let py = 0; py < size; py++) {
+      const gy = (py / size) * cells;
+      const y0 = Math.floor(gy);
+      const ty = fade(gy - y0);
+      for (let px = 0; px < size; px++) {
+        const gx = (px / size) * cells;
+        const x0 = Math.floor(gx);
+        const tx = fade(gx - x0);
+        const top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * tx;
+        const bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * tx;
+        values[py * size + px] += (top + (bottom - top) * ty) * amplitude;
+      }
+    }
+    amplitude *= 0.5;
+  }
+
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of values) { if (v < min) min = v; if (v > max) max = v; }
+  const data = new Uint8Array(size * size * 4);
+  for (let i = 0; i < values.length; i++) {
+    const grey = Math.round(((values[i] - min) / (max - min || 1)) * 255);
+    data.set([grey, grey, grey, 255], i * 4);
+  }
+
+  const texture = new THREE.DataTexture(data, size, size);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 /** A 1x1 white texture, sampled until a layer's real one arrives. */
 function blankTexture() {
@@ -94,6 +176,13 @@ export function createTerrainMaterial({ height, onProgress = null }) {
   const uniforms = {
     terrainHeight: { value: height },
     terrainTile: { value: TILE_SIZE },
+    terrainFarTile: { value: DISTANCE_TILING.farTile },
+    terrainFarBlendStart: { value: DISTANCE_TILING.blendStart },
+    terrainFarBlendEnd: { value: DISTANCE_TILING.blendEnd },
+    terrainDistanceTiling: { value: 1 }, // 0 turns it off
+    terrainMacroMap: { value: macroVariation() },
+    terrainMacroScales: { value: new THREE.Vector3(...MACRO_VARIATION.scales) },
+    terrainMacroStrength: { value: MACRO_VARIATION.strength },
     terrainRockSteep: { value: BLEND.rockSteep },
     terrainRockFlat: { value: BLEND.rockFlat },
     terrainSandTop: { value: BLEND.sandTop },
@@ -131,6 +220,8 @@ export function createTerrainMaterial({ height, onProgress = null }) {
         onProgress?.(settled, total);
       }));
   material.userData.ready = Promise.all(loads);
+  // Live, for tuning (debug/outdoorPanel.js): the shader reads these objects.
+  material.userData.uniforms = uniforms;
 
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -138,19 +229,30 @@ export function createTerrainMaterial({ height, onProgress = null }) {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         varying vec3 vTerrainPosition;
-        varying vec3 vTerrainNormal;`)
+        varying vec3 vTerrainNormal;
+        varying vec3 vTerrainWorld;`)
       .replace('#include <project_vertex>', `#include <project_vertex>
         // The terrain's own space: height measured from its lowest point, and
         // textures that stay put on the ground however the mesh is placed.
         vTerrainPosition = transformed;
-        vTerrainNormal = normalize(mat3(modelMatrix) * objectNormal);`);
+        vTerrainNormal = normalize(mat3(modelMatrix) * objectNormal);
+        // World space, for the distance to the camera.
+        vTerrainWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
 
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec3 vTerrainPosition;
         varying vec3 vTerrainNormal;
+        varying vec3 vTerrainWorld;
         uniform float terrainHeight;
         uniform float terrainTile;
+        uniform float terrainFarTile;
+        uniform float terrainFarBlendStart;
+        uniform float terrainFarBlendEnd;
+        uniform float terrainDistanceTiling;
+        uniform sampler2D terrainMacroMap;
+        uniform vec3 terrainMacroScales;
+        uniform float terrainMacroStrength;
         uniform float terrainRockSteep;
         uniform float terrainRockFlat;
         uniform float terrainSandTop;
@@ -168,11 +270,19 @@ export function createTerrainMaterial({ height, onProgress = null }) {
 
         // A texture projected along all three axes, each weighted by how
         // squarely the surface faces that axis.
-        vec3 terrainTriplanar(sampler2D map, vec3 p, vec3 weights) {
-          vec3 alongX = texture2D(map, p.zy / terrainTile).rgb;
-          vec3 alongY = texture2D(map, p.xz / terrainTile).rgb;
-          vec3 alongZ = texture2D(map, p.xy / terrainTile).rgb;
+        vec3 terrainTriplanar(sampler2D map, vec3 p, vec3 weights, float tile) {
+          vec3 alongX = texture2D(map, p.zy / tile).rgb;
+          vec3 alongY = texture2D(map, p.xz / tile).rgb;
+          vec3 alongZ = texture2D(map, p.xy / tile).rgb;
           return alongX * weights.x + alongY * weights.y + alongZ * weights.z;
+        }
+
+        // One layer, at the near tile crossfading to the far one. Both are
+        // always sampled -- a branch would break the mip selection at the seam.
+        vec3 terrainLayer(sampler2D map, vec3 p, vec3 weights, float farBlend) {
+          vec3 near = terrainTriplanar(map, p, weights, terrainTile);
+          vec3 far = terrainTriplanar(map, p, weights, terrainFarTile);
+          return mix(near, far, farBlend);
         }`)
       .replace('#include <map_fragment>', `
         vec3 terrainN = normalize(vTerrainNormal);
@@ -181,10 +291,13 @@ export function createTerrainMaterial({ height, onProgress = null }) {
         vec3 weights = pow(abs(terrainN), vec3(4.0));
         weights /= max(weights.x + weights.y + weights.z, 1e-5);
 
-        vec3 sand = terrainTriplanar(sandMap, vTerrainPosition, weights) * sandTint;
-        vec3 grass = terrainTriplanar(grassMap, vTerrainPosition, weights) * grassTint;
-        vec3 rock = terrainTriplanar(rockMap, vTerrainPosition, weights) * rockTint;
-        vec3 snow = terrainTriplanar(snowMap, vTerrainPosition, weights) * snowTint;
+        float farBlend = terrainDistanceTiling * smoothstep(
+          terrainFarBlendStart, terrainFarBlendEnd, distance(vTerrainWorld, cameraPosition));
+
+        vec3 sand = terrainLayer(sandMap, vTerrainPosition, weights, farBlend) * sandTint;
+        vec3 grass = terrainLayer(grassMap, vTerrainPosition, weights, farBlend) * grassTint;
+        vec3 rock = terrainLayer(rockMap, vTerrainPosition, weights, farBlend) * rockTint;
+        vec3 snow = terrainLayer(snowMap, vTerrainPosition, weights, farBlend) * snowTint;
 
         float up = terrainN.y; // dot(normal, up): 1 flat, 0 a cliff
         float heightFraction = clamp(vTerrainPosition.y / max(terrainHeight, 1e-5), 0.0, 1.0);
@@ -194,6 +307,14 @@ export function createTerrainMaterial({ height, onProgress = null }) {
         ground = mix(ground, snow,
           smoothstep(terrainSnowLine, terrainSnowLine + terrainSnowFade, heightFraction));
         ground = mix(rock, ground, smoothstep(terrainRockSteep, terrainRockFlat, up));
+
+        // Macro variation: three samples of the noise, each 0.5..1.5 so
+        // their product averages 1 and the ground's overall brightness holds.
+        vec2 macroUv = vTerrainPosition.xz;
+        float macro = (0.5 + texture2D(terrainMacroMap, macroUv / terrainMacroScales.x).r)
+          * (0.5 + texture2D(terrainMacroMap, macroUv / terrainMacroScales.y).r)
+          * (0.5 + texture2D(terrainMacroMap, macroUv / terrainMacroScales.z).r);
+        ground *= mix(1.0, macro, terrainMacroStrength);
 
         diffuseColor.rgb *= ground;`);
   };
