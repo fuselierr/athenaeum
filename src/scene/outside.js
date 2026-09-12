@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  loadHeightmap, createTerrain, terrainHeightAt, disposeTerrain,
+  loadHeightmap, createTerrain, terrainHeightAt, disposeTerrain, sampleTerrain,
 } from './terrain.js';
 import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
@@ -41,6 +41,9 @@ import { world } from '../state/world.js';
 
 const HEIGHTMAP_URL = '/heightmaps/swissalps.raw'; // public/heightmaps
 const TERRAIN = { width: 400, height: 60, segments: 255 };
+// How far in from the terrain's edge you can walk, in metres -- short of
+// where the ground ends and the void begins.
+const GROUND_EDGE_MARGIN = 10;
 
 /** Resolves on the next frame -- so a status line paints before blocking work. */
 function nextFrame() {
@@ -58,9 +61,12 @@ function nextFrame() {
  *   is drawn, to hide while outside
  * @param {{ object: THREE.Object3D, isCarried(): boolean }|null} [opts.book]
  *   the book, shown outside only while isCarried()
+ * @param {((ground: { heightAt(x: number, z: number): number, bounds: THREE.Box3 }|null) => void)|null} [opts.setGround]
+ *   given the terrain to walk on when you arrive outside, and null when you
+ *   leave -- input/cameraModes.js's setGround
  */
 export function createOutside({
-  scene, camera, renderer, room, floor, inside = [], book = null,
+  scene, camera, renderer, room, floor, inside = [], book = null, setGround = null,
 }) {
   let state = 'inside'; // 'loading' | 'outside'
   let terrain = null;
@@ -71,6 +77,8 @@ export function createOutside({
   // The room's scene-wide settings, taken as you leave and restored as you
   // come back.
   let insideLook = null;
+  // Where you were standing in the room, to come back in to.
+  const insideCameraPosition = new THREE.Vector3();
 
   // Everything of the room's that is drawn, and whether each was showing when
   // you went out -- so the walls switch (H), say, comes back as it was.
@@ -174,6 +182,10 @@ export function createOutside({
     if (state !== 'outside') return;
     restoreLook(insideLook);
     showInside();
+    // Back on the room's floor, where you were standing when you went out --
+    // before the terrain the ground reads from is freed.
+    camera.position.copy(insideCameraPosition);
+    setGround?.(null);
     unloadOutside();
     state = 'inside';
     world.place = 'room';
@@ -186,6 +198,7 @@ export function createOutside({
     // Before anything outdoors touches the scene: this is what coming back in
     // restores.
     insideLook = captureLook();
+    insideCameraPosition.copy(camera.position);
     state = 'loading';
     world.place = 'loading';
     loadingScreen.show('Opening the door…');
@@ -260,12 +273,23 @@ export function createOutside({
       loadingScreen.status('Almost there…');
       await renderer.compileAsync(scene, camera);
 
+      // On your feet on the terrain, wherever in it you came out.
+      const walkable = TERRAIN.width / 2 - GROUND_EDGE_MARGIN;
+      setGround?.({
+        heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+        bounds: new THREE.Box3(
+          new THREE.Vector3(terrain.position.x - walkable, 0, terrain.position.z - walkable),
+          new THREE.Vector3(terrain.position.x + walkable, 0, terrain.position.z + walkable),
+        ),
+      });
+
       state = 'outside';
       world.place = 'outside';
       loadingScreen.finish();
     } catch (err) {
       console.error('Going outside failed:', err);
       // Back as you were, with whatever had been built so far freed.
+      setGround?.(null);
       restoreLook(insideLook);
       showInside();
       unloadOutside();

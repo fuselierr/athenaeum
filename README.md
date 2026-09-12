@@ -53,6 +53,7 @@ Every key below can be rebound in **Settings → Controls**.
 | `Esc` | Open the menu — or put back the book in your hand first |
 | `1` / `2` / `3` | Orbit / walk / look camera |
 | `W` `A` `S` `D` | Move (hold `Shift` to run) |
+| `Space` | Jump, in walk mode |
 | Drag | Orbit the camera, or look around in first person |
 | Scroll | Zoom, in look mode |
 | Click a shelf book | Take it — and open it |

@@ -12,7 +12,7 @@ import { keys, label } from '../state/keybindings.js';
  *
  * WHAT IS ON IT. How to use the room with the keyboard and mouse, and where
  * the Escape menu is. Deliberately NOT everything: flipping the book over (F)
- * and the debug keys (the backquote hinge labels, Space to pause the physics)
+ * and the debug keys (the backquote hinge labels, P to pause the physics)
  * are development tools, not things a reader needs to be told about.
  *
  * THE KEYS ARE THE READER'S. Every key can be rebound (Esc -> Settings ->
@@ -93,7 +93,7 @@ function sections() {
       title: 'Moving around',
       rows: [
         { keys: [k('camera.orbit'), k('camera.walk'), k('camera.look')], text: 'Orbit the desk · walk · look from the middle' },
-        { keys: [k('move.forward'), k('move.left'), k('move.back'), k('move.right')], text: `Walk, and hold ${k('move.run')} to run` },
+        { keys: [k('move.forward'), k('move.left'), k('move.back'), k('move.right')], text: `Walk, hold ${k('move.run')} to run, ${k('move.jump')} to jump` },
         { gesture: 'Drag', text: 'Look around' },
         { gesture: 'Scroll', text: 'Zoom in, from the middle of the room' },
       ],

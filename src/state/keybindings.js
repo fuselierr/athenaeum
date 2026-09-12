@@ -49,6 +49,7 @@ export const ACTIONS = [
   { id: 'move.left', group: 'Movement', label: 'Left', default: 'KeyA' },
   { id: 'move.right', group: 'Movement', label: 'Right', default: 'KeyD' },
   { id: 'move.run', group: 'Movement', label: 'Run', default: 'ShiftLeft' },
+  { id: 'move.jump', group: 'Movement', label: 'Jump (walk)', default: 'Space' },
 
   { id: 'book.pageForward', group: 'Book', label: 'Turn forward', default: 'ArrowRight' },
   { id: 'book.pageBack', group: 'Book', label: 'Turn back', default: 'ArrowLeft' },
@@ -56,7 +57,7 @@ export const ACTIONS = [
   { id: 'book.reset', group: 'Book', label: 'Reset the book (on the desk, or square in your hand)', default: 'KeyR' },
 
   { id: 'debug.labels', group: 'Debug', label: 'Hinge labels', default: 'Backquote' },
-  { id: 'debug.pause', group: 'Debug', label: 'Pause the simulation', default: 'Space' },
+  { id: 'debug.pause', group: 'Debug', label: 'Pause the simulation', default: 'KeyP' },
 ];
 
 const STORAGE_KEY = 'athenaeum.keybindings';
@@ -72,6 +73,17 @@ try {
   // added since must come up on its default rather than undefined.
   for (const action of ACTIONS) {
     if (typeof saved[action.id] === 'string') keys[action.id] = saved[action.id];
+  }
+  // An action the save has never heard of was added since it was written, and
+  // its default may be a key the save still gives something else -- Space
+  // paused the simulation before it jumped. The older action moves to its own
+  // default rather than both answering to one key.
+  for (const action of ACTIONS) {
+    if (action.id in saved) continue;
+    const clash = ACTIONS.find(
+      (other) => other.id !== action.id && normalise(keys[other.id]) === normalise(action.default),
+    );
+    if (clash && normalise(keys[clash.id]) !== normalise(clash.default)) keys[clash.id] = clash.default;
   }
 } catch {
   // Private browsing, cleared storage, or a half-written value: defaults.

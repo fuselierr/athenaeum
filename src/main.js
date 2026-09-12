@@ -254,6 +254,8 @@ let outside = null;
     ].filter(Boolean),
     // It comes outside with you only in your hand.
     book: { object: bookGroup, isCarried: () => Boolean(bookCarry?.carrying) },
+    // Outside, you walk on the terrain rather than the room's floor.
+    setGround: (ground) => cameraModes.setGround(ground),
   });
   // The walls-and-ceiling setting (the key, or Settings -> View) reaches the
   // room from here on.

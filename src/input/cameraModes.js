@@ -8,7 +8,9 @@ import { settings } from '../state/settings.js';
  *   1  ORBIT  the original rig -- OrbitControls with WASD panning. A table
  *             view: you circle the book rather than standing anywhere.
  *   2  WALK   first person, and the mode the app starts in. WASD walks
- *             across the floor at eye height, dragging looks around.
+ *             across the floor at eye height -- or, outside, over the
+ *             ground, up and down its slopes (setGround) -- Space jumps,
+ *             and dragging looks around.
  *   3  LOOK   parked in the middle of the room. Dragging looks around, the
  *             wheel zooms in on whatever caught your eye.
  *
@@ -42,6 +44,11 @@ const WALK_DAMPING = 11;
 // How far in from the floor's edge you can walk. The floor is a finite slab
 // (scene/floor.js), so without this you can step off it into the void.
 const WALL_MARGIN = 0.15;
+// A jump: straight up at this speed, then falling under gravity until the
+// feet meet the ground -- wherever the ground is by then, so a jump onto a
+// slope lands on it, and one off a ridge falls the whole way down.
+const JUMP_SPEED = 4.2; // m/s: about 0.9 m high
+const GRAVITY = 9.81; // m/s^2
 
 const LOOK_SENSITIVITY = 0.0024; // radians per pixel, at the base fov
 const PITCH_LIMIT = Math.PI / 2 - 0.05; // short of straight up/down, which gimbals
@@ -104,8 +111,23 @@ export function createCameraModes({
   let yaw = 0;
   let pitch = 0;
   let room = null; // walkable bounds; set once the furniture has been placed
+  // Uneven ground to stand on instead of the room's flat floor, while set:
+  // { heightAt(x, z): world y, bounds: THREE.Box3 (x/z only) }.
+  let ground = null;
 
   const held = new Set();
+  // Mid-air, the height of the feet in world space; null while standing, when
+  // they simply follow the ground.
+  let airborneFeet = null;
+  let verticalSpeed = 0;
+  let jumpRequested = false;
+
+  /** On the ground again, now -- for anything that places the camera. */
+  function land() {
+    airborneFeet = null;
+    verticalSpeed = 0;
+    jumpRequested = false;
+  }
   const velocity = new THREE.Vector3();
   const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
   const _forward = new THREE.Vector3();
@@ -132,21 +154,29 @@ export function createCameraModes({
     controls.target.copy(camera.position).addScaledVector(_forward, ORBIT_HANDOFF_DISTANCE);
   }
 
+  /** Where you may stand, and how high the ground is there. */
   function clampToFloor() {
-    camera.position.y = floorY() + EYE_HEIGHT;
-    if (!room) return;
-    camera.position.x = THREE.MathUtils.clamp(
-      camera.position.x, room.min.x + WALL_MARGIN, room.max.x - WALL_MARGIN,
-    );
-    camera.position.z = THREE.MathUtils.clamp(
-      camera.position.z, room.min.z + WALL_MARGIN, room.max.z - WALL_MARGIN,
-    );
+    const bounds = ground?.bounds ?? room;
+    if (bounds) {
+      camera.position.x = THREE.MathUtils.clamp(
+        camera.position.x, bounds.min.x + WALL_MARGIN, bounds.max.x - WALL_MARGIN,
+      );
+      camera.position.z = THREE.MathUtils.clamp(
+        camera.position.z, bounds.min.z + WALL_MARGIN, bounds.max.z - WALL_MARGIN,
+      );
+    }
+    // After the clamp, so the height is read where you actually end up.
+    const underfoot = ground
+      ? ground.heightAt(camera.position.x, camera.position.z)
+      : floorY();
+    if (airborneFeet !== null && airborneFeet <= underfoot) land();
+    camera.position.y = (airborneFeet ?? underfoot) + EYE_HEIGHT;
   }
 
   // --- switching -----------------------------------------------------------
   const LABELS = {
     [CAMERA_MODE.ORBIT]: '[1] orbit -- drag to orbit, WASD to pan',
-    [CAMERA_MODE.WALK]: '[2] walk -- WASD to move, shift to run, drag to look',
+    [CAMERA_MODE.WALK]: '[2] walk -- WASD to move, shift to run, space to jump, drag to look',
     [CAMERA_MODE.LOOK]: '[3] look -- drag to look, scroll to zoom',
   };
 
@@ -157,6 +187,7 @@ export function createCameraModes({
     // other two would fight its update() for the transform.
     controls.enabled = mode === CAMERA_MODE.ORBIT;
     velocity.set(0, 0, 0);
+    land();
     looking = null;
 
     // The zoom belongs to the two first-person modes; orbit uses its normal lens.
@@ -171,9 +202,11 @@ export function createCameraModes({
       clampToFloor();
       applyLook();
     } else if (mode === CAMERA_MODE.LOOK) {
-      if (room) room.getCenter(_centre);
+      const bounds = ground?.bounds ?? room;
+      if (bounds) bounds.getCenter(_centre);
       else _centre.set(0, 0, 0);
-      camera.position.set(_centre.x, floorY() + EYE_HEIGHT, _centre.z);
+      const underfoot = ground ? ground.heightAt(_centre.x, _centre.z) : floorY();
+      camera.position.set(_centre.x, underfoot + EYE_HEIGHT, _centre.z);
       camera.lookAt(FOCUS);
       readLookFromCamera();
       applyLook();
@@ -303,6 +336,12 @@ export function createCameraModes({
     else if (matches('camera.walk', e)) setMode(CAMERA_MODE.WALK);
     else if (matches('camera.look', e)) setMode(CAMERA_MODE.LOOK);
     for (const action of MOVE_ACTIONS) if (matches(action, e)) held.add(action);
+    // Taken on the next update, against the ground under you then. Not a
+    // held key: holding it does not bounce.
+    if (mode === CAMERA_MODE.WALK && !e.repeat && matches('move.jump', e)) {
+      jumpRequested = true;
+      e.preventDefault(); // or Space scrolls the page, or presses a focused button
+    }
   });
   // Release is matched on the raw code, without the guards `matches`
   // applies: a key let go after the menu opened, or after focus moved into
@@ -339,6 +378,7 @@ export function createCameraModes({
       camera.position.x = x;
       camera.position.z = z;
       velocity.set(0, 0, 0);
+      land();
       clampToFloor();
       applyLook();
     },
@@ -351,6 +391,22 @@ export function createCameraModes({
     setRoom(bounds) {
       room = bounds;
       if (mode !== CAMERA_MODE.ORBIT) clampToFloor();
+    },
+
+    /**
+     * Stand on uneven ground instead of the room's floor -- outside, the
+     * terrain (scene/outside.js) -- or pass null to go back to the floor.
+     * `heightAt(x, z)` is the ground's world height under a point, followed
+     * every step; `bounds` is how far you may walk, in x and z. Either way
+     * you are put back on your feet at once.
+     */
+    setGround(next) {
+      ground = next;
+      if (mode === CAMERA_MODE.ORBIT) return;
+      velocity.set(0, 0, 0);
+      land();
+      clampToFloor();
+      applyLook();
     },
 
     update(dt) {
@@ -386,8 +442,20 @@ export function createCameraModes({
       velocity.x = THREE.MathUtils.damp(velocity.x, _wish.x, response, dt);
       velocity.z = THREE.MathUtils.damp(velocity.z, _wish.z, response, dt);
 
+      if (jumpRequested) {
+        jumpRequested = false;
+        if (airborneFeet === null) {
+          airborneFeet = camera.position.y - EYE_HEIGHT;
+          verticalSpeed = JUMP_SPEED;
+        }
+      }
+      if (airborneFeet !== null) {
+        verticalSpeed -= GRAVITY * dt;
+        airborneFeet += verticalSpeed * dt;
+      }
+
       camera.position.addScaledVector(velocity, dt);
-      clampToFloor();
+      clampToFloor(); // lands you, if the fall has reached the ground
       applyLook(); // the orbit handoff target travels with us
     },
   };

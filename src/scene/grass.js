@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { sampleTerrain } from './terrain.js';
 
 /**
  * Grass: a field of blades, each one a single triangle.
@@ -82,24 +83,8 @@ function seeded(seed) {
  */
 export function createGrass({ terrain, centre, terrainWidth, segments, camera }) {
   const ground = terrain.material.userData.uniforms;
-  const positions = terrain.geometry.attributes.position;
-  const normals = terrain.geometry.attributes.normal;
-  const columns = segments + 1;
-  const { smoothstep, lerp, clamp } = THREE.MathUtils;
-
-  /** An attribute's component at a world x/z, bilinear across the grid. */
-  function sample(attribute, component, x, z) {
-    const gx = ((x - terrain.position.x) / terrainWidth + 0.5) * segments;
-    const gz = ((z - terrain.position.z) / terrainWidth + 0.5) * segments;
-    const c = clamp(Math.floor(gx), 0, segments - 1);
-    const r = clamp(Math.floor(gz), 0, segments - 1);
-    const tx = gx - c;
-    const tz = gz - r;
-    const at = (col, row) => attribute.getComponent(row * columns + col, component);
-    const top = lerp(at(c, r), at(c + 1, r), tx);
-    const bottom = lerp(at(c, r + 1), at(c + 1, r + 1), tx);
-    return lerp(top, bottom, tz);
-  }
+  const grid = { width: terrainWidth, segments };
+  const { smoothstep, lerp } = THREE.MathUtils;
 
   /** How likely a blade is to take here, 0..1: not on steep rock, not in snow. */
   function grassiness(localHeight, up) {
@@ -120,8 +105,8 @@ export function createGrass({ terrain, centre, terrainWidth, segments, camera })
     const theta = random() * Math.PI * 2;
     const x = centre.x + r * Math.cos(theta);
     const z = centre.z + r * Math.sin(theta);
-    const localHeight = sample(positions, 1, x, z);
-    const up = sample(normals, 1, x, z);
+    const localHeight = sampleTerrain(terrain, 'position', 1, x, z, grid);
+    const up = sampleTerrain(terrain, 'normal', 1, x, z, grid);
     if (random() > grassiness(localHeight, up)) continue;
 
     const y = terrain.position.y + localHeight;

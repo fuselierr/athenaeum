@@ -131,6 +131,35 @@ export function createTerrain(heightmap, {
 }
 
 /**
+ * A value off the terrain's grid at a world x/z, blended between the four
+ * vertices around it -- so it is exactly the surface the mesh draws, where
+ * terrainHeightAt reads the heightmap the mesh was sampled from. For standing
+ * on the ground (input/cameraModes.js, through scene/outside.js) and planting
+ * in it (scene/grass.js). Outside the grid it clamps to the edge.
+ *
+ * @param {THREE.Mesh} mesh  createTerrain's mesh, placed
+ * @param {'position'|'normal'} attribute
+ * @param {number} component  0 x, 1 y, 2 z -- positions are the mesh's own,
+ *   so a height needs mesh.position.y added
+ * @param {{ width?: number, segments?: number }} [opts]  as the mesh was made
+ */
+export function sampleTerrain(mesh, attribute, component, x, z, { width = 400, segments = 255 } = {}) {
+  const values = mesh.geometry.attributes[attribute];
+  const columns = segments + 1;
+  // Grid rows run from -Z to +Z (see createTerrain's rotation), columns -X to +X.
+  const gx = THREE.MathUtils.clamp(((x - mesh.position.x) / width + 0.5) * segments, 0, segments);
+  const gz = THREE.MathUtils.clamp(((z - mesh.position.z) / width + 0.5) * segments, 0, segments);
+  const c = Math.min(Math.floor(gx), segments - 1);
+  const r = Math.min(Math.floor(gz), segments - 1);
+  const tx = gx - c;
+  const tz = gz - r;
+  const at = (col, row) => values.getComponent(row * columns + col, component);
+  const top = at(c, r) + (at(c + 1, r) - at(c, r)) * tx;
+  const bottom = at(c, r + 1) + (at(c + 1, r + 1) - at(c, r + 1)) * tx;
+  return top + (bottom - top) * tz;
+}
+
+/**
  * Free everything createTerrain made on the GPU: its geometry, its material,
  * and every texture the material holds -- the four ground layers (or their
  * blank stand-ins) and the macro variation noise.
