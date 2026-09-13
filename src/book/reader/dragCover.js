@@ -109,6 +109,67 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
     angle0 = Math.atan2(e.clientY - pivotScreen.y, e.clientX - pivotScreen.x);
   }
 
+  // --- a hand, in VR (input/vrControls.js) ------------------------------------
+  // A board or a spread taken hold of by a controller instead of a cursor.
+  // The hand's swing is measured about the hinge in the book's own frame,
+  // where a board at angle a points along (0, -sin a, cos a) from it
+  // (math.js's pageTransform) -- the angle the board's own is kept in -- so
+  // the swing is added straight onto it. Summed a frame at a time, so a
+  // swing past half a turn never wraps round.
+  let hand = null; // { hingeZ, last, sweep } while a hand has hold
+  const _handLocal = new THREE.Vector3();
+
+  function handAngle(pages, worldPoint, hingeZ) {
+    _handLocal.copy(worldPoint);
+    pages.root.worldToLocal(_handLocal);
+    const hinge = spineHinge(hingeZ).mid;
+    return Math.atan2(-(_handLocal.y - hinge.y), _handLocal.z - hinge.z);
+  }
+
+  /** Take hold of board 'H1' or 'H2' with a hand at `worldPoint`. */
+  function grabBoard(board, worldPoint) {
+    if (slot || spread) return false;
+    const pages = getPages();
+    if (!pages) return false;
+    const hingeZ = pages.hardcoverHingeZ(board);
+    slot = board;
+    startAngle = pages.hardcoverAngles[board];
+    pages.setHardcoverHold(board, startAngle);
+    hand = { hingeZ, last: handAngle(pages, worldPoint, hingeZ), sweep: 0 };
+    return true;
+  }
+
+  /** Lift the half of the pages waiting to come over, with a hand at `worldPoint`. */
+  function grabSpread(worldPoint) {
+    if (slot || spread) return false;
+    const pages = getPages();
+    const state = pages?.openState;
+    if (state?.needs !== 'spread') return false;
+    const lifted = state.side === 'front' ? pages.spreadFront : pages.spreadBack;
+    const hingeZ = lifted.refAnchor.z;
+    spread = state.side;
+    const { P1, P2 } = pages.panelAngles;
+    startAngle = spread === 'front' ? P1 : P2;
+    pages.setSpreadHold(spread, startAngle);
+    hand = { hingeZ, last: handAngle(pages, worldPoint, hingeZ), sweep: 0 };
+    return true;
+  }
+
+  /** The hand holding a board or spread is now at `worldPoint`. */
+  function moveHand(worldPoint) {
+    if (!hand || (!slot && !spread)) return;
+    const pages = getPages();
+    if (!pages) return;
+    const angle = handAngle(pages, worldPoint, hand.hingeZ);
+    let step = angle - hand.last;
+    step = Math.atan2(Math.sin(step), Math.cos(step));
+    hand.last = angle;
+    hand.sweep += step;
+    const target = THREE.MathUtils.clamp(startAngle + hand.sweep, 0, OPEN_LIMIT);
+    if (slot) pages.setHardcoverHold(slot, target);
+    else pages.setSpreadHold(spread, target);
+  }
+
   dom.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || slot || spread || e.shiftKey) return; // shift is the book-slide gesture
     const pages = getPages();
@@ -150,7 +211,7 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
   }, { capture: true });
 
   window.addEventListener('pointermove', (e) => {
-    if (!slot && !spread) return;
+    if ((!slot && !spread) || hand) return;
     const pages = getPages();
     if (!pages) return;
     const angle = Math.atan2(e.clientY - pivotScreen.y, e.clientX - pivotScreen.x);
@@ -175,6 +236,7 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
     else getPages()?.setSpreadHold(spread, null);
     slot = null;
     spread = null;
+    hand = null;
     controls.enabled = true;
     dom.style.cursor = '';
   }
@@ -187,5 +249,8 @@ export function createDragCover({ getPages, camera, renderer, controls }) {
     get draggingCover() { return slot; },
     get draggingSpread() { return spread; },
     release,
+    grabBoard,
+    grabSpread,
+    moveHand,
   };
 }

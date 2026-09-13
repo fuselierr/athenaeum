@@ -25,6 +25,8 @@ import { createCameraPan } from './input/cameraPan.js';
 import { createCameraModes, CAMERA_MODE } from './input/cameraModes.js';
 import { createBookManipulator } from './input/bookManipulator.js';
 import { createBookCarry } from './input/bookCarry.js';
+import { createVRControls } from './input/vrControls.js';
+import { mountVRButton } from './ui/vrButton.js';
 import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
 import { createOutdoorPanel } from './debug/outdoorPanel.js';
@@ -408,6 +410,24 @@ const anglePanel = createAnglePanel({ getPages, getPageTurn: () => dragPageTurn 
 const outdoorPanel = createOutdoorPanel({ getOutside: () => outside, renderer, scene });
 const fpsCounter = createFpsCounter(); // also in the ` overlay
 
+// VR (WebXR): a rig carrying the camera and both controllers, and everything
+// they do -- walking, turning, holding books, turning pages, the menu. Idle
+// until a session starts; the button only appears where a headset can.
+const vr = createVRControls({
+  renderer,
+  scene,
+  camera,
+  cameraModes,
+  bookGroup,
+  getPages,
+  bookCarry,
+  dragCover,
+  dragPageTurn,
+  getShelfBooks: () => shelfBooks,
+  getOutside: () => outside,
+});
+mountVRButton(vr);
+
 // --- book loading ---
 // HINGE_LEN/PANEL_REACH/SPINE_GAP are baked into physics bodies and
 // geometry at construction, so new page dimensions mean rebuilding the
@@ -594,6 +614,8 @@ function swapModelForBook() {
   const shut = pages.close(SHUT_ON);
   const scale = size.length / HINGE_LEN;
   bookGroup.scale.setScalar(scale);
+  // In VR the model is in a hand, and the book it becomes stays in it.
+  const hand = shelfBooks.heldHand;
   const home = shelfBooks.handOver(bookGroup, {
     position: shut.centre.multiplyScalar(scale),
     quaternion: shut.quaternion,
@@ -603,6 +625,7 @@ function swapModelForBook() {
     home.takeBack();
     if (arrived) stowBook();
   });
+  if (hand) bookCarry.holdIn(hand);
 }
 
 /** The real book has flown back into the shelf. */
@@ -771,7 +794,11 @@ renderer.setAnimationLoop(() => {
   if (pages.spineRotationDriven) refreshSpineRotationLabel();
   if (!anglePanel.visible) simulationPaused = false;
 
-  cameraModes.update(dt);
+  // In VR the headset and the controllers move you (input/vrControls.js); the
+  // desktop rig would only fight them for the camera. First, so everything
+  // posed from a hand or the head below sees where they are this frame.
+  if (renderer.xr.isPresenting) vr.update(dt);
+  else cameraModes.update(dt);
   // Carried -- up off the desk, or a shelf book in hand -- the pages feel down
   // as though the book were lying flat. See bookManipulator.update.
   const carried = bookCarry.carrying;
@@ -797,7 +824,7 @@ renderer.setAnimationLoop(() => {
   }
   // OrbitControls poses the camera on every update() -- enabled or not --
   // so the modes that steer it directly must not let it run.
-  if (cameraModes.mode === CAMERA_MODE.ORBIT) controls.update();
+  if (cameraModes.mode === CAMERA_MODE.ORBIT && !renderer.xr.isPresenting) controls.update();
   // After the camera has finished moving for the frame: a book in hand is
   // posed from it, and stepping first would leave it a frame behind.
   shelfBooks?.update(dt);

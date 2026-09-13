@@ -70,6 +70,23 @@ Every key below can be rebound in **Settings → Controls**.
 | `H` | Hide or show the walls and ceiling |
 | `M` | Mute |
 
+### In VR
+
+On a browser that can show VR (a headset's own, or a desktop one with a headset attached), an **Enter VR** button appears at the bottom of the screen.
+
+| Input | Action |
+| --- | --- |
+| Left stick | Walk, the way you are facing |
+| Right stick | Turn, in steps |
+| Grip, near the book | Pick it up — it stays in your hand where you took it |
+| Grip, near a shelf book | Take it off the shelf — and open it |
+| Grip on a page, book in the other hand | Take hold of the page; carry your hand over the spine to turn it |
+| Grip on a board, book in the other hand | Swing the cover open or shut |
+| Let go of the grip | Drop the book — or, by its slot, put a shelf book back |
+| `Y` (left hand) | Open or close the menu |
+| Trigger | Press what your pointer is on, on the menu |
+| Stick, pointing at the menu | Scroll it |
+
 ## Status
 
 Athenaeum is an active work in progress. The page-turn physics, texture pipeline, shelf library, room and menu are functional.

@@ -458,6 +458,7 @@ export async function populateShelf(bookshelf, {
   }
 
   function hovered() {
+    if (probes) return nearestTo(probes, probeRadius);
     if (!interactive || !pointerInside) return null;
     return bookUnder(pointer);
   }
@@ -465,6 +466,46 @@ export async function populateShelf(bookshelf, {
   // --- in hand -------------------------------------------------------------
   let held = null; // the entry the player is holding, or null
   let disposed = false;
+
+  // VR (input/vrControls.js). The hand holding the model in place of the
+  // camera's hold, and where the model sits in its frame. Let go of, the
+  // hand's last pose is kept -- `frozen` -- so the book flies home from where
+  // the hand opened, not from the camera's hold.
+  let heldHand = null;
+  const _handOffset = new THREE.Matrix4();
+  const _frozenHand = new THREE.Matrix4();
+  let frozen = false;
+  // Points to draw out the nearest book to, in place of the cursor: the free
+  // hands. Null when there are none.
+  let probes = null;
+  let probeRadius = 0;
+  const _probeBox = new THREE.Box3();
+
+  /** The shelved book nearest any of `points`, within `radius`, or null. */
+  function nearestTo(points, radius) {
+    let best = null;
+    let bestDistance = radius;
+    for (const entry of hovering) {
+      if (entry === held || !entry.group.visible) continue;
+      _probeBox.setFromObject(entry.group);
+      for (const point of points) {
+        const distance = _probeBox.distanceToPoint(point);
+        if (distance <= bestDistance) {
+          best = entry;
+          bestDistance = distance;
+        }
+      }
+    }
+    return best;
+  }
+
+  /** A hand letting go of its model: keep the pose it let go at. */
+  function freezeHand() {
+    if (!heldHand) return;
+    _frozenHand.multiplyMatrices(heldHand.matrixWorld, _handOffset);
+    frozen = true;
+    heldHand = null;
+  }
 
   function setHeld(entry) {
     if (entry === held) return;
@@ -510,9 +551,16 @@ export async function populateShelf(bookshelf, {
    * length shows up as shimmer.
    */
   function readHandPose() {
-    camera.updateMatrixWorld();
     _anchorInverse.copy(anchor.matrixWorld).invert();
-    _handMatrix.multiplyMatrices(camera.matrixWorld, HOLD_MATRIX).premultiply(_anchorInverse);
+    if (heldHand) {
+      _handMatrix.multiplyMatrices(heldHand.matrixWorld, _handOffset);
+    } else if (frozen) {
+      _handMatrix.copy(_frozenHand);
+    } else {
+      camera.updateMatrixWorld();
+      _handMatrix.multiplyMatrices(camera.matrixWorld, HOLD_MATRIX);
+    }
+    _handMatrix.premultiply(_anchorInverse);
     _handMatrix.decompose(_handPosition, _handQuaternion, _handScale);
   }
 
@@ -592,6 +640,7 @@ export async function populateShelf(bookshelf, {
       );
       const picked = bookUnder(_pickPointer);
       if (!picked) return false; // a click on the room leaves the hand alone
+      freezeHand();
       setHeld(picked === held ? null : picked);
       return true;
     },
@@ -601,7 +650,44 @@ export async function populateShelf(bookshelf, {
      * the menu's escape stack (ui/mountMenu.js) rather than a listener
      * here: one key, one owner, innermost meaning first.
      */
-    release() { setHeld(null); },
+    release() {
+      freezeHand();
+      setHeld(null);
+    },
+
+    /** The VR hand holding the model, or null. */
+    get heldHand() { return heldHand; },
+
+    /**
+     * Draw out whichever book is nearest these points, within `radius`, in
+     * place of the one under the cursor -- the free VR hands. Pass none to
+     * give the cursor back.
+     */
+    setProbes(points, radius = 0) {
+      probes = points?.length ? points : null;
+      probeRadius = radius;
+    },
+
+    /**
+     * Take the book nearest `point`, within `radius`, in a VR hand, keeping it
+     * exactly where it is in that hand. Returns whether there was one.
+     *
+     * @param {THREE.Vector3} point  world space
+     * @param {THREE.Object3D} hand  followed by its world matrix
+     */
+    grabNear(point, hand, radius) {
+      const entry = nearestTo([point], radius);
+      if (!entry) return false;
+      if (held) freezeHand();
+      hand.updateWorldMatrix(true, false);
+      entry.group.updateWorldMatrix(true, false);
+      _handOffset.copy(hand.matrixWorld).invert().multiply(entry.group.matrixWorld);
+      heldHand = hand;
+      frozen = false;
+      entry.hold = 1; // already in the hand: no trip to make
+      setHeld(entry);
+      return true;
+    },
 
     /** Size of the model in hand, in metres, or null. */
     get heldSize() { return held?.size ?? null; },
@@ -635,6 +721,7 @@ export async function populateShelf(bookshelf, {
       mirrorTo(home, entry.rest, upright, fitted);
       // Let go without telling onTake: the book was taken, and has not been
       // put back -- it is simply not this model any more.
+      freezeHand();
       held = null;
       return {
         ...home,
@@ -694,6 +781,8 @@ export async function populateShelf(bookshelf, {
           book.group.quaternion.copy(upright).slerp(_handQuaternion, t);
         }
       }
+      // Everything let go of by a hand is home: its last pose is done with.
+      if (frozen && hovering.every((book) => book.hold <= 0)) frozen = false;
     },
 
     dispose() {

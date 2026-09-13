@@ -456,6 +456,73 @@ export function createDragPageTurn({
     return true;
   }
 
+  // --- a hand, in VR (input/vrControls.js) ------------------------------------
+  // The same leaf a drag bends, driven by where a controller is instead of a
+  // cursor's sweep across the screen. The hand's angle is measured about the
+  // shared B/C hinge in the book's own frame -- where a page at angle a
+  // points along (0, -sin a, cos a) from its hinge (math.js's pageTransform)
+  // -- so it is the same kind of angle as the two panels' own, and a hand
+  // carried over the spine takes the leaf with it, whichever way the book
+  // is held. Summed a frame at a time, so a swing past half a turn never
+  // wraps round.
+  const _handLocal = new THREE.Vector3();
+
+  function handAngle(pages, worldPoint) {
+    _handLocal.copy(worldPoint);
+    pages.root.worldToLocal(_handLocal);
+    const hinge = spineHinge(pages.spreadFront.anchorFar.z).mid;
+    return Math.atan2(-(_handLocal.y - hinge.y), _handLocal.z - hinge.z);
+  }
+
+  /**
+   * Take hold of page `panel` ('B' or 'C') with a hand at `worldPoint`.
+   * Returns false when it cannot turn: nothing loaded, that end of the book,
+   * or other leaves still landing.
+   */
+  function grabPage(panel, worldPoint) {
+    if (dragTurn || pendingPress || turns.length > 0) return false;
+    const pages = getPages();
+    if (!pages || !content.canTurn(panel)) return false;
+    const turn = createTurn(panel, pages, { commitNow: false });
+    turn.byHand = true;
+    turn.handLast = handAngle(pages, worldPoint);
+    turn.handSweep = 0;
+    dragTurn = turn;
+    return true;
+  }
+
+  /** The hand holding a page is now at `worldPoint`. */
+  function movePageGrab(worldPoint) {
+    if (!dragTurn?.byHand || dragTurn.mode !== 'dragging') return;
+    const pages = getPages();
+    if (!pages) return;
+    const angle = handAngle(pages, worldPoint);
+    let step = angle - dragTurn.handLast;
+    step = Math.atan2(Math.sin(step), Math.cos(step));
+    dragTurn.handLast = angle;
+    dragTurn.handSweep += step;
+    // How far the hand has swung, over how far apart the two panels lie. The
+    // two are the same kind of angle, so the sign looks after itself.
+    const { startRef, endRef } = shapeTargets(dragTurn, pages);
+    let span = endRef - startRef;
+    span = Math.atan2(Math.sin(span), Math.cos(span));
+    if (Math.abs(span) < 0.2) span = (span < 0 ? -1 : 1) * Math.PI;
+    dragTurn.dragAngle = dragTurn.handSweep;
+    dragTurn.progress = THREE.MathUtils.clamp(dragTurn.handSweep / span, 0, 1);
+    if (!dragTurn.soundPlayed && dragTurn.progress >= 0.5) {
+      dragTurn.soundPlayed = true;
+      onPageTurnSound?.();
+    }
+    rebuildLeaf(dragTurn, pages);
+  }
+
+  /** Let go of the page: past half-way it lands, short of that it falls back. */
+  function releasePage() {
+    if (!dragTurn?.byHand || dragTurn.mode !== 'dragging') return;
+    dragTurn.settleTarget = dragTurn.progress >= 0.5 ? 1 : 0;
+    dragTurn.mode = 'settling';
+  }
+
   dom.addEventListener('pointerdown', (e) => {
     // One drag at a time, and not while a cascade of keyboard turns is
     // still landing -- a drag defers its commit, which would otherwise
@@ -528,7 +595,7 @@ export function createDragPageTurn({
       && Math.hypot(e.clientX - pendingPress.x, e.clientY - pendingPress.y) > CLICK_SLOP) {
       beginPendingTurn();
     }
-    if (!dragTurn || dragTurn.mode !== 'dragging') return;
+    if (!dragTurn || dragTurn.mode !== 'dragging' || dragTurn.byHand) return;
     const angle = Math.atan2(e.clientY - dragTurn.pivotScreen.y, e.clientX - dragTurn.pivotScreen.x);
     let delta = angle - dragTurn.angle0;
     delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest signed angular difference
@@ -549,7 +616,7 @@ export function createDragPageTurn({
       pendingPress = null;
       controls.enabled = true;
     }
-    if (dragTurn && dragTurn.mode === 'dragging') {
+    if (dragTurn && dragTurn.mode === 'dragging' && !dragTurn.byHand) {
       dragTurn.settleTarget = dragTurn.progress >= 0.5 ? 1 : 0;
       dragTurn.mode = 'settling';
     }
@@ -610,6 +677,9 @@ export function createDragPageTurn({
   return {
     update,
     playTurn,
+    grabPage,
+    movePageGrab,
+    releasePage,
     getDebugState,
     get activeTurnCount() { return turns.length; },
   };

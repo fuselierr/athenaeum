@@ -246,9 +246,9 @@ onBeforeUnmount(() => {
     <ul class="covers">
       <li v-for="design in results" :key="design.id" class="cover">
         <div class="jacket" role="img" :aria-label="`${design.title}: back, spine and front`">
-          <img class="jacket-board" :src="design.back" alt="" loading="lazy">
-          <img class="jacket-spine" :src="design.spine" alt="" loading="lazy">
-          <img class="jacket-board" :src="design.front" alt="" loading="lazy">
+          <img class="jacket-board" :src="design.back" alt="" loading="lazy" crossorigin="anonymous">
+          <img class="jacket-spine" :src="design.spine" alt="" loading="lazy" crossorigin="anonymous">
+          <img class="jacket-board" :src="design.front" alt="" loading="lazy" crossorigin="anonymous">
         </div>
 
         <div class="cover-info">

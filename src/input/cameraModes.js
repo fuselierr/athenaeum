@@ -457,6 +457,39 @@ export function createCameraModes({
       applyLook();
     },
 
+    /** The ground's height under a point: the terrain outside, the room's floor inside. */
+    groundHeightAt(x, z) {
+      return ground ? ground.heightAt(x, z) : floorY();
+    },
+
+    /**
+     * Bring a world point's x and z inside where you may walk -- the room, or
+     * the terrain -- the way walking keeps the camera in. In place; returns it.
+     */
+    clampToWalkable(point) {
+      const bounds = ground?.bounds ?? room;
+      if (!bounds) return point;
+      point.x = THREE.MathUtils.clamp(point.x, bounds.min.x + WALL_MARGIN, bounds.max.x - WALL_MARGIN);
+      point.z = THREE.MathUtils.clamp(point.z, bounds.min.z + WALL_MARGIN, bounds.max.z - WALL_MARGIN);
+      return point;
+    },
+
+    /**
+     * Take the view up again from wherever the camera has been put by
+     * something that was steering it instead -- VR (input/vrControls.js),
+     * handing back where your head was and which way it faced.
+     */
+    resume() {
+      velocity.set(0, 0, 0);
+      land();
+      standUp();
+      looking = null;
+      if (mode === CAMERA_MODE.ORBIT) return;
+      readLookFromCamera();
+      if (mode === CAMERA_MODE.WALK) clampToFloor();
+      applyLook();
+    },
+
     update(dt) {
       if (mode === CAMERA_MODE.ORBIT) {
         cameraPan.update(dt);

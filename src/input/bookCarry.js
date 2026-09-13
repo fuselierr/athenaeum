@@ -42,6 +42,13 @@ import * as THREE from 'three';
  * again, and straighten() (the reset key) eases the book back to that
  * without putting it down.
  *
+ * IN A HAND, in VR (input/vrControls.js), there is no reading pose to fly
+ * to: the book rides the hand that closed on it, exactly where it was when
+ * the grip closed -- grabWith() off the desk, holdIn() for a book already
+ * carried, or one just handed over from the shelf. Every trip, home and
+ * letting go work as they do for a click; the hand only replaces where the
+ * hand pose is read from.
+ *
  * GRAVITY is not handled here, but it matters: held up facing you, real
  * gravity would run across the pages and swing them about. While it is
  * carried, the book is read as if it were lying on a desk -- see
@@ -126,6 +133,13 @@ export function createBookCarry({
   let reach = 1;
   let straightening = false; // easing all three back to none
 
+  // The VR hand holding the book, and where the book sits in its frame; null
+  // for the desktop, where the hand pose comes from the camera.
+  let hand = null;
+  const handOffset = new THREE.Matrix4();
+  const _handMatrix = new THREE.Matrix4();
+  const _handScale = new THREE.Vector3();
+
   const _raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
   const _targetCentre = new THREE.Vector3();
@@ -180,8 +194,18 @@ export function createBookCarry({
     straightening = false;
   }
 
+  /** Ride `object` from here on, from exactly where the book is now. */
+  function holdWith(object) {
+    hand = object;
+    object.updateWorldMatrix(true, false);
+    bookGroup.updateWorldMatrix(true, false);
+    handOffset.copy(object.matrixWorld).invert().multiply(bookGroup.matrixWorld);
+    travel = 1; // already in the hand: no trip to make
+  }
+
   /** No longer carried, for whatever reason. */
   function endCarry(arrived) {
+    hand = null;
     held = false;
     returning = false;
     travel = 1;
@@ -192,6 +216,11 @@ export function createBookCarry({
 
   /** The pose the hand wants this frame, into _handPosition/_handQuaternion. */
   function readHandPose(dt) {
+    if (hand) {
+      _handMatrix.multiplyMatrices(hand.matrixWorld, handOffset);
+      _handMatrix.decompose(_handPosition, _handQuaternion, _handScale);
+      return;
+    }
     const frame = getPages().readingFrame(_targetCentre);
     const scale = bookGroup.scale.x;
     const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
@@ -228,6 +257,51 @@ export function createBookCarry({
 
     /** Anywhere off its resting place: held, or on its way home. */
     get carrying() { return held || returning; },
+
+    /** The VR hand holding the book, or null. */
+    get hand() { return hand; },
+
+    /** Where the book goes when it is put back. */
+    get home() { return homePosition; },
+
+    /** Whether that is a shelf slot, rather than wherever the book lay. */
+    get homeIsShelf() { return onReturn !== null; },
+
+    /**
+     * Take the book in a VR hand, from wherever it is -- lying on the desk, or
+     * on its way home -- keeping it exactly where it is in that hand. Returns
+     * false if it is not free to take.
+     *
+     * @param {THREE.Object3D} object  the hand: its world matrix is followed
+     */
+    grabWith(object) {
+      if (held) {
+        holdWith(object);
+        return true;
+      }
+      if (!canTake()) return false;
+      // As a click: lying where it lies, that is its home; caught on its way
+      // back, it keeps the home it was going to.
+      if (!returning) {
+        homePosition.copy(bookGroup.position);
+        homeQuaternion.copy(bookGroup.quaternion);
+        onReturn = null;
+        resetAdjustments();
+      }
+      returning = false;
+      held = true;
+      startTrip();
+      holdWith(object);
+      return true;
+    },
+
+    /**
+     * Move the book, already held, into a VR hand -- from the other hand, or
+     * just handed over from the shelf -- where it is now.
+     */
+    holdIn(object) {
+      if (held) holdWith(object);
+    },
 
     /**
      * A click in the room. Returns true if it was the book's: a click on the
@@ -307,6 +381,7 @@ export function createBookCarry({
     /** Send it home -- where it lay, or its shelf slot. What Escape does. */
     putBack() {
       if (!held) return;
+      hand = null;
       held = false;
       returning = true;
       startTrip();

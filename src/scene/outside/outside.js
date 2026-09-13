@@ -336,7 +336,12 @@ export function createOutside({
       if (state !== 'outside' || !post) return false;
       followBook();
       grass?.update(dt);
-      post.render(dt);
+      // In VR the frame goes straight to the headset: the chain renders into
+      // targets of its own, which an XR session cannot present -- so no
+      // height fog, clouds or auto exposure there, just the sky, the land and
+      // the renderer's own tone mapping.
+      if (renderer.xr.isPresenting) renderer.render(scene, camera);
+      else post.render(dt);
       return true;
     },
 
