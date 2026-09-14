@@ -11,6 +11,10 @@ dist
 .git
 .vercel
 
+# Full-length audio recordings, for cutting the site's ambience from; the
+# server never serves them.
+audio-source
+
 # The local conversion cache -- the deployed server builds its own.
 books
 
