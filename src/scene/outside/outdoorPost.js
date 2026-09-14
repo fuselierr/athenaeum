@@ -58,9 +58,9 @@ import { VolumetricCloudsPass } from './volumetricClouds.js';
 
 // --- exponential height fog --------------------------------------------------
 const FOG = {
-  density: 0.004, // per metre, at the fog's base height
+  density: 0.002, // per metre, at the fog's base height
   heightFalloff: 0.06, // per metre: density falls by e every 1/0.06 ~ 17 m up
-  startDistance: 5, // metres of clear air in front of the camera
+  startDistance: 40, // metres of clear air in front of the camera
   maxOpacity: 1,
   color: 0xffffff, // a tint on the sky's own colour
   brightness: 1, // times the sky's brightness

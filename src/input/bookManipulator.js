@@ -18,7 +18,8 @@ const WORLD_DOWN = new THREE.Vector3(0, -1, 0);
  * correction those gestures make necessary.
  *
  *   right-drag          arcball-rotate the book
- *   shift + left-drag   slide the book in the plane of the screen
+ *   shift + left-drag   slide the book in the plane of the screen -- a drag
+ *                       that starts on the book
  *   scroll              bring a book in the hand nearer or push it away
  *
  * On the desk, the two drags act on `bookGroup` -- the render-only wrapper
@@ -218,6 +219,31 @@ function installScreenPlaneSlide({ bookGroup, camera, dom, carried }) {
   const _origin = new THREE.Vector3(); // bookGroup.position at that moment
   let sliding = false;
 
+  function shown(object) {
+    for (let o = object; o; o = o.parent) if (!o.visible) return false;
+    return true;
+  }
+
+  /**
+   * Is the book the nearest visible thing under the pointer? The whole scene
+   * is tested, not just the book, so something in front of it -- the lamp,
+   * the card -- keeps the press; visible, because raycasting ignores
+   * `visible` and hidden walls would otherwise be in the way.
+   */
+  function bookUnderPointer(clientX, clientY) {
+    const rect = dom.getBoundingClientRect();
+    _ndc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    _ray.setFromCamera(_ndc, camera);
+    let root = bookGroup;
+    while (root.parent) root = root.parent;
+    const nearest = _ray.intersectObject(root, true).find((hit) => shown(hit.object));
+    for (let o = nearest?.object; o; o = o.parent) if (o === bookGroup) return true;
+    return false;
+  }
+
   function pointerToPlane(clientX, clientY, out) {
     const rect = dom.getBoundingClientRect();
     _ndc.set(
@@ -233,6 +259,10 @@ function installScreenPlaneSlide({ bookGroup, camera, dom, carried }) {
     // Ignore shift-clicks on the overlaid UI panels -- only the 3D view
     // slides the book.
     if (e.target !== dom) return;
+    // And only a press that lands on the book. Shift held over anything else
+    // -- the desk, the room, the sky -- is not taking hold of it, and the
+    // press carries on to whatever else it means (looking round, orbiting).
+    if (!bookUnderPointer(e.clientX, e.clientY)) return;
 
     camera.getWorldDirection(_normal);
     _plane.setFromNormalAndCoplanarPoint(_normal, bookGroup.position);

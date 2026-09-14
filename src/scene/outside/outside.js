@@ -6,6 +6,7 @@ import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../../ui/loadingScreen.js';
 import { createGrass } from './grass.js';
+import { loadParkBench } from './parkBench.js';
 import { world } from '../../state/world.js';
 import { watch } from 'vue';
 import { settings } from '../../state/settings.js';
@@ -31,6 +32,10 @@ import { qualityPreset } from '../../state/quality.js';
  * shows outside only while it is in your hand, and disappears with the desk
  * once it goes back to it.
  *
+ * A BENCH stands a few steps ahead of where you come out, facing the way you
+ * were looking, with the grass kept off it (scene/outside/parkBench.js).
+ * Right-click it, near enough, and you sit down on it.
+ *
  * AND BACK. goInside() puts the room's look back -- its fog, its view
  * distance, its backdrop and light, no tone mapping -- exactly as they were
  * when you left, and then UNLOADS the outdoors: terrain, grass, sky, sun, and
@@ -53,6 +58,8 @@ const TERRAIN = {
 // How far in from the terrain's edge you can walk, in metres -- short of
 // where the ground ends and the void begins.
 const GROUND_EDGE_MARGIN = 10;
+// How near the bench you have to be for a right-click to sit you on it.
+const SIT_REACH = 8;
 
 /** Resolves on the next frame -- so a status line paints before blocking work. */
 function nextFrame() {
@@ -75,15 +82,19 @@ function nextFrame() {
  *   leave -- input/cameraModes.js's setGround
  * @param {() => number} [opts.lying]  how far down the player is lying, 0..1,
  *   for the grass to part round them
+ * @param {((seat: { eye: THREE.Vector3, yaw: number, standAt: { x: number, z: number } }) => void)|null} [opts.sit]
+ *   sit the player on the bench -- input/cameraModes.js's sitOn
  */
 export function createOutside({
   scene, camera, renderer, room, floor, inside = [], book = null, setGround = null, lying = () => 0,
+  sit = null,
 }) {
   let state = 'inside'; // 'loading' | 'outside'
   let terrain = null;
   let daylight = null;
   let post = null;
   let grass = null;
+  let bench = null;
 
   // The graphics quality reaches whatever outdoors is built right now; a trip
   // built later reads the preset as it builds.
@@ -132,6 +143,8 @@ export function createOutside({
 
   const _raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
+  const _facing = new THREE.Vector3();
+  const _standing = new THREE.Vector3();
 
   function shown(object) {
     for (let o = object; o; o = o.parent) if (!o.visible) return false;
@@ -191,6 +204,11 @@ export function createOutside({
       scene.remove(terrain);
       disposeTerrain(terrain);
     }
+    if (bench) {
+      scene.remove(bench.object);
+      bench.dispose();
+    }
+    bench = null;
     post = null;
     daylight = null;
     grass = null;
@@ -222,6 +240,12 @@ export function createOutside({
     state = 'loading';
     world.place = 'loading';
     loadingScreen.show('Opening the door…');
+    // The bench downloads alongside the land. It is only scenery, so one that
+    // will not load is left out rather than keeping you indoors.
+    const benchLoading = loadParkBench().catch((err) => {
+      console.warn('The park bench did not load; going out without it.', err);
+      return null;
+    });
     try {
       const heightmap = await loadHeightmap(HEIGHTMAP_URL, (fraction) => {
         loadingScreen.status('Surveying the land…', 0.3 * fraction);
@@ -261,6 +285,22 @@ export function createOutside({
       });
       grass.setDensity(qualityPreset().grassDensity);
       scene.add(grass.group);
+
+      // A few steps ahead of where you are standing, facing the way you are
+      // looking, on the flattest ground nearby -- and no grass through it.
+      bench = await benchLoading;
+      if (bench) {
+        camera.getWorldPosition(_standing);
+        camera.getWorldDirection(_facing);
+        bench.place({
+          x: _standing.x,
+          z: _standing.z,
+          facing: _facing,
+          heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+        });
+        scene.add(bench.object);
+        grass.setClearing(bench.object.position.x, bench.object.position.z, bench.clearingRadius);
+      }
 
       loadingScreen.status('Lighting the sky…', 0.72, 0.8);
       await nextFrame();
@@ -354,6 +394,30 @@ export function createOutside({
       if (state !== 'inside' || !doorUnder(event)) return false;
       goOutside();
       return true;
+    },
+
+    /**
+     * A right-click. Outside, on the bench and within reach, it sits you down
+     * on it. Returns whether it did.
+     */
+    handleRightClick(event) {
+      if (state !== 'outside' || !bench?.seat || !sit) return false;
+      const rect = renderer.domElement.getBoundingClientRect();
+      _ndc.set(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      _raycaster.setFromCamera(_ndc, camera);
+      // The bench and the ground only: a rise in the way hides it.
+      const nearest = _raycaster.intersectObjects([bench.object, terrain].filter(Boolean), true)[0];
+      if (!nearest || nearest.distance > SIT_REACH) return false;
+      for (let o = nearest.object; o; o = o.parent) {
+        if (o === bench.object) {
+          sit(bench.seat);
+          return true;
+        }
+      }
+      return false;
     },
 
     goOutside,

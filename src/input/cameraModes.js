@@ -61,6 +61,10 @@ const POSTURES = [
 ];
 const LYING_EYE_HEIGHT = POSTURES[2].eye;
 const POSTURE_RATE = 3; // 1/s, easing from one height to the next
+// Sitting on a seat (sitOn): how quickly you settle onto it and turn to face
+// its way, 1/s, and how far down you end up looking.
+const SEAT_RATE = 5;
+const SEAT_PITCH = -0.08;
 
 const LOOK_SENSITIVITY = 0.0024; // radians per pixel, at the base fov
 const PITCH_LIMIT = Math.PI / 2 - 0.05; // short of straight up/down, which gimbals
@@ -110,6 +114,8 @@ export function createCameraModes({
   camera, renderer, controls, cameraPan,
   indicator = document.getElementById('camera-mode'),
   onClick = null,
+  // A press of the right button that did not travel -- sitting on the bench.
+  onRightClick = null,
 }) {
   const dom = renderer.domElement;
   // The fov the scene is framed at, which the look modes zoom in FROM and
@@ -137,6 +143,12 @@ export function createCameraModes({
   // on its way to that posture's.
   let posture = 0;
   let eye = EYE_HEIGHT;
+  // Sat on something -- the bench outside -- as { eye: THREE.Vector3, yaw,
+  // standAt: { x, z } }, or null. Looking around carries on; moving, jumping
+  // or X gets you up.
+  let seat = null;
+  let seatTurning = false; // still turning you round to face the seat's way
+  let standRequested = false;
 
   /** Eye height above the ground, wherever it has got to. */
   const eyeHeight = () => eye;
@@ -201,7 +213,7 @@ export function createCameraModes({
   // --- switching -----------------------------------------------------------
   const LABELS = {
     [CAMERA_MODE.ORBIT]: '[1] orbit -- drag to orbit, WASD to pan',
-    [CAMERA_MODE.WALK]: '[2] walk -- WASD to move, shift to run, space to jump, x to sit or lie down outside, drag to look',
+    [CAMERA_MODE.WALK]: '[2] walk -- WASD to move, shift to run, space to jump, x to sit or lie down outside, right-click the bench to sit on it, drag to look',
     [CAMERA_MODE.LOOK]: '[3] look -- drag to look, scroll to zoom',
   };
 
@@ -211,6 +223,8 @@ export function createCameraModes({
     // OrbitControls is the only mode that may touch the camera itself; the
     // other two would fight its update() for the transform.
     controls.enabled = mode === CAMERA_MODE.ORBIT;
+    seat = null;
+    seatTurning = false;
     velocity.set(0, 0, 0);
     land();
     standUp();
@@ -308,6 +322,7 @@ export function createCameraModes({
       pressMoved = true;
     }
     if (looking !== e.pointerId) return;
+    seatTurning = false; // looking round for yourself: the seat stops turning you
     const dx = e.clientX - lastX;
     const dy = e.clientY - lastY;
     lastX = e.clientX;
@@ -338,6 +353,7 @@ export function createCameraModes({
   window.addEventListener('pointerup', (e) => {
     if (pressId === e.pointerId) {
       if (!pressMoved && e.button === 0 && onClick) onClick(e);
+      if (!pressMoved && e.button === 2 && onRightClick) onRightClick(e);
       pressId = null;
     }
     endLook(e);
@@ -373,7 +389,9 @@ export function createCameraModes({
     }
     // Sit, then lie, then stand. Only on uneven ground -- outside -- and not
     // in mid-air.
-    if (mode === CAMERA_MODE.WALK && ground && airborneFeet === null
+    if (seat && !e.repeat && matches('move.lieDown', e)) {
+      standRequested = true; // on a seat, X gets you up
+    } else if (mode === CAMERA_MODE.WALK && ground && airborneFeet === null
       && !e.repeat && matches('move.lieDown', e)) {
       posture = (posture + 1) % POSTURES.length;
     }
@@ -392,7 +410,27 @@ export function createCameraModes({
     setMode,
 
     /** 'standing', 'sitting' or 'lying' -- where X has taken you. */
-    get posture() { return POSTURES[posture].name; },
+    get posture() { return seat ? 'sitting' : POSTURES[posture].name; },
+
+    /** Whether you are sat on a seat (sitOn). */
+    get seated() { return seat !== null; },
+
+    /**
+     * Sit down on a seat -- the park bench outside (scene/outside/parkBench.js).
+     * `eye` is where the eye goes, `yaw` which way the seat faces (as the
+     * camera's yaw), `standAt` the spot you step out to on getting up. You
+     * glide onto it and round to face its way; looking around carries on,
+     * and moving, jumping or X gets you up. In walk mode, switching to it.
+     */
+    sitOn({ eye: seatEye, yaw: seatYaw, standAt }) {
+      if (mode !== CAMERA_MODE.WALK) setMode(CAMERA_MODE.WALK);
+      land();
+      velocity.set(0, 0, 0);
+      posture = 0;
+      standRequested = false;
+      seat = { eye: seatEye.clone(), yaw: seatYaw, standAt: { x: standAt.x, z: standAt.z } };
+      seatTurning = true;
+    },
 
     /**
      * How far down toward the ground you are, 0 standing .. 1 lying flat,
@@ -400,6 +438,7 @@ export function createCameraModes({
      * of posture moves it smoothly.
      */
     get lying() {
+      if (seat) return 0; // on a seat, the grass is not under you
       return THREE.MathUtils.clamp((EYE_HEIGHT - eye) / (EYE_HEIGHT - LYING_EYE_HEIGHT), 0, 1);
     },
 
@@ -424,6 +463,8 @@ export function createCameraModes({
       if (mode !== CAMERA_MODE.WALK) return;
       camera.position.x = x;
       camera.position.z = z;
+      seat = null;
+      seatTurning = false;
       velocity.set(0, 0, 0);
       land();
       clampToFloor();
@@ -449,6 +490,8 @@ export function createCameraModes({
      */
     setGround(next) {
       ground = next;
+      seat = null;
+      seatTurning = false;
       standUp();
       if (mode === CAMERA_MODE.ORBIT) return;
       velocity.set(0, 0, 0);
@@ -484,6 +527,8 @@ export function createCameraModes({
       land();
       standUp();
       looking = null;
+      seat = null;
+      seatTurning = false;
       if (mode === CAMERA_MODE.ORBIT) return;
       readLookFromCamera();
       if (mode === CAMERA_MODE.WALK) clampToFloor();
@@ -501,6 +546,38 @@ export function createCameraModes({
       // handler last did to it.
       controls.enabled = false;
       if (mode !== CAMERA_MODE.WALK) return;
+
+      if (seat) {
+        const moving = MOVE_ACTIONS.some((action) => action !== 'move.run' && held.has(action));
+        if (moving || jumpRequested || standRequested) {
+          // Up, out in front of the seat, rising from where the eye was
+          // rather than popping up to standing -- then walking as normal.
+          const { standAt } = seat;
+          const eyeY = camera.position.y;
+          seat = null;
+          seatTurning = false;
+          jumpRequested = false;
+          standRequested = false;
+          camera.position.x = standAt.x;
+          camera.position.z = standAt.z;
+          const underfoot = ground ? ground.heightAt(standAt.x, standAt.z) : floorY();
+          eye = Math.max(0.1, eyeY - underfoot);
+        } else {
+          // Settling onto the seat, and round to face its way until you look
+          // somewhere yourself.
+          const k = 1 - Math.exp(-SEAT_RATE * dt);
+          camera.position.lerp(seat.eye, k);
+          if (seatTurning) {
+            const turn = Math.atan2(Math.sin(seat.yaw - yaw), Math.cos(seat.yaw - yaw));
+            yaw += turn * k;
+            pitch += (SEAT_PITCH - pitch) * k;
+            if (Math.abs(turn) < 1e-3 && Math.abs(SEAT_PITCH - pitch) < 1e-3) seatTurning = false;
+          }
+          velocity.set(0, 0, 0);
+          applyLook();
+          return;
+        }
+      }
 
       // Heading only -- looking down at the floor should not walk you into
       // it, so the pitch is dropped and the move stays in the ground plane.

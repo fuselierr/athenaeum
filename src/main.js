@@ -95,6 +95,8 @@ const cameraModes = createCameraModes({
     if (shelfBooks?.handleClick(event)) return;
     putBookDown(event); // a click past the shelf, holding a book
   },
+  // Outside, a right-click on the bench sits you down on it.
+  onRightClick: (event) => { outside?.handleRightClick(event); },
 });
 
 // The book hangs under its own group rather than directly under `scene` so
@@ -264,6 +266,8 @@ let outside = null;
     setGround: (ground) => cameraModes.setGround(ground),
     // Sitting or lying down (X), for the grass to part round you.
     lying: () => cameraModes.lying,
+    // Right-clicking the bench.
+    sit: (seat) => cameraModes.sitOn(seat),
   });
   // The walls-and-ceiling setting (the key, or Settings -> View) reaches the
   // room from here on.

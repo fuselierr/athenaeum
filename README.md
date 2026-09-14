@@ -86,6 +86,7 @@ Every key below can be rebound in **Settings → Controls**. The round button in
 | Click the book | Bring it up to read — `Esc` puts it back |
 | Click the desk | Set the held book down |
 | Click the door | Go outside |
+| Right-click the bench | Sit on it, outside — move, jump or `X` to get up |
 | `←` / `→` | Turn to the previous/next page |
 | Drag a page directly | Turn that page by hand, mid-curl |
 | `Shift` + drag | Slide the book, along the camera's view plane |
@@ -124,3 +125,7 @@ Next steps:
 - adding scenes and better lighting (it's not quite as visually stunning as I want it to be)
 - AR miniature reading room
 - communal reading
+
+## Credits
+
+- ["Park Bench"](https://sketchfab.com/3d-models/park-bench-84426d6537ac4cdc837d602ccabe7036) by DutraBR98, licensed under [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/)

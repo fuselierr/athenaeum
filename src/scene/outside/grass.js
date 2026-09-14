@@ -167,6 +167,8 @@ const MEADOW_GLSL = /* glsl */`
   uniform vec2 grassPartCentre;
   uniform float grassPartRadius;
   uniform float grassPartStrength;
+  uniform vec2 grassClearCentre;
+  uniform float grassClearRadius;
   uniform float grassDensityScale;
   uniform sampler2D grassSurface;
   uniform vec2 grassTerrainOffset;
@@ -197,9 +199,14 @@ const MEADOW_GLSL = /* glsl */`
   }
 
   // How much of its size something growing at root keeps: all of it near,
-  // none past the fade.
+  // none past the fade -- and none in the clearing, when there is one, kept
+  // for something standing in the field (the bench).
   float meadowFade(vec3 root) {
-    return 1.0 - smoothstep(grassFadeStart, grassFadeEnd, distance(root, cameraPosition));
+    float fade = 1.0 - smoothstep(grassFadeStart, grassFadeEnd, distance(root, cameraPosition));
+    if (grassClearRadius > 0.0) {
+      fade *= smoothstep(grassClearRadius * 0.6, grassClearRadius, distance(root.xz, grassClearCentre));
+    }
+    return fade;
   }
 
   // Short underfoot, growing to full height outward. Measured along the
@@ -389,6 +396,8 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
     grassWindDirection: { value: new THREE.Vector2(...GRASS.windDirection).normalize() },
     grassFadeStart: { value: GRASS.fadeStart },
     grassFadeEnd: { value: GRASS.fadeEnd },
+    grassClearCentre: { value: new THREE.Vector2() },
+    grassClearRadius: { value: 0 }, // 0: no clearing
     grassHeightScale: { value: 3 },
     grassNearHeight: { value: GRASS.nearHeight },
     grassFullHeightAt: { value: GRASS.fullHeightAt },
@@ -899,6 +908,15 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
     /** How many of the blades stand, 0..1 -- the graphics quality's grass density. */
     setDensity(scale) {
       uniforms.grassDensityScale.value = THREE.MathUtils.clamp(scale, 0, 1);
+    },
+    /**
+     * Keep the grass and flowers off a round patch of ground, centred on world
+     * (x, z) -- under something standing in the field, like the bench. They
+     * thin to nothing over the outer part of `radius`; 0 for no clearing.
+     */
+    setClearing(x, z, radius) {
+      uniforms.grassClearCentre.value.set(x, z);
+      uniforms.grassClearRadius.value = Math.max(0, radius);
     },
     get chunkCount() { return chunks.length; },
     /** Whether the flowers are drawn, for the debug panel. */
