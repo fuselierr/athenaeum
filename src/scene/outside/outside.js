@@ -224,15 +224,19 @@ export function createOutside({
     loadingScreen.show('Opening the door…');
     try {
       const heightmap = await loadHeightmap(HEIGHTMAP_URL, (fraction) => {
-        loadingScreen.status('Surveying the land…', fraction);
+        loadingScreen.status('Surveying the land…', 0.3 * fraction);
       });
 
-      loadingScreen.status('Shaping the terrain…');
+      loadingScreen.status('Shaping the terrain…', 0.3, 0.4);
       await nextFrame();
       terrain = createTerrain(heightmap, {
         ...TERRAIN,
         onTextureProgress: (loaded, total) => {
-          loadingScreen.status(`Laying the ground… ${loaded} of ${total}`, loaded / total);
+          loadingScreen.status(
+            `Laying the ground… ${loaded} of ${total}`,
+            0.4 + 0.25 * (loaded / total),
+            0.4 + 0.25 * (Math.min(loaded + 1, total) / total),
+          );
         },
       });
       await terrain.material.userData.ready;
@@ -246,7 +250,7 @@ export function createOutside({
       scene.add(terrain);
 
       // Planted once the ground is in place, around where you will be standing.
-      loadingScreen.status('Growing the grass…');
+      loadingScreen.status('Growing the grass…', 0.65, 0.72);
       await nextFrame();
       grass = createGrass({
         terrain,
@@ -258,7 +262,7 @@ export function createOutside({
       grass.setDensity(qualityPreset().grassDensity);
       scene.add(grass.group);
 
-      loadingScreen.status('Lighting the sky…');
+      loadingScreen.status('Lighting the sky…', 0.72, 0.8);
       await nextFrame();
 
       hideInside();
@@ -277,7 +281,7 @@ export function createOutside({
         reach: TERRAIN.width / 2,
       });
       // The cloud noise is generated here, which takes a moment.
-      loadingScreen.status('Gathering clouds…');
+      loadingScreen.status('Gathering clouds…', 0.8, 0.88);
       await nextFrame();
       post = createOutdoorPost({
         renderer,
@@ -292,7 +296,7 @@ export function createOutside({
 
       // Compiled now, behind the screen, rather than as a stall on the first
       // frame outside.
-      loadingScreen.status('Almost there…');
+      loadingScreen.status('Almost there…', 0.88, 0.98);
       await renderer.compileAsync(scene, camera);
 
       // On your feet on the terrain, wherever in it you came out.

@@ -51,7 +51,7 @@ import { loadAttachments } from './community/covers.js';
 // rather than rescaling the whole book.
 const BASE_PANEL_REACH = INITIAL_PANEL_REACH;
 
-loadingScreen.status('Lighting the room…');
+loadingScreen.status('Lighting the room…', 0.02, 0.2);
 const { scene, camera, renderer, controls, environment } = await createScene();
 const audio = createAudioManager();
 
@@ -121,7 +121,7 @@ let bookCarry = null;
 // rests on, so they stay put in world space when the book itself is moved.
 // Loaded alongside the page simulation since none of the three waits on
 // the others.
-loadingScreen.status('Arranging the furniture…');
+loadingScreen.status('Arranging the furniture…', 0.2, 0.45);
 const [pagesInstance, desk, lamp, bookshelf] = await Promise.all([
   PageSimulation.create(bookGroup),
   loadDesk(scene),
@@ -313,10 +313,15 @@ populateShelf(bookshelf, {
   camera,
   renderer,
   onProgress: ({ stage, done, total }) => {
-    if (stage === 'fetching') loadingScreen.status('Fetching your library…');
+    if (stage === 'fetching') loadingScreen.status('Fetching your library…', 0.45, 0.55);
     if (stage === 'unavailable') libraryAnswered = false;
     if (stage === 'shelving' && total > 0) {
-      loadingScreen.status(`Shelving books… ${done} of ${total}`, done / total);
+      // The last 45% is the shelf, a book at a time, creeping toward the next.
+      loadingScreen.status(
+        `Shelving books… ${done} of ${total}`,
+        0.55 + 0.45 * (done / total),
+        0.55 + 0.45 * (Math.min(done + 1, total) / total),
+      );
     }
   },
   // Taking a book off the shelf is what opens it. The conversion is fired
@@ -344,9 +349,6 @@ populateShelf(bookshelf, {
     if (libraryAnswered) loadingScreen.finish();
     else loadingScreen.fail('The library isn’t answering, so the shelf is empty for now.');
   });
-// The room is standing from here on; only the shelf is still to come, and a
-// server that is slow to wake should not keep anyone at the door.
-loadingScreen.allowSkip(8000);
 
 // --- shared covers (the Community tab) -------------------------------------
 // Which shared cover each of your books wears is kept in your account

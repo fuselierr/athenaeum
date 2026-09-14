@@ -6,7 +6,16 @@
  * Its markup and styles live in index.html, not here. They have to be on
  * screen before any script has loaded, and this module only arrives with
  * main.js -- so this just moves it along: a line saying what is happening, a
- * bar once there is something to count, and a fade when it is done.
+ * progress bar, and a fade when it is done.
+ *
+ * THE BAR IS THE WHOLE LOAD, not the current step. Each status() says how far
+ * through everything its step begins (`progress`) and, optionally, how far the
+ * step may take it before the next one does (`upTo`). In between, the bar
+ * creeps toward `upTo` -- quickly at first, slowing as it closes in, never
+ * reaching it -- so a step with nothing to count (a model downloading, shaders
+ * compiling) still visibly moves without claiming to be done. A step that can
+ * count (books shelved, textures loaded) just passes its own position each
+ * time. Either way the bar never goes backwards.
  *
  * Everything here is a no-op if the element is missing, so a page without
  * the screen still starts normally.
@@ -16,24 +25,54 @@ const root = document.getElementById('loading');
 const statusLine = root?.querySelector('.loading-status');
 const bar = root?.querySelector('.loading-bar');
 const fill = root?.querySelector('.loading-fill');
-const skip = root?.querySelector('.loading-skip');
 
 const FADE_MS = 500; // matches #loading's transition in index.html
 const FAILURE_HOLD_MS = 2800; // long enough to read a sentence, then out of the way
-
-// An escape hatch even if startup never reaches allowSkip() -- a scene that
-// fails to build should not leave a screen nobody can get past.
-const FALLBACK_SKIP_MS = 15000;
+// How quickly the bar creeps toward a step's `upTo`: about two thirds of the
+// way there in this many seconds, then slower and slower.
+const CREEP_SECONDS = 4;
 
 let finished = false;
-let skipTimer = null;
 let fadeTimer = null;
 let failTimer = null;
+
+let shown = 0; // what the bar shows, 0..1
+let ceiling = 0; // how far the current step may creep it
+let creepFrame = null;
+let lastCreep = 0;
+
+const clamp01 = (value) => Math.min(1, Math.max(0, value));
+
+function render() {
+  if (fill) fill.style.width = `${(shown * 100).toFixed(2)}%`;
+  bar?.setAttribute('aria-valuenow', String(Math.round(shown * 100)));
+}
+
+function creep(now) {
+  creepFrame = null;
+  if (finished) return;
+  const dt = Math.min((now - lastCreep) / 1000, 0.25);
+  lastCreep = now;
+  shown += (ceiling - shown) * (1 - Math.exp(-dt / CREEP_SECONDS));
+  render();
+  if (ceiling - shown > 0.0005) creepFrame = requestAnimationFrame(creep);
+}
+
+function startCreep() {
+  if (creepFrame !== null || finished || ceiling - shown <= 0.0005) return;
+  lastCreep = performance.now();
+  creepFrame = requestAnimationFrame(creep);
+}
+
+function stopCreep() {
+  if (creepFrame !== null) cancelAnimationFrame(creepFrame);
+  creepFrame = null;
+}
 
 function hide() {
   if (!root || finished) return;
   finished = true;
-  clearTimeout(skipTimer);
+  stopCreep();
   root.classList.add('done');
   root.setAttribute('aria-busy', 'false');
   // Kept, not removed: show() brings it back. Out of the layout once faded.
@@ -42,17 +81,20 @@ function hide() {
 
 /**
  * Bring the screen back up over the page, saying `text`, for a load that
- * happens after startup. Fades in; finish() or fail() take it away as usual.
- * No "enter without waiting" here -- there is nothing behind it to enter.
+ * happens after startup. Fades in with an empty bar; finish() or fail() take
+ * it away as usual.
  */
 function show(text) {
   if (!root) return;
   clearTimeout(fadeTimer);
   clearTimeout(failTimer);
-  clearTimeout(skipTimer);
   finished = false;
-  if (skip) skip.hidden = true;
+  shown = 0;
+  ceiling = 0;
   bar?.classList.remove('failed');
+  // Emptied while the screen is still out of the layout, so the bar does not
+  // visibly run backwards as it fades in.
+  render();
   root.style.display = '';
   void root.offsetWidth; // lay it out transparent first, so it fades in
   root.classList.remove('done');
@@ -61,29 +103,23 @@ function show(text) {
 }
 
 /**
- * Say what is happening. `fraction` (0..1) fills the bar; leave it out when
- * there is nothing to count yet, and the bar sweeps instead.
+ * Say what is happening, and how far through the whole load it has got.
+ *
+ * @param {string|null} text  null keeps the line as it is
+ * @param {number} [progress]  0..1 through the WHOLE load; left out, the bar
+ *   carries on as it was
+ * @param {number} [upTo]  how far the bar may creep before the next step
+ *   says otherwise; left out, it holds at `progress`
  */
-function status(text, fraction) {
+function status(text, progress, upTo) {
   if (!root || finished) return;
   if (statusLine && text != null) statusLine.textContent = text;
-  const known = Number.isFinite(fraction);
-  bar?.classList.toggle('indeterminate', !known);
-  if (fill) fill.style.width = known ? `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%` : '';
-}
-
-/**
- * Offer "Enter without waiting" after `afterMs`. Worth it once the room
- * itself is standing: a sleeping server can take a long time to wake, and
- * there is no reason to hold someone at the door while the shelf fills.
- * The books keep arriving behind the screen either way.
- */
-function allowSkip(afterMs) {
-  if (!skip || finished) return;
-  clearTimeout(skipTimer);
-  skipTimer = setTimeout(() => {
-    if (!finished) skip.hidden = false;
-  }, afterMs);
+  if (!Number.isFinite(progress)) return;
+  const at = clamp01(progress);
+  ceiling = Math.max(at, Number.isFinite(upTo) ? clamp01(upTo) : at);
+  shown = Math.max(shown, at);
+  render();
+  startCreep();
 }
 
 /** Everything is in. Fill the bar, then fade. */
@@ -100,7 +136,13 @@ function fail(text) {
   failTimer = setTimeout(hide, FAILURE_HOLD_MS);
 }
 
-skip?.addEventListener('click', hide);
-allowSkip(FALLBACK_SKIP_MS);
+// If starting up throws, nothing will ever call finish() -- so say so, and
+// stay up: behind it is a room that did not finish building.
+window.addEventListener('error', () => {
+  if (!root || finished) return;
+  status('Something went wrong opening the room. Try reloading the page.', 1);
+  bar?.classList.add('failed');
+  stopCreep();
+});
 
-export const loadingScreen = { status, allowSkip, finish, fail, show };
+export const loadingScreen = { status, finish, fail, show };
