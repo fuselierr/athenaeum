@@ -10,8 +10,8 @@ import { FURNITURE_SCALE } from '../worldScale.js';
  * https://sketchfab.com/3d-models/park-bench-84426d6537ac4cdc837d602ccabe7036
  *
  * SIZE. The model is authored in metres -- 1.5 long, 0.7 to the top of its
- * back -- and drawn at the scene's shared oversize (scene/worldScale.js), like
- * the room's furniture.
+ * back -- and drawn at the scene's shared furniture scale (scene/worldScale.js),
+ * like the room's furniture.
  *
  * WHERE THE SEAT IS is measured off the model rather than written down: its
  * planks are the long thin parts, the seat's lying flat and the back's
@@ -28,9 +28,9 @@ const BENCH_URL = '/park_bench.glb';
 const SCALE = FURNITURE_SCALE;
 
 // World units -- the same units the camera's eye height is in.
-const SEATED_EYE = 0.95; // the eye above the top of the seat
-const STAND_OFF = 0.9; // how far in front of the seat you get up to
-const SINK = 0.04; // pressed into the ground a little, so no foot floats on uneven ground
+const SEATED_EYE = 0.7; // the eye above the top of the seat
+const STAND_OFF = 0.6; // how far in front of the seat you get up to
+const SINK = 0.03; // pressed into the ground a little, so no foot floats on uneven ground
 
 // The spots place() tries: this far ahead, and this far to either side.
 const PLACE_AHEAD = [4, 5, 6, 7, 8];

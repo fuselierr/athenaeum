@@ -32,8 +32,8 @@ const DOOR_COLOR = 0x5a3d28;
 const KNOB_COLOR = 0xb8955a;
 
 // The door, in metres.
-const DOOR_WIDTH = 1.2;
-const DOOR_HEIGHT = 2.45;
+const DOOR_WIDTH = 0.9;
+const DOOR_HEIGHT = 2.05;
 const DOOR_THICKNESS = 0.045;
 const DOOR_CASING_DEPTH = 0.03; // how far its casing stands proud of the wall
 

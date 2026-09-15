@@ -18,11 +18,10 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
  */
 
 const SURFACES = {
-  // One copy of the texture, in metres of the (oversized, see
-  // scene/worldScale.js) world. Raise to make the planks or the plywood
-  // grain larger.
-  floor: { url: '/textures/old_wooden_floor/old_wooden_floor_02_2k.gltf', tile: 2.4 },
-  walls: { url: '/textures/plywood/plywood_2k.gltf', tile: 2.4 },
+  // One copy of the texture, in metres. Raise to make the planks or the
+  // plywood grain larger.
+  floor: { url: '/textures/old_wooden_floor/old_wooden_floor_02_2k.gltf', tile: 1.6 },
+  walls: { url: '/textures/plywood/plywood_2k.gltf', tile: 1.6 },
 };
 
 /** The material off a texture set's glTF, tiled `tile` metres to a copy. */

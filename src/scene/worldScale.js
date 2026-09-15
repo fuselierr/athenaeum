@@ -28,15 +28,17 @@
 /**
  * How much larger than life the furniture and the book are drawn.
  *
- * Strictly this should be 1 -- the models are metric and the point of this
- * module is that a metre means a metre. It is 1.5 because the scene simply
- * reads better with the desk and the book a little oversized against the
- * lamp, which is left at its true size. Kept as ONE number so "make it all
- * bigger" stays a one-line change instead of drifting into separate
- * hardcoded multipliers per model -- which is exactly how the bookshelf
- * ended up 4.2 metres tall.
+ * 1: true size. The models are metric and the point of this module is that a
+ * metre means a metre -- a desk is a desk's height, a book is a book's size in
+ * your hand, and in VR the room is the size of a real one. It was 1.5 for a
+ * while, the desk and the book a little oversized against the lamp; the
+ * values that were sized for that (the room's spacing, the lamp's spot on the
+ * desk, the shelf's books) were brought back down with it. Kept as ONE number
+ * so "make it all bigger" stays a one-line change instead of drifting into
+ * separate hardcoded multipliers per model -- which is exactly how the
+ * bookshelf ended up 4.2 metres tall.
  */
-export const FURNITURE_SCALE = 1.5;
+export const FURNITURE_SCALE = 1;
 
 // A hardback page is about 16 cm across. config.js's starting PANEL_REACH
 // (the spine-to-fore-edge reach) is 1.4, and main.js holds that fixed as

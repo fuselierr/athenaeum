@@ -133,9 +133,8 @@ loadingScreen.status('Arranging the furniture…', 0.2, 0.45);
 const [pagesInstance, desk, lamp, bookshelf, surfaces] = await Promise.all([
   PageSimulation.create(bookGroup),
   loadDesk(scene),
-  // Lamp stays its authored size; only its position follows the desk's
-  // 1.5, so it keeps the same spot on a bigger surface.
-  loadLamp(scene, { position: new THREE.Vector3(0.33, 0, -0.63) }),
+  // Lamp at its authored size, on the back corner of the desk.
+  loadLamp(scene, { position: new THREE.Vector3(0.22, 0, -0.42) }),
   loadBookshelf(scene),
   // The floorboards and the plywood walls (scene/inside/surfaces.js).
   loadRoomSurfaces(),
@@ -146,7 +145,7 @@ const [pagesInstance, desk, lamp, bookshelf, surfaces] = await Promise.all([
 // between two models, and neither one can know the other's measurements at
 // its own load time. Measured, not hardcoded, so swapping either .glb (or
 // changing FURNITURE_SCALE) still lands them correctly.
-const GAP_BEHIND_DESK = 4.5; // metres of clear floor between desk and shelf
+const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
 // Clear floor past the furniture, on the two sides nothing backs onto.
 // Wider than the bare 0.4 the floor used to take, because it is now the
 // room you stand in as well as the ground the desk is on -- the walls land
@@ -154,7 +153,7 @@ const GAP_BEHIND_DESK = 4.5; // metres of clear floor between desk and shelf
 //
 // The other two sides get no margin at all: the shelf backs onto one and
 // the desk onto the other, which is what puts them against a wall.
-const ROOM_MARGIN = 2.5;
+const ROOM_MARGIN = 1.7;
 // How far a wall stops short of the furniture standing against it. Not a
 // gap -- surfaces that are exactly coplanar z-fight, and a centimetre is
 // under the threshold of anyone noticing while being well over the
@@ -164,12 +163,12 @@ const FURNITURE_WALL_CLEARANCE = 0.01;
 // wall, so a sill at the usual height would put the bottom of the opening
 // behind it -- this is what keeps the whole window visible above the
 // worktop, which is where you want it when you are sitting at it.
-const SILL_ABOVE_DESK = 0.12;
+const SILL_ABOVE_DESK = 0.08;
 // Above the tallest thing in the room. A ceiling that only just clears the
-// bookshelf reads as an attic, hence a generous clearance and a floor of 4.5
+// bookshelf reads as an attic, hence a generous clearance and a floor of 3
 // metres.
-const CEILING_CLEARANCE = 1.8;
-const MIN_CEILING_HEIGHT = 4.5;
+const CEILING_CLEARANCE = 1.2;
+const MIN_CEILING_HEIGHT = 3;
 
 // The room's inside, floor to ceiling and wall to wall. Filled in by the
 // block below once the walls exist, and handed to the book's physics, which

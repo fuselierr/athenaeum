@@ -38,8 +38,8 @@ import { settings } from '../state/settings.js';
 export const CAMERA_MODE = { ORBIT: 1, WALK: 2, LOOK: 3 };
 
 // Metric world (scene/worldScale.js): these are real metres.
-const EYE_HEIGHT = 2.0;
-const WALK_SPEED = 1.9;
+const EYE_HEIGHT = 1.6;
+const WALK_SPEED = 1.4;
 const RUN_MULTIPLIER = 2.1;
 const WALK_ACCELERATION = 14;
 const WALK_DAMPING = 11;
@@ -49,15 +49,15 @@ const WALL_MARGIN = 0.15;
 // A jump: straight up at this speed, then falling under gravity until the
 // feet meet the ground -- wherever the ground is by then, so a jump onto a
 // slope lands on it, and one off a ridge falls the whole way down.
-const JUMP_SPEED = 4.2; // m/s: about 0.9 m high
+const JUMP_SPEED = 3.4; // m/s: about 0.6 m high
 const GRAVITY = 9.81; // m/s^2
 // Getting down onto the ground, outside. X steps through these in order and
 // back round to standing; the eye eases to each one's height. Walking and
 // jumping wait until you are on your feet, and looking around carries on.
 const POSTURES = [
   { name: 'standing', eye: EYE_HEIGHT },
-  { name: 'sitting', eye: 0.95 },
-  { name: 'lying', eye: 0.35 },
+  { name: 'sitting', eye: 0.8 },
+  { name: 'lying', eye: 0.3 },
 ];
 const LYING_EYE_HEIGHT = POSTURES[2].eye;
 const POSTURE_RATE = 3; // 1/s, easing from one height to the next

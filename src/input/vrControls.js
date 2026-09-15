@@ -30,9 +30,9 @@ import { ui } from '../state/ui.js';
  * standing, facing the same way; coming out, the camera is put where your
  * head was, and the desktop modes take up from there.
  *
- * SCALE. The furniture and the book are drawn larger than life
- * (scene/worldScale.js), so the rig is too: at FURNITURE_SCALE, a desk is at
- * a desk's height and a book is a book's size in your hand.
+ * SCALE. The rig is scaled with the furniture (scene/worldScale.js's
+ * FURNITURE_SCALE), so a desk is at a desk's height and a book is a book's
+ * size in your hand whatever that is set to -- at 1, everything is true size.
  *
  * HOLDING. A held book rides the hand it is in, exactly where it was when
  * you closed your grip -- no flying up to a reading pose, as a click does on
@@ -60,8 +60,8 @@ import { ui } from '../state/ui.js';
 // The player is scaled with the world. See SCALE above.
 const VR_SCALE = FURNITURE_SCALE;
 
-// Walking, in world units a second -- the desktop's own pace.
-const WALK_SPEED = 1.9;
+// Walking, in world units a second -- the desktop's own pace (cameraModes.js).
+const WALK_SPEED = 1.4;
 const STICK_DEADZONE = 0.15;
 
 // Snap turning: how far each turn goes, how far the stick has to be pushed

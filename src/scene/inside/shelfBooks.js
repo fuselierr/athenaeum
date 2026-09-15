@@ -105,14 +105,14 @@ const FILL_FROM_LOW_END = false;
 // REFERENCE_PAGES is the length that lands mid-range; MIN/MAX are the
 // clamp either side of it.
 const REFERENCE_PAGES = 300;
-const REFERENCE_THICKNESS = 0.055;
-const MIN_THICKNESS = 0.028;
-const MAX_THICKNESS = 0.10;
+const REFERENCE_THICKNESS = 0.037;
+const MIN_THICKNESS = 0.019;
+const MAX_THICKNESS = 0.067;
 const FALLBACK_PAGES = 300; // only for a book whose count could not be read
 const HEIGHT_FILL = 0.90; // of the slot's clear height
 const HEIGHT_VARIATION = 0.16; // how much shorter the shortest book is
 const WIDTH_RATIO = 0.66; // fore-edge reach, as a fraction of the height
-const GAP = 0.004; // metres of air between neighbours
+const GAP = 0.003; // metres of air between neighbours
 
 // --- hover ----------------------------------------------------------------
 // How far a hovered book slides out, as a fraction of its own fore-edge
@@ -128,7 +128,7 @@ const RETURN_RATE = 7;
 // Where a taken book sits, in CAMERA space -- forward is -Z, so this is a
 // little right of centre, below the eye line and about 40 cm out: roughly
 // where you would hold a book you were deciding whether to read.
-const HOLD_OFFSET = new THREE.Vector3(0.1, -0.07, -0.42);
+const HOLD_OFFSET = new THREE.Vector3(0.067, -0.047, -0.28);
 // A hand does not present a book square on. Small angles, but enough to
 // let the lamp rake across the boards instead of flattening them.
 const HOLD_TILT = new THREE.Euler(-0.12, 0.3, 0.06);
