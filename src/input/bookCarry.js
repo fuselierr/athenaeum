@@ -178,6 +178,27 @@ export function createBookCarry({
     return Boolean(nearest) && partOfBook(nearest.object);
   }
 
+  /**
+   * Take the book up into the hand from wherever it is -- lying where it
+   * lies, or caught on its way home. Returns false if it is not free to take.
+   */
+  function takeUp() {
+    if (held) return true;
+    if (!canTake()) return false;
+    // Lying where it lies, that is its home. Caught on its way back, it
+    // keeps the home it was going to, and the way it was being held.
+    if (!returning) {
+      homePosition.copy(bookGroup.position);
+      homeQuaternion.copy(bookGroup.quaternion);
+      onReturn = null;
+      resetAdjustments();
+    }
+    returning = false;
+    held = true;
+    startTrip();
+    return true;
+  }
+
   /** A new trip starts from wherever the book is now. */
   function startTrip() {
     fromPosition.copy(bookGroup.position);
@@ -313,20 +334,14 @@ export function createBookCarry({
     handleClick(event) {
       if (!bookUnder(event)) return false;
       if (held) return true;
-      if (!canTake()) return false;
-      // Lying where it lies, that is its home. Caught on its way back, it
-      // keeps the home it was going to, and the way it was being held.
-      if (!returning) {
-        homePosition.copy(bookGroup.position);
-        homeQuaternion.copy(bookGroup.quaternion);
-        onReturn = null;
-        resetAdjustments();
-      }
-      returning = false;
-      held = true;
-      startTrip();
-      return true;
+      return takeUp();
     },
+
+    /**
+     * Take the book up into the hand without a click on it -- picked from
+     * the books list outside, where the desk it lies on is out of reach.
+     */
+    takeUp,
 
     /**
      * Take the book into the hand from wherever it has just been put -- a

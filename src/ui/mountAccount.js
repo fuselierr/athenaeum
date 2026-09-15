@@ -4,16 +4,19 @@ import { startSession } from '../auth/session.js';
 import { account } from '../state/account.js';
 
 /**
- * Put the top right corner's controls on screen -- the menu button and the
- * account -- and load whoever is signed in.
+ * Put the top right corner's controls on screen -- the menu button, the
+ * account and, outside, your books -- and load whoever is signed in.
  *
  * Separate from mountMenu: the menu is an overlay that comes and goes, and
  * this is always there. Its own host and its own app, so neither one's
  * lifetime is tied to the other's.
  *
+ * @param {object} [bridge]  what the corner may ask of the room:
+ *   takeBook(id), bring a library book into your hand (the books button
+ *   outside, ui/LibraryButton.vue).
  * @returns {{ unmount(): void }}
  */
-export function mountAccount() {
+export function mountAccount(bridge = {}) {
   let host = document.getElementById('account');
   if (!host) {
     host = document.createElement('div');
@@ -21,7 +24,7 @@ export function mountAccount() {
     document.body.appendChild(host);
   }
 
-  const app = createApp(AccountButton);
+  const app = createApp(AccountButton, { bridge });
   app.mount(host);
 
   // Not awaited: the room does not wait on the network to render, and the

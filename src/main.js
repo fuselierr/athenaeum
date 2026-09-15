@@ -799,7 +799,14 @@ mountMenu({
 });
 
 // The account control, top right. Independent of the menu and of the room.
-mountAccount();
+mountAccount({
+  // The books button outside: a book off the shelf into your hand -- or, if
+  // it is the book already out, lying on the desk, that one up into it.
+  takeBook: (id) => {
+    if (shelfBooks?.take(id)) return;
+    if (bookState.id === id) bookCarry?.takeUp();
+  },
+});
 // Settings and key bindings follow the account while someone is signed in.
 startPreferencesSync();
 

@@ -4,9 +4,13 @@ import { account, displayName } from '../state/account.js';
 import { signInWith, signOut } from '../auth/session.js';
 import { ui } from '../state/ui.js';
 import { keys, label } from '../state/keybindings.js';
+import { world } from '../state/world.js';
+import LibraryButton from './LibraryButton.vue';
 
 /**
- * The controls in the top right corner: the menu button, and the account.
+ * The controls in the top right corner: the menu button, and the account --
+ * and, while you are outside, a way to your books under them
+ * (LibraryButton.vue).
  *
  * Always on screen, menu open or not, so they are mounted on their own (see
  * ui/mountAccount.js) rather than inside the menu's overlay -- which is also
@@ -20,6 +24,9 @@ import { keys, label } from '../state/keybindings.js';
  * Discord. Signed in, it shows who you are and the same panel offers a way
  * out.
  */
+
+// What the corner may ask of the room -- see ui/mountAccount.js.
+const props = defineProps({ bridge: { type: Object, default: () => ({}) } });
 
 const menuKey = computed(() => label(keys['menu.toggle']));
 
@@ -52,6 +59,7 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
 
 <template>
   <div class="corner">
+  <div class="corner-row">
   <button
     class="menu-trigger"
     type="button"
@@ -127,6 +135,9 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
     </div>
   </div>
   </div>
+
+  <LibraryButton v-if="world.place === 'outside'" :bridge="props.bridge" />
+  </div>
 </template>
 
 <style scoped>
@@ -137,10 +148,18 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
   /* Above the menu's scrim (10), so both stay usable with the menu open. */
   z-index: 11;
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: flex-end;
   gap: 8px;
   font: var(--ath-font);
   color: var(--ath-text);
+}
+
+/* The menu button and the account, side by side; anything more stacks below. */
+.corner-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 /* The account panel hangs off this. */
@@ -218,6 +237,7 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
 
 .account-panel {
   position: absolute;
+  z-index: 2; /* over the books button below, when both are open */
   top: calc(100% + 8px);
   right: 0;
   width: 260px;

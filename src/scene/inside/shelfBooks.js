@@ -577,8 +577,26 @@ export async function populateShelf(bookshelf, {
      */
     get books() {
       return hovering.map(({ book, size }) => ({
-        id: book.id, title: book.title, author: book.author, size: { ...size },
+        id: book.id,
+        title: book.title,
+        author: book.author,
+        coverUrl: api(book.coverUrl) ?? null,
+        size: { ...size },
       }));
+    },
+
+    /**
+     * Take a book into the hand by its id, as clicking it on the shelf does
+     * -- for picking one from a list (the books button outside). Returns
+     * false when there is no such book, or when its model is not on the
+     * shelf to take because the book itself is already out.
+     */
+    take(bookId) {
+      const entry = hovering.find((candidate) => candidate.book.id === bookId);
+      if (!entry || !entry.group.visible) return false;
+      freezeHand();
+      setHeld(entry);
+      return true;
     },
 
     /**
