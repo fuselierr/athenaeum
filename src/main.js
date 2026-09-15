@@ -298,6 +298,9 @@ let outside = null;
     lying: () => cameraModes.lying,
     // Right-clicking the bench.
     sit: (seat) => cameraModes.sitOn(seat),
+    // Outside in VR, the exposure is metered off the land around you -- not
+    // off the controllers and the menu in front of your face.
+    vrHidden: () => vr.overlay,
   });
   // The walls-and-ceiling setting (the key, or Settings -> View) reaches the
   // room from here on.
@@ -465,6 +468,9 @@ const vr = createVRControls({
   getOutside: () => outside,
 });
 mountVRButton(vr);
+// The card on the desk tells you the headset's controls while you are wearing
+// one, and the keyboard's again once you take it off.
+vr.onChange((presenting) => instructionCard?.setVR(presenting));
 
 // --- book loading ---
 // HINGE_LEN/PANEL_REACH/SPINE_GAP are baked into physics bodies and

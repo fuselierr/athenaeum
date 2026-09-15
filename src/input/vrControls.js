@@ -12,9 +12,11 @@ import { ui } from '../state/ui.js';
  *
  *   left stick     walk, the way your head faces
  *   right stick    turn, in snaps (comfortable for most people)
- *   grip           take hold: the book, off the desk or out of the other
- *                  hand; a book off the shelf; or -- with the book in your
- *                  other hand -- a page to turn it, or a board to swing it
+ *   grip           take hold: the menu panel, where you are pointing at it,
+ *                  to carry it somewhere else; the book, off the desk or out
+ *                  of the other hand; a book off the shelf; or -- with the
+ *                  book in your other hand -- a page to turn it, or a board
+ *                  to swing it
  *   let go         the book drops, and lands wherever it falls -- or, let go
  *                  of close to its slot, a shelf book goes back in
  *   Y (left)       the menu, on a panel in front of you
@@ -50,11 +52,16 @@ import { ui } from '../state/ui.js';
  * THE MENU is the desktop's own (ui/menu), drawn onto a panel with three's
  * HTMLMesh and pressed through InteractiveGroup -- so every tab works the
  * same, and nothing about the menu has to know about VR. Text fields cannot
- * be typed into without a keyboard.
+ * be typed into without a keyboard. A panel is a PICTURE of the menu, so it
+ * has to be drawn again whenever the menu changes: after every press, and
+ * from scratch whenever the menu is a different size than the picture was
+ * taken at (see openPanel and pointAtMenu). Grip it to carry it somewhere
+ * else.
  *
- * OUTSIDE, the post-processing is left out while in VR (see
- * scene/outside/outside.js's render): the chain renders into targets of its
- * own, which a headset cannot be shown.
+ * OUTSIDE, the post-processing chain cannot run in VR -- it renders into
+ * targets of its own, which a headset cannot be shown -- so the clouds and the
+ * exposure are done another way there (scene/outside/outdoorPost.js's
+ * renderXR). The height fog and the colour grading are left out.
  */
 
 // The player is scaled with the world. See SCALE above.
@@ -81,6 +88,11 @@ const MENU_DISTANCE = 0.75;
 const MENU_DROP = 0.15;
 const MENU_SCROLL_SPEED = 900; // CSS pixels a second, at full stick
 const MENU_REDRAW_INTERVAL = 0.05; // seconds between redraws while scrolling
+// After a press, the panel is redrawn again at each of these, seconds later:
+// what a press changes arrives over several frames -- Vue renders on the next
+// tick, the menu's own fade takes a moment, a search comes back later still.
+const MENU_PRESS_REDRAWS = [0.05, 0.2, 0.5];
+const MENU_SIZE_CHECK = 0.1; // seconds between checking the menu is the size it was drawn at
 const LASER_LENGTH = 1.5; // metres, when the pointer is on nothing
 
 // The xr-standard gamepad layout.
@@ -169,7 +181,8 @@ export function createVRControls({
       laser,
       source: null, // the XRInputSource, while connected
       previous: [], // each button's pressed state last frame
-      action: null, // 'hold' | 'page' | 'cover' while the grip is closed on something
+      action: null, // 'hold' | 'page' | 'cover' | 'menu' while the grip is closed on something
+      menuHold: null, // where the menu panel sits in this hand, while it carries it
       snapArmed: true,
       pointingAtMenu: false,
     };
@@ -183,6 +196,9 @@ export function createVRControls({
     });
     // The trigger's select events, turned into clicks on the menu panel.
     menuGroup.listenToXRControllerEvents(controller);
+    // And the panel redrawn after each one: a press changes the page it is
+    // drawn from, which the panel cannot see happen.
+    controller.addEventListener('select', askRedraw);
     return hand;
   });
 
@@ -360,11 +376,36 @@ export function createVRControls({
     return true;
   }
 
+  /**
+   * Close a hand on the menu panel: it is carried wherever that hand goes
+   * until the grip opens, turning to face you as it travels. The hold is where
+   * the panel sits in the hand's own frame, so it keeps its distance and its
+   * place off to the side rather than snapping into the hand.
+   */
+  function takeHoldOfMenu(hand) {
+    hand.menuHold = hand.controller.worldToLocal(panel.mesh.position.clone());
+    hand.action = 'menu';
+    pulse(hand, 0.3, 30);
+  }
+
+  function moveMenu(hand) {
+    if (!panel || !hand.menuHold) return;
+    hand.controller.localToWorld(panel.mesh.position.copy(hand.menuHold));
+    readHead();
+    panel.mesh.lookAt(_head);
+  }
+
   function onGripDown(hand) {
     const pages = getPages();
     const shelf = getShelfBooks();
     const outside = getOutside();
     handPosition(hand, _hand);
+
+    // The menu, where the hand is pointing at it: take hold and carry it.
+    if (panel && hand.pointingAtMenu) {
+      takeHoldOfMenu(hand);
+      return;
+    }
 
     // The book in your other hand: this one turns its pages and swings its boards.
     if (bookCarry.hand && !holdsBook(hand) && pages && takeHoldOfPart(hand, pages, _hand)) return;
@@ -388,12 +429,18 @@ export function createVRControls({
   function whileGripped(hand) {
     if (hand.action === 'page') dragPageTurn.movePageGrab(handPosition(hand, _hand));
     else if (hand.action === 'cover') dragCover.moveHand(handPosition(hand, _hand));
+    else if (hand.action === 'menu') moveMenu(hand);
   }
 
   /** Open a hand: let go of whatever it had. */
   function letGo(hand) {
     const action = hand.action;
     hand.action = null;
+    // The menu stays where it was let go of; nothing else to put down.
+    if (action === 'menu') {
+      hand.menuHold = null;
+      return;
+    }
     if (action === 'page') dragPageTurn.releasePage();
     else if (action === 'cover') dragCover.release();
 
@@ -413,7 +460,12 @@ export function createVRControls({
   }
 
   // --- the menu ------------------------------------------------------------------
-  function openPanel() {
+  /**
+   * Draw the menu onto a panel. With `pose`, it is put back exactly where the
+   * last one was -- which is how a panel is replaced without it appearing to
+   * move (see the size check in pointAtMenu).
+   */
+  function openPanel(pose = null) {
     closePanel();
     const element = document.querySelector('#menu .menu');
     if (!element) return;
@@ -430,21 +482,44 @@ export function createVRControls({
     backing.position.z = -0.002;
     mesh.add(backing);
 
-    // In front of you, a little below your eyes, upright and facing you.
-    rig.updateMatrixWorld(true);
-    readHead();
-    camera.getWorldDirection(_forward);
-    _forward.y = 0;
-    if (_forward.lengthSq() < 1e-6) _forward.set(0, 0, -1);
-    _forward.normalize();
     const scale = rig.scale.x;
     mesh.scale.setScalar(scale);
-    mesh.position.copy(_head).addScaledVector(_forward, MENU_DISTANCE * scale);
-    mesh.position.y -= MENU_DROP * scale;
-    mesh.lookAt(_head.x, mesh.position.y, _head.z);
+    if (pose) {
+      mesh.position.copy(pose.position);
+      mesh.quaternion.copy(pose.quaternion);
+    } else {
+      // In front of you, a little below your eyes, upright and facing you.
+      rig.updateMatrixWorld(true);
+      readHead();
+      camera.getWorldDirection(_forward);
+      _forward.y = 0;
+      if (_forward.lengthSq() < 1e-6) _forward.set(0, 0, -1);
+      _forward.normalize();
+      mesh.position.copy(_head).addScaledVector(_forward, MENU_DISTANCE * scale);
+      mesh.position.y -= MENU_DROP * scale;
+      mesh.lookAt(_head.x, mesh.position.y, _head.z);
+    }
 
     menuGroup.add(mesh);
-    panel = { mesh, backing, element };
+    // The size the menu was when it was drawn. Its texture is that size for
+    // good -- a texture cannot grow in place -- so a menu that is a different
+    // size now needs a new panel rather than a redraw. Rounded down, as a
+    // canvas's own width is.
+    const drawn = mesh.material.map.image;
+    panel = {
+      mesh,
+      backing,
+      element,
+      width: drawn.width,
+      height: drawn.height,
+      sizeWait: MENU_SIZE_CHECK,
+      redraws: [],
+    };
+  }
+
+  /** Draw the menu again shortly, and again after that: something was pressed. */
+  function askRedraw() {
+    if (panel) panel.redraws = MENU_PRESS_REDRAWS.slice();
   }
 
   function closePanel() {
@@ -468,8 +543,38 @@ export function createVRControls({
     else closePanel();
   });
 
-  /** The lasers, and scrolling with the stick of a hand pointing at the menu. */
+  /**
+   * The menu panel each frame: kept the size the menu is, redrawn after a
+   * press, the lasers, and scrolling with the stick of a hand pointing at it.
+   */
   function pointAtMenu(dt) {
+    if (panel) {
+      // The menu rises into place as it opens, and can change size with the
+      // window; the panel is made again at whatever size it is now, in the
+      // same place. Without this, every later redraw is silently dropped --
+      // which is why the menu had to be closed and reopened to show a press.
+      panel.sizeWait -= dt;
+      if (panel.sizeWait <= 0) {
+        panel.sizeWait = MENU_SIZE_CHECK;
+        const element = document.querySelector('#menu .menu');
+        const rect = element?.getBoundingClientRect();
+        if (element && (element !== panel.element
+          || Math.floor(rect.width) !== panel.width
+          || Math.floor(rect.height) !== panel.height)) {
+          openPanel({ position: panel.mesh.position.clone(), quaternion: panel.mesh.quaternion.clone() });
+        }
+      }
+    }
+    if (panel) {
+      for (let i = panel.redraws.length - 1; i >= 0; i--) {
+        panel.redraws[i] -= dt;
+        if (panel.redraws[i] > 0) continue;
+        panel.redraws.splice(i, 1);
+        redrawPending = true;
+        redrawWait = 0;
+      }
+    }
+
     for (const hand of hands) {
       hand.pointingAtMenu = false;
       hand.laser.visible = Boolean(panel && hand.source);
@@ -549,6 +654,13 @@ export function createVRControls({
 
     /** Whether a headset is showing the room right now. */
     get presenting() { return xr.isPresenting; },
+
+    /**
+     * What VR puts in front of your face rather than in the room: the
+     * controllers, and the menu panel. Outside meters its exposure off the
+     * room, not off these (scene/outside/outdoorPost.js's renderXR).
+     */
+    get overlay() { return [rig, menuGroup]; },
 
     /** Start a VR session. Must be called from a click. */
     async enter() {

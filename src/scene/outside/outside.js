@@ -84,10 +84,13 @@ function nextFrame() {
  *   for the grass to part round them
  * @param {((seat: { eye: THREE.Vector3, yaw: number, standAt: { x: number, z: number } }) => void)|null} [opts.sit]
  *   sit the player on the bench -- input/cameraModes.js's sitOn
+ * @param {() => THREE.Object3D[]} [opts.vrHidden]  what VR holds in front of
+ *   your face -- the controllers, the menu panel -- which the exposure outside
+ *   is not metered off (scene/outside/outdoorPost.js's renderXR)
  */
 export function createOutside({
   scene, camera, renderer, room, floor, inside = [], book = null, setGround = null, lying = () => 0,
-  sit = null,
+  sit = null, vrHidden = () => [],
 }) {
   let state = 'inside'; // 'loading' | 'outside'
   let terrain = null;
@@ -380,11 +383,12 @@ export function createOutside({
       if (state !== 'outside' || !post) return false;
       followBook();
       grass?.update(dt);
-      // In VR the frame goes straight to the headset: the chain renders into
-      // targets of its own, which an XR session cannot present -- so no
-      // height fog, clouds or auto exposure there, just the sky, the land and
-      // the renderer's own tone mapping.
-      if (renderer.xr.isPresenting) renderer.render(scene, camera);
+      // In VR the chain cannot run -- it renders into targets of its own,
+      // which an XR session cannot present -- so the headset gets the clouds
+      // and the exposure another way (outdoorPost.js's renderXR). The grass
+      // and whatever VR holds in front of your face are kept out of its
+      // metering.
+      if (renderer.xr.isPresenting) post.renderXR(dt, { hide: [grass?.group, ...vrHidden()] });
       else post.render(dt);
       return true;
     },

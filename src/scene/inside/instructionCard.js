@@ -76,6 +76,39 @@ const KEYCAP_EDGE = '#c9b8a2';
 const KEYCAP_SHADOW = '#b9a58c';
 
 const FOOTER = 'Every key can be changed: Esc → Settings → Controls.';
+const VR_FOOTER = 'Go outside, or change the scene, from the menu’s Scene tab.';
+
+/** The card's contents in VR: the headset's controls (input/vrControls.js). */
+function vrSections() {
+  return [
+    {
+      title: 'General',
+      rows: [
+        { keys: ['Y'], text: 'Open or close the menu — the left hand’s button' },
+        { keys: ['Trigger'], text: 'Press whatever your pointer is on, on the menu' },
+        { gesture: 'Stick on the menu', text: 'Scroll it' },
+        { gesture: 'Grip the menu', text: 'Carry it somewhere else and leave it there' },
+      ],
+    },
+    {
+      title: 'Moving around',
+      rows: [
+        { gesture: 'Left stick', text: 'Walk, the way you are facing' },
+        { gesture: 'Right stick', text: 'Turn, a step at a time' },
+      ],
+    },
+    {
+      title: 'The book',
+      rows: [
+        { gesture: 'Grip the book', text: 'Pick it up. It stays in your hand exactly where you took it.' },
+        { gesture: 'Grip a shelf book', text: 'Take it off the shelf and open it' },
+        { gesture: 'Grip a page', text: 'With the book in your other hand: carry your hand over the spine to turn the page' },
+        { gesture: 'Grip a cover', text: 'With the book in your other hand: swing it open or shut' },
+        { gesture: 'Open your grip', text: 'Let the book drop — or, by its own slot, put a shelf book back' },
+      ],
+    },
+  ];
+}
 
 /** The card's contents, lettered with whatever the keys are bound to right now. */
 function sections() {
@@ -198,7 +231,7 @@ function drawKeys(ctx, row, x, top, s) {
  * so the caller can try a smaller scale if it ran off the bottom -- a longer
  * key name after a rebind must not push the footer off the paper.
  */
-function draw(ctx, s) {
+function draw(ctx, s, vr) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -218,7 +251,7 @@ function draw(ctx, s) {
   y += 104 * s;
   ctx.fillStyle = INK_SOFT;
   ctx.font = `italic 400 ${32 * s}px ${SERIF}`;
-  ctx.fillText('How to use the reading room', CANVAS_WIDTH / 2, y);
+  ctx.fillText(vr ? 'How to use the reading room in VR' : 'How to use the reading room', CANVAS_WIDTH / 2, y);
   y += 40 * s;
   ctx.strokeStyle = RULE;
   ctx.lineWidth = 2;
@@ -229,7 +262,7 @@ function draw(ctx, s) {
   y += 64 * s;
 
   ctx.textAlign = 'left';
-  for (const section of sections()) {
+  for (const section of (vr ? vrSections() : sections())) {
     ctx.fillStyle = ACCENT;
     ctx.font = `600 ${27 * s}px ${SERIF}`;
     spaced(ctx, section.title.toUpperCase(), MARGIN, y, 3 * s);
@@ -251,16 +284,16 @@ function draw(ctx, s) {
   ctx.textAlign = 'center';
   ctx.fillStyle = INK_SOFT;
   ctx.font = `italic 400 ${27 * s}px ${SERIF}`;
-  ctx.fillText(FOOTER, CANVAS_WIDTH / 2, y + 10 * s);
+  ctx.fillText(vr ? VR_FOOTER : FOOTER, CANVAS_WIDTH / 2, y + 10 * s);
   return y + 10 * s;
 }
 
 /** Letter the card at the largest scale that fits it on the paper. */
-function letter(ctx) {
+function letter(ctx, vr = false) {
   for (let s = 1; s > 0.6; s -= 0.04) {
-    if (draw(ctx, s) <= CANVAS_HEIGHT - MARGIN) return;
+    if (draw(ctx, s, vr) <= CANVAS_HEIGHT - MARGIN) return;
   }
-  draw(ctx, 0.6);
+  draw(ctx, 0.6, vr);
 }
 
 // --- the object -------------------------------------------------------------------
@@ -279,7 +312,10 @@ export function addInstructionCard(scene, { deskBox, renderer, camera }) {
   canvas.width = CANVAS_WIDTH;
   canvas.height = CANVAS_HEIGHT;
   const ctx = canvas.getContext('2d');
-  letter(ctx);
+  // Which controls it is lettered with: the keyboard's, or -- in VR -- the
+  // headset's (see setVR).
+  let inVR = false;
+  letter(ctx, inVR);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -288,7 +324,7 @@ export function addInstructionCard(scene, { deskBox, renderer, camera }) {
   texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   const stopWatching = watch(keys, () => {
-    letter(ctx);
+    letter(ctx, inVR);
     texture.needsUpdate = true;
   }, { deep: true });
 
@@ -462,6 +498,18 @@ export function addInstructionCard(scene, { deskBox, renderer, camera }) {
     /** Put it back on the desk -- what Escape does. */
     release() {
       held = false;
+    },
+
+    /**
+     * Letter the card with the headset's controls (input/vrControls.js) while
+     * VR is on, and with the keyboard's again once it is off. The keys on the
+     * desk are no use in a headset, and the grips are no use without one.
+     */
+    setVR(on) {
+      if (on === inVR) return;
+      inVR = on;
+      letter(ctx, inVR);
+      texture.needsUpdate = true;
     },
 
     /** Call every frame, after the camera has moved. */

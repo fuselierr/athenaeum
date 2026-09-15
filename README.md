@@ -117,6 +117,7 @@ On a browser that can show VR (a headset's own, or a desktop one with a headset 
 | `Y` (left hand) | Open or close the menu |
 | Trigger | Press what your pointer is on, on the menu |
 | Stick, pointing at the menu | Scroll it |
+| Grip, pointing at the menu | Carry the menu somewhere else and leave it there |
 
 ## Status
 

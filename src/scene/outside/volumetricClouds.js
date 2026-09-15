@@ -404,13 +404,34 @@ export class VolumetricCloudsPass extends Pass {
     return this.target.texture;
   }
 
-  render(renderer, writeBuffer, readBuffer, deltaTime) {
+  /** Blow the clouds on by `dt` seconds. render() does this; renderCubeFace does not. */
+  advance(dt) {
+    this.material.uniforms.time.value += dt;
+  }
+
+  /** March the next draw from this camera's point of view. */
+  setView(view) {
     const u = this.material.uniforms;
-    u.time.value += deltaTime;
-    u.projectionInverse.value.copy(this.camera.projectionMatrixInverse);
-    u.cameraWorld.value.copy(this.camera.matrixWorld);
-    u.cameraPos.value.setFromMatrixPosition(this.camera.matrixWorld);
+    u.projectionInverse.value.copy(view.projectionMatrixInverse);
+    u.cameraWorld.value.copy(view.matrixWorld);
+    u.cameraPos.value.setFromMatrixPosition(view.matrixWorld);
     u.sunColour.value.copy(this.sun.color).multiplyScalar(this.sun.visible ? this.sun.intensity : 0);
+  }
+
+  /**
+   * The clouds from `view`, into one face of a cube target -- how VR gets
+   * them, where the chain this pass belongs to cannot run at all
+   * (scene/outside/outdoorPost.js's renderXR).
+   */
+  renderCubeFace(renderer, view, target, face) {
+    this.setView(view);
+    renderer.setRenderTarget(target, face);
+    this.quad.render(renderer);
+  }
+
+  render(renderer, writeBuffer, readBuffer, deltaTime) {
+    this.advance(deltaTime);
+    this.setView(this.camera);
     renderer.setRenderTarget(this.target);
     this.quad.render(renderer);
   }
