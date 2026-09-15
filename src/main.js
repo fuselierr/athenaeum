@@ -27,6 +27,7 @@ import { createBookManipulator } from './input/bookManipulator.js';
 import { createBookCarry } from './input/bookCarry.js';
 import { createVRControls } from './input/vrControls.js';
 import { mountVRButton } from './ui/vrButton.js';
+import { checkGpu } from './ui/gpuNotice.js';
 import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
 import { createOutdoorPanel } from './debug/outdoorPanel.js';
@@ -53,6 +54,9 @@ const BASE_PANEL_REACH = INITIAL_PANEL_REACH;
 
 loadingScreen.status('Lighting the room…', 0.02, 0.2);
 const { scene, camera, renderer, controls, environment } = await createScene();
+// Which GPU the browser gave us -- and, if it is built-in graphics or none at
+// all, how to get the better one. Waits under the loading screen until it lifts.
+checkGpu(renderer);
 const audio = createAudioManager();
 
 // Camera rig first, before anything else listens on the canvas. It does not

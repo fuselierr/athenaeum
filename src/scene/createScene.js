@@ -17,7 +17,13 @@ export async function createScene() {
   // about 16 cm across, keeping the old viewing direction.
   camera.position.set(-0.48, 0.27, 0.15);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    // Ask for the faster GPU on a machine with two -- a laptop's dedicated
+    // card over its built-in graphics. Only a hint the browser or the OS may
+    // overrule; ui/gpuNotice.js checks what was actually given.
+    powerPreference: 'high-performance',
+  });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
