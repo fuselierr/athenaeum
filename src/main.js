@@ -735,6 +735,19 @@ window.addEventListener('keydown', (e) => {
     if (bookCarry.held) bookCarry.straighten();
     else resetBook();
   }
+  // Let go of the book right where it is held: the hand opens and it falls,
+  // keeping however the hand was moving, onto whatever is under it. Outside,
+  // the book's physics has no ground to land on, so it goes home instead of
+  // falling forever. A shelf model still waiting for its pages has nothing to
+  // fall with yet, so it just goes back to its slot.
+  if (matches('book.drop', e) && !e.repeat) {
+    if (bookCarry.held) {
+      if (outside?.outside) bookCarry.putBack();
+      else bookCarry.letGo();
+    } else if (shelfBooks?.held) {
+      shelfBooks.release();
+    }
+  }
   // A setting rather than a flag of its own, so Settings shows the same
   // state and the choice is remembered. See bindSettings' bindRoom.
   if (matches('room.walls', e) && !e.repeat) settings.graphics.walls = !settings.graphics.walls;

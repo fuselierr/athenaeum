@@ -94,6 +94,7 @@ Every key below can be rebound in **Settings → Controls**. The round button in
 | Scroll, holding the book | Bring it closer or push it away |
 | `F` | Flip the book over |
 | `R` | Reset the book to the desk — or, in your hand, back to how it was first held |
+| `Q` | Drop the book from your hand, right where you hold it |
 | `H` | Hide or show the walls and ceiling |
 | `M` | Mute |
 | `` ` `` | Debug overlay: hinge labels, FPS, and outside, the lighting and post-processing panel |
