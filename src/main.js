@@ -6,6 +6,7 @@ import { loadBookshelf } from './scene/inside/bookshelf.js';
 import { addFloor } from './scene/inside/floor.js';
 import { addRoom, WINDOW_SILL_PROJECTION } from './scene/inside/room.js';
 import { loadRoomSurfaces } from './scene/inside/surfaces.js';
+import { loadSofa } from './scene/inside/sofa.js';
 import { populateShelf } from './scene/inside/shelfBooks.js';
 import { addInstructionCard } from './scene/inside/instructionCard.js';
 import { createOutside } from './scene/outside/outside.js';
@@ -101,8 +102,17 @@ const cameraModes = createCameraModes({
     if (shelfBooks?.handleClick(event)) return;
     putBookDown(event); // a click past the shelf, holding a book
   },
-  // Outside, a right-click on the bench sits you down on it.
-  onRightClick: (event) => { outside?.handleRightClick(event); },
+  // A right-click on the bench outside, or anywhere on the sofa inside, sits
+  // you down on it.
+  onRightClick: (event) => {
+    if (outside?.handleRightClick(event) || outside?.outside) return;
+    const seat = sofa?.seatUnder(event, {
+      camera,
+      dom: renderer.domElement,
+      occluders: [desk?.object, lamp, bookshelf, bookGroup],
+    });
+    if (seat) cameraModes.sitOn(seat);
+  },
 });
 
 // The book hangs under its own group rather than directly under `scene` so
@@ -130,7 +140,7 @@ let bookCarry = null;
 // Loaded alongside the page simulation since none of the three waits on
 // the others.
 loadingScreen.status('Arranging the furniture…', 0.2, 0.45);
-const [pagesInstance, desk, lamp, bookshelf, surfaces] = await Promise.all([
+const [pagesInstance, desk, lamp, bookshelf, surfaces, sofa] = await Promise.all([
   PageSimulation.create(bookGroup),
   loadDesk(scene),
   // Lamp at its authored size, on the back corner of the desk.
@@ -138,6 +148,8 @@ const [pagesInstance, desk, lamp, bookshelf, surfaces] = await Promise.all([
   loadBookshelf(scene),
   // The floorboards and the plywood walls (scene/inside/surfaces.js).
   loadRoomSurfaces(),
+  // Placed in the middle of the room once the room is measured, below.
+  loadSofa(scene),
 ]);
 
 // --- arrange the room -----------------------------------------------------
@@ -145,7 +157,7 @@ const [pagesInstance, desk, lamp, bookshelf, surfaces] = await Promise.all([
 // between two models, and neither one can know the other's measurements at
 // its own load time. Measured, not hardcoded, so swapping either .glb (or
 // changing FURNITURE_SCALE) still lands them correctly.
-const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
+const GAP_BEHIND_DESK = 5; // metres of clear floor between desk and shelf
 // Clear floor past the furniture, on the two sides nothing backs onto.
 // Wider than the bare 0.4 the floor used to take, because it is now the
 // room you stand in as well as the ground the desk is on -- the walls land
@@ -165,10 +177,9 @@ const FURNITURE_WALL_CLEARANCE = 0.01;
 // worktop, which is where you want it when you are sitting at it.
 const SILL_ABOVE_DESK = 0.08;
 // Above the tallest thing in the room. A ceiling that only just clears the
-// bookshelf reads as an attic, hence a generous clearance and a floor of 3
-// metres.
-const CEILING_CLEARANCE = 1.2;
-const MIN_CEILING_HEIGHT = 3;
+// bookshelf reads as an attic, so give the room a bit more breathing room.
+const CEILING_CLEARANCE = 1.6;
+const MIN_CEILING_HEIGHT = 6.5;
 
 // The room's inside, floor to ceiling and wall to wall. Filled in by the
 // block below once the walls exist, and handed to the book's physics, which
@@ -237,6 +248,15 @@ let outside = null;
   const walkable = new THREE.Box3().setFromObject(floor);
   cameraModes.setRoom(walkable);
 
+  // The sofa, in the middle of the floor, facing the window and the desk (+X).
+  const roomMiddle = walkable.getCenter(new THREE.Vector3());
+  sofa.place({
+    x: roomMiddle.x,
+    y: walkable.min.y,
+    z: roomMiddle.z,
+    facing: new THREE.Vector3(1, 0, 0),
+  });
+
   // Walls and ceiling on that same footprint. The window goes in the wall
   // opposite the bookshelf -- the shelf stands at -X (see above), so the
   // wall the desk is pushed up against is +X, and the window is then
@@ -266,6 +286,7 @@ let outside = null;
       desk.object,
       lamp,
       bookshelf,
+      sofa.object,
       instructionCard.group,
       scene.getObjectByName('roomFill'),
     ].filter(Boolean),
@@ -282,13 +303,13 @@ let outside = null;
   // room from here on.
   scenery.bindRoom(shell);
 
-  // Start on your feet in the middle of the room, facing the window. Walk is
-  // the default mode, and this is the first moment it can begin: there is a
+  // Start on your feet between the sofa and the desk, facing the window. Walk
+  // is the default mode, and this is the first moment it can begin: there is a
   // floor to stand on and a window to face. Aim slightly below eye level so
   // the desk remains present in the opening view.
-  const roomMiddle = walkable.getCenter(new THREE.Vector3());
+  const sofaBox = new THREE.Box3().setFromObject(sofa.object);
   cameraModes.setMode(CAMERA_MODE.WALK);
-  cameraModes.standAt(roomMiddle.x, roomMiddle.z);
+  cameraModes.standAt((sofaBox.max.x + deskBox.min.x) / 2, roomMiddle.z);
   cameraModes.lookAt(new THREE.Vector3(
     shell.window.centre.x,
     camera.position.y - 0.4,
@@ -391,7 +412,9 @@ const getPages = () => pages;
 // settles on whichever cover is underneath. bookGroup is its render side --
 // driven by the body when the book is loose, and copied INTO the body while
 // a gesture is holding it (see bookManipulator's `grabbed`).
-const placement = await createBookPlacement({ bookGroup, getPages, desk, room: roomInterior });
+const placement = await createBookPlacement({
+  bookGroup, getPages, desk, room: roomInterior, obstacles: sofa.collision,
+});
 
 const content = createBookContent(getPages);
 // Constructed BEFORE dragPageTurn on purpose: both listen for pointerdown

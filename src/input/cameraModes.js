@@ -416,7 +416,8 @@ export function createCameraModes({
     get seated() { return seat !== null; },
 
     /**
-     * Sit down on a seat -- the park bench outside (scene/outside/parkBench.js).
+     * Sit down on a seat -- the sofa inside (scene/inside/sofa.js) or the park
+     * bench outside (scene/outside/parkBench.js).
      * `eye` is where the eye goes, `yaw` which way the seat faces (as the
      * camera's yaw), `standAt` the spot you step out to on getting up. You
      * glide onto it and round to face its way; looking around carries on,

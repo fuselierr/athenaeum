@@ -99,7 +99,11 @@ const MAX_RELEASE_SPIN = 12; // rad/s
 
 // `room` is the room's inside as a world-space THREE.Box3 -- floor to ceiling,
 // wall to wall. Optional: without it the desk is the only thing to land on.
-export async function createBookPlacement({ bookGroup, getPages, desk, room = null }) {
+// `obstacles` are more furniture to land on, as world-space boxes
+// ({ center, halfExtents }, like the desk's collision) -- the sofa's.
+export async function createBookPlacement({
+  bookGroup, getPages, desk, room = null, obstacles = [],
+}) {
   await RAPIER.init();
 
   const world = new RAPIER.World({ x: 0, y: -GRAVITY_MAG, z: 0 });
@@ -147,6 +151,21 @@ export async function createBookPlacement({ bookGroup, getPages, desk, room = nu
           .setFriction(FRICTION)
           .setRestitution(RESTITUTION),
         roomBody,
+      );
+    }
+  }
+
+  // --- the rest of the furniture ------------------------------------------
+  if (obstacles.length) {
+    const furnitureBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    for (const { center, halfExtents } of obstacles) {
+      world.createCollider(
+        RAPIER.ColliderDesc
+          .cuboid(halfExtents.x, halfExtents.y, halfExtents.z)
+          .setTranslation(center.x, center.y, center.z)
+          .setFriction(FRICTION)
+          .setRestitution(RESTITUTION),
+        furnitureBody,
       );
     }
   }

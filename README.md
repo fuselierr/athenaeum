@@ -86,6 +86,7 @@ Every key below can be rebound in **Settings → Controls**. The round button in
 | Click the book | Bring it up to read — `Esc` puts it back |
 | Click the desk | Set the held book down |
 | Click the door | Go outside |
+| Right-click the sofa | Sit there — anywhere on it, chaise included; move, jump or `X` to get up |
 | Right-click the bench | Sit on it, outside — move, jump or `X` to get up |
 | `←` / `→` | Turn to the previous/next page |
 | Drag a page directly | Turn that page by hand, mid-curl |
@@ -129,4 +130,5 @@ Next steps:
 
 ## Credits
 
+- ["sofa"](https://sketchfab.com/3d-models/sofa-33a982d268d749ddb803263ea7da84b0) by MaX3Dd, licensed under [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/)
 - ["Park Bench"](https://sketchfab.com/3d-models/park-bench-84426d6537ac4cdc837d602ccabe7036) by DutraBR98, licensed under [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/)
