@@ -67,8 +67,12 @@ export const keys = reactive(
   Object.fromEntries(ACTIONS.map((action) => [action.id, action.default])),
 );
 
-try {
-  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+/**
+ * Take saved bindings in -- this browser's own, or the reader's account's
+ * (auth/preferences.js) -- checked the same way wherever they came from.
+ */
+export function applySavedBindings(saved) {
+  if (!saved || typeof saved !== 'object') return;
   // Read action by action rather than merging wholesale: a binding that was
   // saved and then removed from ACTIONS should not linger, and a new action
   // added since must come up on its default rather than undefined.
@@ -86,6 +90,10 @@ try {
     );
     if (clash && normalise(keys[clash.id]) !== normalise(clash.default)) keys[clash.id] = clash.default;
   }
+}
+
+try {
+  applySavedBindings(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'));
 } catch {
   // Private browsing, cleared storage, or a half-written value: defaults.
 }

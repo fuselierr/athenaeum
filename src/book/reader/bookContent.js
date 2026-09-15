@@ -24,6 +24,15 @@ export const LEFT_HAND_PANEL = RIGHT_HAND_PANEL === 'B' ? 'C' : 'B';
 // as a glitch. Easing costs nothing and covers both.
 const BC_EASE_RATE = 6; // 1/s
 
+// How many pages around the open spread keep their GPU uploads: from this
+// many before its left-hand page to this many from it onward -- the spread
+// itself and two spreads either side, so a page turn or two in any direction
+// finds its pages already there. A page texture is ~3 MB on the GPU, and
+// without this every page ever turned to stays uploaded until the tab closes.
+// A page further off is freed and simply uploaded again if it comes back.
+const KEEP_BEHIND = 4;
+const KEEP_AHEAD = 5;
+
 /**
  * The book's content model: which page each panel currently shows, where a
  * turn from a given panel would land, and how far through the book we are.
@@ -41,6 +50,9 @@ const BC_EASE_RATE = 6; // 1/s
 export function createBookContent(getPages) {
   let pageCanvases = [];
   const pageTextures = []; // one THREE.CanvasTexture per page index, built lazily, reused across turns
+  // Page indices whose textures have been handed out since they were last
+  // freed -- the ones that may be holding GPU memory.
+  const liveTextures = new Set();
   let leafStart = 0;
 
   // The wedge either side of the shared B/C hinge IS the visible stack of
@@ -87,7 +99,23 @@ export function createBookContent(getPages) {
     if (!pageTextures[index]) {
       pageTextures[index] = new THREE.CanvasTexture(pageCanvases[index]);
     }
+    liveTextures.add(index);
     return pageTextures[index];
+  }
+
+  /**
+   * Free the GPU uploads of pages well away from the open spread (see
+   * KEEP_BEHIND). The texture objects stay: one still on a panel, or on a
+   * leaf still in flight, is just uploaded again the next time it is drawn.
+   */
+  function releaseDistantTextures() {
+    const first = leafStart - KEEP_BEHIND;
+    const last = leafStart + KEEP_AHEAD;
+    for (const index of liveTextures) {
+      if (index >= first && index <= last) continue;
+      pageTextures[index]?.dispose();
+      liveTextures.delete(index);
+    }
   }
 
   // Highest leafStart the book can be opened to -- the last spread. Also
@@ -132,11 +160,16 @@ export function createBookContent(getPages) {
       if (tex) getPages().setPageTexture(panel, tex);
     }
     refreshReadingProgress();
+    releaseDistantTextures();
   }
 
   return {
     /** Adopt a freshly rendered book and open it at the first spread. */
     setCanvases(canvases) {
+      // The last book's pages, off the GPU. Emptying the list alone drops the
+      // textures but not their uploads, which would stay until the tab closed.
+      for (const texture of pageTextures) texture?.dispose();
+      liveTextures.clear();
       pageCanvases = canvases;
       pageTextures.length = 0;
       leafStart = 0;
@@ -234,6 +267,7 @@ export function createBookContent(getPages) {
       const underneath = textureForPage(pageIndexForPanel(panel, target));
       leafStart = target;
       refreshReadingProgress();
+      releaseDistantTextures();
       return { landing, underneath, landingPanel: oppositePanel(panel) };
     },
   };

@@ -166,7 +166,9 @@ export async function createBookPlacement({ bookGroup, getPages, desk, room = nu
   // changes HINGE_LEN/PANEL_REACH, which changes the boards).
   let boardColliders = null;
   let pageColliders = null; // [front half, back half]
-  let boardSignature = null;
+  // What the colliders were last built for: the board's half-extents and the
+  // book's scale.
+  const builtFor = { x: NaN, y: NaN, z: NaN, scale: NaN };
   // How much of the text block is in the front half, 0..1, as last
   // applied. Null when it needs applying whatever it says.
   let pageShare = null;
@@ -265,11 +267,15 @@ export async function createBookPlacement({ bookGroup, getPages, desk, room = nu
     if (!hardcover) return;
 
     const shape = hardcover.boardShape;
-    // The scale is part of the signature: changing it changes the
+    // The scale counts as much as the size: changing it changes the
     // colliders just as surely as re-sizing the boards does.
-    const sig = `${shape.halfExtents.x},${shape.halfExtents.y},${shape.halfExtents.z},${bookGroup.scale.x}`;
-    if (sig !== boardSignature) {
-      boardSignature = sig;
+    const { x, y, z } = shape.halfExtents;
+    const scale = bookGroup.scale.x;
+    if (x !== builtFor.x || y !== builtFor.y || z !== builtFor.z || scale !== builtFor.scale) {
+      builtFor.x = x;
+      builtFor.y = y;
+      builtFor.z = z;
+      builtFor.scale = scale;
       rebuildBoards(shape);
     }
     weighPages(pages);

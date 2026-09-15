@@ -4,6 +4,7 @@ import { settings } from '../../state/settings.js';
 import { ACTIONS, bind, keys, label, resetBindings } from '../../state/keybindings.js';
 import { ui } from '../../state/ui.js';
 import { QUALITY, QUALITY_LEVELS } from '../../state/quality.js';
+import { account } from '../../state/account.js';
 
 /**
  * Audio, controls, and the handful of view settings worth exposing.
@@ -52,9 +53,24 @@ function stopCapture() {
 onBeforeUnmount(stopCapture);
 
 const percent = (v) => `${Math.round(v * 100)}%`;
+
+// Where these are kept -- see auth/preferences.js.
+const whereSaved = computed(() => {
+  if (!account.available) return 'Settings are saved in this browser.';
+  if (!account.user) return 'Settings are saved in this browser. Sign in to keep them with your account.';
+  switch (account.preferences) {
+    case 'syncing': return 'Checking your account for saved settings…';
+    case 'synced': return 'Settings are saved to your account. Graphics quality stays with this device.';
+    case 'unavailable': return 'Settings are saved in this browser only — your account can’t store them yet.';
+    case 'error': return 'Couldn’t reach your account, so settings are saved in this browser for now.';
+    default: return 'Settings are saved in this browser.';
+  }
+});
 </script>
 
 <template>
+  <p class="menu-hint" style="margin-bottom: 16px">{{ whereSaved }}</p>
+
   <section class="menu-section">
     <h3>Audio</h3>
 

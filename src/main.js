@@ -46,6 +46,7 @@ import { watch } from 'vue';
 import { account } from './state/account.js';
 import { community } from './state/community.js';
 import { loadAttachments } from './community/covers.js';
+import { startPreferencesSync } from './auth/preferences.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
 // tuned around; a loaded PDF's aspect ratio derives HINGE_LEN from this
@@ -786,6 +787,8 @@ mountMenu({
 
 // The account control, top right. Independent of the menu and of the room.
 mountAccount();
+// Settings and key bindings follow the account while someone is signed in.
+startPreferencesSync();
 
 // --- render loop ---
 let lastFrameTime = performance.now();
@@ -800,8 +803,9 @@ renderer.setAnimationLoop(() => {
 
   if (spineRotationPanel) spineRotationPanel.style.display = anglePanel.visible ? 'block' : 'none';
   // The pages drive the tilt, so the readout has to follow it rather than
-  // only updating when the slider is dragged.
-  if (pages.spineRotationDriven) refreshSpineRotationLabel();
+  // only updating when the slider is dragged -- while it can be seen, that is;
+  // hidden, writing it every frame is DOM work for nothing.
+  if (anglePanel.visible && pages.spineRotationDriven) refreshSpineRotationLabel();
   if (!anglePanel.visible) simulationPaused = false;
 
   // In VR the headset and the controllers move you (input/vrControls.js); the

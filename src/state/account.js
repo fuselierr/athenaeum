@@ -23,6 +23,14 @@ export const account = reactive({
   /** Which provider that redirect is heading to: 'google' | 'discord'. */
   provider: null,
 
+  /**
+   * Where settings and key bindings are kept (auth/preferences.js):
+   * 'local' in this browser only (signed out), 'syncing' while the account
+   * is first read, 'synced' in the account too, 'unavailable' when the
+   * account cannot store them, 'error' when it could not be reached.
+   */
+  preferences: 'local',
+
   error: '',
 });
 

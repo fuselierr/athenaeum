@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HINGE_LEN, PANEL_REACH, PIVOT_TO_NEAR_EDGE, SPINE_GAP } from '../pageSim/config.js';
+import { HINGE_LEN, PANEL_REACH, PIVOT_TO_NEAR_EDGE, SPINE_GAP, spineBeta } from '../pageSim/config.js';
 import { pageTransform, spineHinge } from '../pageSim/math.js';
 import { sampleBindingColor, renderSpineLabel, toHex, shade, luminance } from './jacketArt.js';
 import { createBoardGeometry, BOARD_FACE_PY, BOARD_FACE_NY } from './boardGeometry.js';
@@ -241,6 +241,9 @@ export function createHardcover({ parent, hardcoverAngles }) {
   spineMesh.castShadow = true;
   spineMesh.receiveShadow = true;
   parent.add(spineMesh);
+  // The tilt and thickness the spine was last built for (see update()).
+  let spineBuiltBeta = NaN;
+  let spineBuiltGap = NaN;
 
   /**
    * Put a board at its hinge and independent cover angle.
@@ -489,7 +492,16 @@ export function createHardcover({ parent, hardcoverAngles }) {
       const angleH2 = hardcoverAngles.H2();
       poseBoard(H1, angleH1, SPINE_GAP);
       poseBoard(H2, angleH2, -SPINE_GAP);
-      updateSpine();
+      // The spine's shape is set by the spine's tilt and the book's thickness
+      // alone -- its ends are the block's edges, not the boards -- so it is
+      // rebuilt, normals, bounds, upload and all, only when one of those has
+      // moved. A book at rest, or with only a cover swinging, keeps the one it has.
+      const beta = spineBeta();
+      if (beta !== spineBuiltBeta || SPINE_GAP !== spineBuiltGap) {
+        updateSpine();
+        spineBuiltBeta = beta;
+        spineBuiltGap = SPINE_GAP;
+      }
     },
 
     dispose() {

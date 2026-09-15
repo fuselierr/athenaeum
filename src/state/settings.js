@@ -56,6 +56,14 @@ function restore(target, saved) {
   }
 }
 
+/**
+ * Take settings saved elsewhere -- the reader's account (auth/preferences.js)
+ * -- in, field by field, exactly as this browser's own copy is taken in.
+ */
+export function applySettings(saved) {
+  restore(settings, saved);
+}
+
 try {
   restore(settings, JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null'));
 } catch {

@@ -358,13 +358,20 @@ export function createDragPageTurn({
 
     let landingFace;
     if (landingTexture) {
-      // Cloned, then oriented for the LANDING panel. The clone shares its
-      // Source with the original, so this costs no extra gpu upload -- it
-      // just keeps this leaf's uv transform off the cached texture, which
-      // is handed out per page index and may already be on a panel under
-      // a different slot's orientation.
+      // Cloned, then oriented for the LANDING panel -- which keeps this
+      // leaf's uv transform off the cached texture, handed out per page
+      // index and possibly already on a panel under another slot's
+      // orientation. The clone shares its Source (the page image) with the
+      // original, but cloning marks that image changed (Texture.copy sets
+      // needsUpdate), which on its own would send the whole page to the GPU
+      // again, mipmaps and all, on every single turn. Putting the image's
+      // version back leaves the upload to happen only if the page has never
+      // been uploaded at all; the clone itself still counts as new, so it
+      // binds to the page's existing upload rather than to nothing.
+      const imageVersion = landingTexture.source.version;
       const landingTex = landingTexture.clone();
-      landingTex.needsUpdate = true;
+      landingTex.source.version = imageVersion;
+      turn.landingTex = landingTex; // freed with the leaf
       pages.orientPageTexture(landingPanel, landingTex);
       landingFace = makeTempMesh(turn, grabbedMesh.material, landingSide, landingTex);
     } else {
@@ -396,6 +403,11 @@ export function createDragPageTurn({
       mesh?.geometry.dispose();
       mesh?.material.dispose();
     }
+    // A material's dispose leaves its map alone. Left undisposed, every
+    // turn's clone would keep its page's GPU upload alive for good, whatever
+    // happened to the page's own texture.
+    turn.landingTex?.dispose();
+    turn.landingTex = null;
     turn.group = null;
     turn.meshFront = null;
     turn.meshBack = null;

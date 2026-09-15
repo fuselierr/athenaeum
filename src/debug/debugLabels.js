@@ -109,11 +109,20 @@ export function createDebugLabels({ scene, camera, renderer, getPages }) {
     return out.applyMatrix4(mesh.matrixWorld);
   }
 
+  // Hidden, the labels need one render to take them off screen, and none
+  // after that: a CSS2D render walks the whole scene and recomputes every
+  // object's matrices, which every frame would be all cost and nothing shown.
+  let hiddenDrawn = false;
+
   function update() {
     if (!labelGroup.visible) {
-      cssRenderer.render(scene, camera);
+      if (!hiddenDrawn) {
+        cssRenderer.render(scene, camera);
+        hiddenDrawn = true;
+      }
       return;
     }
+    hiddenDrawn = false;
     const pages = getPages();
     if (pages) {
       // Spine ends: the hinge axis (world X) at the shared B/C anchor

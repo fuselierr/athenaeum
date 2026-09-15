@@ -234,13 +234,10 @@ export function createSpread(world, parent, opts) {
   let _refAngleOverride = null;
   function setRefAngleClamp(angle) { _refAngleOverride = angle; }
 
-  function updateCurlMesh() {
-    const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
-    // pseudoBody, not the real reference body -- see the comment above drop().
-    const refAngle = _refAngleOverride ?? pageAngle(pseudoBody);
+  function updateCurlMesh(curlAngle, refAngle, radius) {
     buildCurlStrip(
-      curlPositions, curlAnchorVec, pageAngle(curlBody), refAngle,
-      curlRadius(), PANEL_REACH, halfWidth,
+      curlPositions, curlAnchorVec, curlAngle, refAngle,
+      radius, PANEL_REACH, halfWidth,
     );
     curlGeo.attributes.position.needsUpdate = true;
     curlGeo.computeVertexNormals();
@@ -595,9 +592,40 @@ export function createSpread(world, parent, opts) {
     applyAirCushion();
     enforceNoCrossing();
   }
+  // What the curl and wedge were last built from. The curl is a pure function
+  // of its own angle, the angle it bends toward, its radius and its hinge; the
+  // wedge, of that curl and the flat page's pose. So when none of these has
+  // moved since the last frame -- a book lying at rest -- rebuilding them, their
+  // normals and their uploads would only reproduce what is already there.
+  const _builtFrom = new Float64Array(13).fill(NaN);
+  const _buildingFrom = new Float64Array(13);
+
   function sync() {
     syncMesh(flatMesh, curlPage === 'near' ? bodyFar : bodyNear);
-    updateCurlMesh();
+
+    const curlBody = curlPage === 'near' ? bodyNear : bodyFar;
+    const curlAngle = pageAngle(curlBody);
+    // pseudoBody, not the real reference body -- see the comment above drop().
+    const refAngle = _refAngleOverride ?? pageAngle(pseudoBody);
+    const radius = curlRadius();
+    const at = flatMesh.position;
+    const turn = flatMesh.quaternion;
+    const key = _buildingFrom;
+    key[0] = curlAngle; key[1] = refAngle; key[2] = radius;
+    key[3] = curlAnchorVec.x; key[4] = curlAnchorVec.y; key[5] = curlAnchorVec.z;
+    key[6] = at.x; key[7] = at.y; key[8] = at.z;
+    key[9] = turn.x; key[10] = turn.y; key[11] = turn.z; key[12] = turn.w;
+    let unchanged = true;
+    for (let i = 0; i < key.length; i++) {
+      if (key[i] !== _builtFrom[i]) {
+        unchanged = false;
+        break;
+      }
+    }
+    if (unchanged) return;
+    _builtFrom.set(key);
+
+    updateCurlMesh(curlAngle, refAngle, radius);
     updateWedge();
   }
 
