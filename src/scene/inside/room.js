@@ -79,6 +79,9 @@ const WINDOW_LIGHT_COLOR = 0xfff1d8;
  * @param {string} [opts.windowSide]  which wall it is cut into: '+x', '-x',
  *   '+z' or '-z'. The scene puts it at '+x': the bookshelf stands at -X, so
  *   that is the wall opposite it, and the one the desk is pushed against.
+ * @param {THREE.Material|null} [opts.wallMaterial]  what the walls are made of
+ *   -- the plywood (scene/inside/surfaces.js). Wall UVs are in metres, so its
+ *   textures should tile by the metre. Without one, a plain painted colour.
  * @param {{ side: string, along: number }|null} [opts.door]  a door, cut into
  *   wall `side` and centred on the WORLD coordinate `along` that wall (x for
  *   the ±z walls, z for the ±x ones), kept clear of the corners. Not in the
@@ -92,6 +95,7 @@ export function addRoom(scene, floor, {
   windowSide = '+z',
   sill = SILL_HEIGHT,
   door = null,
+  wallMaterial: suppliedWallMaterial = null,
 } = {}) {
   floor.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(floor);
@@ -103,7 +107,7 @@ export function addRoom(scene, floor, {
   group.name = 'room';
   scene.add(group);
 
-  const wallMaterial = new THREE.MeshStandardMaterial({
+  const wallMaterial = suppliedWallMaterial ?? new THREE.MeshStandardMaterial({
     color: WALL_COLOR, roughness: 0.94, metalness: 0, side: THREE.FrontSide,
   });
   const ceilingMaterial = new THREE.MeshStandardMaterial({

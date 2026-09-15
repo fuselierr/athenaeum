@@ -5,6 +5,7 @@ import { loadLamp } from './scene/inside/lamp.js';
 import { loadBookshelf } from './scene/inside/bookshelf.js';
 import { addFloor } from './scene/inside/floor.js';
 import { addRoom, WINDOW_SILL_PROJECTION } from './scene/inside/room.js';
+import { loadRoomSurfaces } from './scene/inside/surfaces.js';
 import { populateShelf } from './scene/inside/shelfBooks.js';
 import { addInstructionCard } from './scene/inside/instructionCard.js';
 import { createOutside } from './scene/outside/outside.js';
@@ -129,13 +130,15 @@ let bookCarry = null;
 // Loaded alongside the page simulation since none of the three waits on
 // the others.
 loadingScreen.status('Arranging the furniture…', 0.2, 0.45);
-const [pagesInstance, desk, lamp, bookshelf] = await Promise.all([
+const [pagesInstance, desk, lamp, bookshelf, surfaces] = await Promise.all([
   PageSimulation.create(bookGroup),
   loadDesk(scene),
   // Lamp stays its authored size; only its position follows the desk's
   // 1.5, so it keeps the same spot on a bigger surface.
   loadLamp(scene, { position: new THREE.Vector3(0.33, 0, -0.63) }),
   loadBookshelf(scene),
+  // The floorboards and the plywood walls (scene/inside/surfaces.js).
+  loadRoomSurfaces(),
 ]);
 
 // --- arrange the room -----------------------------------------------------
@@ -143,7 +146,7 @@ const [pagesInstance, desk, lamp, bookshelf] = await Promise.all([
 // between two models, and neither one can know the other's measurements at
 // its own load time. Measured, not hardcoded, so swapping either .glb (or
 // changing FURNITURE_SCALE) still lands them correctly.
-const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
+const GAP_BEHIND_DESK = 4.5; // metres of clear floor between desk and shelf
 // Clear floor past the furniture, on the two sides nothing backs onto.
 // Wider than the bare 0.4 the floor used to take, because it is now the
 // room you stand in as well as the ground the desk is on -- the walls land
@@ -151,7 +154,7 @@ const GAP_BEHIND_DESK = 3; // metres of clear floor between desk and shelf
 //
 // The other two sides get no margin at all: the shelf backs onto one and
 // the desk onto the other, which is what puts them against a wall.
-const ROOM_MARGIN = 1.1;
+const ROOM_MARGIN = 2.5;
 // How far a wall stops short of the furniture standing against it. Not a
 // gap -- surfaces that are exactly coplanar z-fight, and a centimetre is
 // under the threshold of anyone noticing while being well over the
@@ -163,9 +166,10 @@ const FURNITURE_WALL_CLEARANCE = 0.01;
 // worktop, which is where you want it when you are sitting at it.
 const SILL_ABOVE_DESK = 0.12;
 // Above the tallest thing in the room. A ceiling that only just clears the
-// bookshelf reads as an attic, hence the floor of 3 metres.
-const CEILING_CLEARANCE = 0.7;
-const MIN_CEILING_HEIGHT = 3;
+// bookshelf reads as an attic, hence a generous clearance and a floor of 4.5
+// metres.
+const CEILING_CLEARANCE = 1.8;
+const MIN_CEILING_HEIGHT = 4.5;
 
 // The room's inside, floor to ceiling and wall to wall. Filled in by the
 // block below once the walls exist, and handed to the book's physics, which
@@ -228,7 +232,7 @@ let outside = null;
   footprint.min.x = placedShelf.min.x - FURNITURE_WALL_CLEARANCE;
   footprint.max.x = deskBox.max.x + FURNITURE_WALL_CLEARANCE + WINDOW_SILL_PROJECTION;
 
-  const floor = addFloor(scene, footprint, { margin: 0 });
+  const floor = addFloor(scene, footprint, { margin: 0, material: surfaces.floor });
   // The floor IS the walkable area, so the first-person mode takes its
   // bounds from the mesh rather than recomputing them.
   const walkable = new THREE.Box3().setFromObject(floor);
@@ -249,6 +253,7 @@ let outside = null;
     // To the right of the desk as you sit at it, facing the window: the +Z
     // wall, level with the desk.
     door: { side: '+z', along: (deskBox.min.x + deskBox.max.x) / 2 },
+    wallMaterial: surfaces.walls,
   });
   outside = createOutside({
     scene,
