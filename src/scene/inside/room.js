@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * The room the desk is standing in: four walls, a ceiling, and a window.
+ * The room the desk is standing in: four walls, a ceiling, and its windows.
  *
  * BUILT ON THE FLOOR, literally. scene/inside/floor.js already sizes a slab from
  * whatever has to stand on it, and cameraModes walks you around inside that
@@ -79,6 +79,15 @@ const WINDOW_LIGHT_COLOR = 0xfff1d8;
  * @param {string} [opts.windowSide]  which wall it is cut into: '+x', '-x',
  *   '+z' or '-z'. The scene puts it at '+x': the bookshelf stands at -X, so
  *   that is the wall opposite it, and the one the desk is pushed against.
+ * @param {Array<{ side: string, sill?: number, focus?: THREE.Vector3,
+ *   width?: number, maxWidth?: number, columns?: number, rows?: number,
+ *   light?: number, shadows?: boolean }>|null} [opts.windows]  more than one
+ *   window: one entry a wall, the first being the one `window` in the result
+ *   refers to. `width` is the fraction of its wall the opening takes, `light`
+ *   the brightness of the daylight through it (0 for none), and `shadows`
+ *   whether that daylight casts -- worth turning off on a second one, which
+ *   would double the shadow map otherwise. Without this, the single window
+ *   that `windowSide` and `sill` describe.
  * @param {THREE.Material|null} [opts.wallMaterial]  what the walls are made of
  *   -- the plywood (scene/inside/surfaces.js). Wall UVs are in metres, so its
  *   textures should tile by the metre. Without one, a plain painted colour.
@@ -94,6 +103,7 @@ export function addRoom(scene, floor, {
   focus = new THREE.Vector3(),
   windowSide = '+z',
   sill = SILL_HEIGHT,
+  windows = null,
   door = null,
   wallMaterial: suppliedWallMaterial = null,
 } = {}) {
@@ -125,37 +135,57 @@ export function addRoom(scene, floor, {
     '-z': { at: [middle.x, box.min.z], inward: [0, 1], span: size.x, axis: 'x', sign: 1 },
   };
 
-  // --- the window's opening, in the chosen wall's own coordinates --------
-  const chosen = plans[windowSide] ? windowSide : '+z';
-  const chosenPlan = plans[chosen];
-  const windowWidth = Math.min(MAX_WINDOW_WIDTH, chosenPlan.span * WINDOW_WIDTH_FRACTION);
-  const head = Math.max(sill + 0.6, height - HEAD_CLEARANCE);
+  // --- the windows, each in its own wall's coordinates -------------------
+  // One unless the caller asked for more; `windows` is the same thing spelled
+  // out, and a wall takes at most one of them.
+  const asked = windows?.length ? windows : [{ side: windowSide, sill, focus }];
+  const openings = {}; // by wall, for cutting the hole in it
+  const built = [];
+  for (const want of asked) {
+    const id = plans[want.side] ? want.side : '+z';
+    if (openings[id]) continue;
+    const plan = plans[id];
+    const width = Math.min(
+      want.maxWidth ?? MAX_WINDOW_WIDTH,
+      plan.span * (want.width ?? WINDOW_WIDTH_FRACTION),
+    );
+    const bottom = want.sill ?? sill;
+    const head = Math.max(bottom + 0.6, height - HEAD_CLEARANCE);
+    const towards = want.focus ?? focus;
 
-  // Centred on the desk, but kept clear of the corners -- a window that
-  // runs into the return of a wall looks like a mistake, not a window.
-  const wallCentre = chosenPlan.axis === 'x' ? middle.x : middle.z;
-  const limit = Math.max(0, chosenPlan.span / 2 - windowWidth / 2 - FRAME_WIDTH - 0.25);
-  const offset = THREE.MathUtils.clamp(
-    chosenPlan.sign * (focus[chosenPlan.axis] - wallCentre), -limit, limit,
-  );
+    // Centred on what it is beside, but kept clear of the corners -- a window
+    // that runs into the return of a wall looks like a mistake, not a window.
+    const wallCentre = plan.axis === 'x' ? middle.x : middle.z;
+    const limit = Math.max(0, plan.span / 2 - width / 2 - FRAME_WIDTH - 0.25);
+    const offset = THREE.MathUtils.clamp(
+      plan.sign * (towards[plan.axis] - wallCentre), -limit, limit,
+    );
+    const opening = { left: offset - width / 2, right: offset + width / 2, sill: bottom, head };
 
-  const opening = {
-    left: offset - windowWidth / 2,
-    right: offset + windowWidth / 2,
-    sill,
-    head,
-  };
+    // The middle of the glass, in WORLD space, for anything outside this file
+    // that wants to look out of it. `opening` is in the wall's own
+    // coordinates; undoing the offset's sign gives back the world position
+    // along the wall, and the plan's `at` supplies the wall's other one.
+    const along = wallCentre + plan.sign * offset;
+    const centre = new THREE.Vector3(
+      plan.axis === 'x' ? along : plan.at[0],
+      floorY + (bottom + head) / 2,
+      plan.axis === 'z' ? along : plan.at[1],
+    );
 
-  // The middle of the glass, in WORLD space, for anything outside this file
-  // that wants to look out of it. `opening` above is in the wall's own
-  // coordinates; undoing the offset's sign gives back the world position
-  // along the wall, and the plan's `at` supplies the wall's other one.
-  const along = wallCentre + chosenPlan.sign * offset;
-  const windowCentre = new THREE.Vector3(
-    chosenPlan.axis === 'x' ? along : chosenPlan.at[0],
-    floorY + (sill + head) / 2,
-    chosenPlan.axis === 'z' ? along : chosenPlan.at[1],
-  );
+    openings[id] = opening;
+    built.push({
+      id,
+      plan,
+      opening,
+      focus: towards,
+      columns: want.columns ?? PANE_COLUMNS,
+      rows: want.rows ?? PANE_ROWS,
+      intensity: want.light ?? WINDOW_LIGHT_INTENSITY,
+      shadows: want.shadows ?? true,
+      described: { side: id, ...opening, width, centre },
+    });
+  }
 
   // --- the door's opening, the same way ---------------------------------
   const doorSide = door && plans[door.side] ? door.side : null;
@@ -179,7 +209,7 @@ export function addRoom(scene, floor, {
       wallGeometry(
         plan.span,
         height,
-        id === chosen ? opening : null,
+        openings[id] ?? null,
         id === doorSide ? doorOpening : null,
       ),
       wallMaterial,
@@ -214,8 +244,9 @@ export function addRoom(scene, floor, {
   // Built as children of its own wall, so all of it is placed in the wall's
   // local frame -- x along the wall, y up, +z into the room -- and none of
   // it has to know which way that wall ended up facing.
-  const frame = buildWindowFrame(opening);
-  walls[chosen].add(frame);
+  for (const pane of built) {
+    walls[pane.id].add(buildWindowFrame(pane.opening, pane.columns, pane.rows));
+  }
 
   // The door, likewise a child of its wall -- so it goes with the wall when
   // the walls are hidden.
@@ -228,16 +259,24 @@ export function addRoom(scene, floor, {
   // light would be aimed from there.
   group.updateMatrixWorld(true);
 
-  const light = WINDOW_LIGHT_INTENSITY > 0
-    ? addWindowLight(scene, group, walls[chosen], opening, plans[chosen], focus)
-    : null;
+  // Daylight through each of them: the room is lit by what it can see out of.
+  const lights = built
+    .map((pane) => (pane.intensity > 0
+      ? addWindowLight(
+        scene, group, walls[pane.id], pane.opening, pane.plan,
+        pane.focus, pane.intensity, pane.shadows,
+      )
+      : null))
+    .filter(Boolean);
 
   return {
     group,
     walls,
     ceiling,
-    light,
-    window: { side: chosen, ...opening, width: windowWidth, centre: windowCentre },
+    light: lights[0] ?? null,
+    lights,
+    window: built[0].described,
+    windows: built.map((pane) => pane.described),
     door: doorGroup,
 
     /**
@@ -296,7 +335,7 @@ function wallGeometry(span, height, opening, door = null) {
 }
 
 /** Casing, sill, glazing bars and a pane of glass, in wall-local space. */
-function buildWindowFrame(opening) {
+function buildWindowFrame(opening, columns = PANE_COLUMNS, rows = PANE_ROWS) {
   const group = new THREE.Group();
   group.name = 'window';
 
@@ -332,13 +371,13 @@ function buildWindowFrame(opening) {
   piece(width + FRAME_WIDTH * 2, FRAME_WIDTH, WINDOW_SILL_PROJECTION,
     centreX, opening.sill - FRAME_WIDTH / 2, WINDOW_SILL_PROJECTION / 2, 'sill');
 
-  for (let i = 1; i < PANE_COLUMNS; i++) {
+  for (let i = 1; i < columns; i++) {
     piece(MULLION_WIDTH, height, MULLION_WIDTH,
-      opening.left + (width * i) / PANE_COLUMNS, centreY, MULLION_WIDTH / 2, `mullion${i}`);
+      opening.left + (width * i) / columns, centreY, MULLION_WIDTH / 2, `mullion${i}`);
   }
-  for (let j = 1; j < PANE_ROWS; j++) {
+  for (let j = 1; j < rows; j++) {
     piece(width, MULLION_WIDTH, MULLION_WIDTH,
-      centreX, opening.sill + (height * j) / PANE_ROWS, MULLION_WIDTH / 2, `transom${j}`);
+      centreX, opening.sill + (height * j) / rows, MULLION_WIDTH / 2, `transom${j}`);
   }
 
   // Glass, as a suggestion rather than a simulation: barely opaque, smooth
@@ -417,8 +456,11 @@ function buildDoor(opening) {
  * room. Its shadow camera is sized to the room rather than left at the
  * default, which would spend its whole depth range on empty air.
  */
-function addWindowLight(scene, group, wall, opening, plan, focus) {
-  const light = new THREE.DirectionalLight(WINDOW_LIGHT_COLOR, WINDOW_LIGHT_INTENSITY);
+function addWindowLight(
+  scene, group, wall, opening, plan, focus,
+  intensity = WINDOW_LIGHT_INTENSITY, shadows = true,
+) {
+  const light = new THREE.DirectionalLight(WINDOW_LIGHT_COLOR, intensity);
   light.name = 'daylight';
 
   const centre = wall.localToWorld(new THREE.Vector3(
@@ -434,7 +476,7 @@ function addWindowLight(scene, group, wall, opening, plan, focus) {
   light.target.position.copy(focus);
   scene.add(light.target);
 
-  light.castShadow = true;
+  light.castShadow = shadows;
   light.shadow.mapSize.set(2048, 2048);
   const reach = 5;
   light.shadow.camera.left = -reach;

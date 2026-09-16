@@ -7,6 +7,7 @@ import { addFloor } from './scene/inside/floor.js';
 import { addRoom, WINDOW_SILL_PROJECTION } from './scene/inside/room.js';
 import { loadRoomSurfaces } from './scene/inside/surfaces.js';
 import { loadSofa } from './scene/inside/sofa.js';
+import { addMezzanine } from './scene/inside/mezzanine.js';
 import { populateShelf } from './scene/inside/shelfBooks.js';
 import { addInstructionCard } from './scene/inside/instructionCard.js';
 import { createOutside } from './scene/outside/outside.js';
@@ -34,6 +35,7 @@ import { createDebugLabels } from './debug/debugLabels.js';
 import { createAnglePanel } from './debug/anglePanel.js';
 import { createOutdoorPanel } from './debug/outdoorPanel.js';
 import { createFpsCounter } from './debug/fpsCounter.js';
+import { createFacingPanel } from './debug/facingPanel.js';
 import { initBookLoader, openLibraryBook, uploadBook } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
 import './ui/theme.css'; // the interface's colours, for every panel
@@ -176,6 +178,9 @@ const FURNITURE_WALL_CLEARANCE = 0.01;
 // behind it -- this is what keeps the whole window visible above the
 // worktop, which is where you want it when you are sitting at it.
 const SILL_ABOVE_DESK = 0.08;
+// The back wall's window sits low: nothing stands against that wall -- the
+// stair climbs across it (scene/inside/mezzanine.js).
+const BACK_WINDOW_SILL = 0.5;
 // Above the tallest thing in the room. A ceiling that only just clears the
 // bookshelf reads as an attic, so give the room a bit more breathing room.
 const CEILING_CLEARANCE = 1.6;
@@ -191,6 +196,11 @@ let instructionCard = null;
 // The door out, and what is beyond it (scene/outside/outside.js). Set in the block
 // below, once the room exists.
 let outside = null;
+// The balcony and its stair (scene/inside/mezzanine.js), and the ground they
+// make of the room: floor, stair and deck in one. Indoors walks on that the way
+// outside walks on the terrain, so coming back in has to put it back.
+let mezzanine = null;
+let indoorGround = null;
 {
   const deskBox = new THREE.Box3().setFromObject(desk.object);
 
@@ -264,16 +274,50 @@ let outside = null;
   const shell = addRoom(scene, floor, {
     height: Math.max(MIN_CEILING_HEIGHT, room.max.y - room.min.y + CEILING_CLEARANCE),
     focus: deskBox.getCenter(new THREE.Vector3()),
-    windowSide: '+x',
-    // Measured from the floor, which is not y = 0: the desk's TOP is the
-    // origin here, and the furniture is scaled, so the drop to the floor is
-    // whatever the model says it is rather than a number written down.
-    sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK,
+    windows: [
+      // The one the desk is pushed up against. Its sill is measured from the
+      // floor, which is not y = 0: the desk's TOP is the origin here, and the
+      // furniture is scaled, so the drop to the floor is whatever the model
+      // says it is rather than a number written down.
+      { side: '+x', sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK },
+      // And a tall one filling the back wall, which the stair climbs across
+      // and the balcony looks along. Its daylight does not cast: a second
+      // shadow map, for a light raking the back of the room, is not worth the
+      // frame it costs.
+      {
+        side: '-z',
+        sill: BACK_WINDOW_SILL,
+        width: 0.78,
+        maxWidth: 5.6,
+        columns: 4,
+        rows: 4,
+        focus: new THREE.Vector3(roomMiddle.x, walkable.min.y + 1.2, roomMiddle.z),
+        light: 0.8,
+        shadows: false,
+      },
+    ],
     // To the right of the desk as you sit at it, facing the window: the +Z
     // wall, level with the desk.
     door: { side: '+z', along: (deskBox.min.x + deskBox.max.x) / 2 },
     wallMaterial: surfaces.walls,
   });
+  // The balcony and the stair up to it: the flight climbs away from the back
+  // wall toward the shelves, turning left onto a deck that runs to the door
+  // wall and then back along it over the door. Built here because it is
+  // measured off the room's own floor, ceiling, shelf and doorway.
+  mezzanine = addMezzanine(scene, {
+    camera,
+    floorBox: walkable,
+    ceilingY: shell.ceiling.getWorldPosition(new THREE.Vector3()).y,
+    shelfBox: placedShelf,
+    doorBox: new THREE.Box3().setFromObject(shell.door),
+    deckMaterial: surfaces.floor,
+  });
+  // The room is uneven ground now, so walking asks how high it is underfoot --
+  // the same way it does outside.
+  indoorGround = mezzanine.ground;
+  cameraModes.setGround(indoorGround);
+
   outside = createOutside({
     scene,
     camera,
@@ -287,13 +331,15 @@ let outside = null;
       lamp,
       bookshelf,
       sofa.object,
+      mezzanine.group,
       instructionCard.group,
       scene.getObjectByName('roomFill'),
     ].filter(Boolean),
     // It comes outside with you only in your hand.
     book: { object: bookGroup, isCarried: () => Boolean(bookCarry?.carrying) },
-    // Outside, you walk on the terrain rather than the room's floor.
-    setGround: (ground) => cameraModes.setGround(ground),
+    // Outside, you walk on the terrain rather than the room's floor -- and
+    // coming back in, on the room's own floor, stair and balcony again.
+    setGround: (ground) => cameraModes.setGround(ground ?? indoorGround),
     // Sitting or lying down (X), for the grass to part round you.
     lying: () => cameraModes.lying,
     // Right-clicking the bench.
@@ -416,7 +462,11 @@ const getPages = () => pages;
 // driven by the body when the book is loose, and copied INTO the body while
 // a gesture is holding it (see bookManipulator's `grabbed`).
 const placement = await createBookPlacement({
-  bookGroup, getPages, desk, room: roomInterior, obstacles: sofa.collision,
+  bookGroup,
+  getPages,
+  desk,
+  room: roomInterior,
+  obstacles: [...sofa.collision, ...(mezzanine?.collision ?? [])],
 });
 
 const content = createBookContent(getPages);
@@ -450,6 +500,9 @@ const anglePanel = createAnglePanel({ getPages, getPageTurn: () => dragPageTurn 
 // Outdoor lighting switches and sliders, in the same ` overlay -- outside only.
 const outdoorPanel = createOutdoorPanel({ getOutside: () => outside, renderer, scene });
 const fpsCounter = createFpsCounter(); // also in the ` overlay
+// Which way you are looking and where you are standing -- for placing things
+// in the room by eye and then writing the numbers down.
+const facingPanel = createFacingPanel({ camera });
 
 // VR (WebXR): a rig carrying the camera and both controllers, and everything
 // they do -- walking, turning, holding books, turning pages, the menu. Idle
@@ -903,6 +956,7 @@ renderer.setAnimationLoop(() => {
   anglePanel.update();
   outdoorPanel.update(anglePanel.visible);
   fpsCounter.update(anglePanel.visible);
+  facingPanel.update(anglePanel.visible);
 });
 
 if (import.meta.env.DEV) {
