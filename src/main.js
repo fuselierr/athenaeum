@@ -596,6 +596,31 @@ async function takeFreshCopy() {
   return book;
 }
 
+/**
+ * The copy an open is loading into while it loads: { token, copy, focusWas }.
+ *
+ * An open can be abandoned after its copy exists -- Escape, or another book
+ * taken down over this one -- and an abandoned open has to take its copy with
+ * it. Otherwise pressing Escape on a book still converting leaves a blank one
+ * lying on the desk, which is not a book anybody asked for.
+ */
+let loading = null;
+
+/** Give up the copy an abandoned or failed open had made. */
+function discardLoading(token) {
+  if (!loading || loading.token !== token) return;
+  const { copy, focusWas } = loading;
+  loading = null;
+  const at = books.indexOf(copy);
+  if (at >= 0) books.splice(at, 1);
+  // Back to the book that was in your hands before this one was started.
+  if (focused === copy) {
+    const back = books.includes(focusWas) ? focusWas : books[books.length - 1];
+    if (back) focusOn(back);
+  }
+  copy.dispose();
+}
+
 focusOn(await addBook());
 // Constructed BEFORE dragPageTurn on purpose: both listen for pointerdown
 // in the capture phase on the same canvas, and capture-phase listeners on
@@ -746,12 +771,22 @@ async function openFromShelf(record) {
         // A copy of its own, taken the moment its shape is known: the book you
         // were reading stays readable until this one is ready to take its place
         // in your hands, and then stays in the room rather than being reused.
-        await takeFreshCopy();
-        if (token !== openSequence) return;
+        // Held on to while it loads, so that giving up on this book gives up
+        // the copy with it (discardLoading).
+        const focusWas = focused;
+        loading = { token, copy: await takeFreshCopy(), focusWas };
+        if (token !== openSequence) {
+          discardLoading(token);
+          return;
+        }
         await applyPdfDimensions(widthPts, heightPts, pageCount);
+        if (token !== openSequence) discardLoading(token);
       },
       onPagesReady: (canvases) => {
         if (token !== openSequence) return; // put back while it was rendering
+        // It has arrived: from here it is one of the room's books, and giving
+        // up on it later is no longer this open's business.
+        loading = null;
         content.setCanvases(canvases);
         swapModelForBook();
       },
@@ -760,6 +795,9 @@ async function openFromShelf(record) {
     console.error('Opening a shelf book failed:', err);
     setBookStatus(`Error: ${err.message}`);
   } finally {
+    // Abandoned, or failed part way: the copy this open made goes too. Nothing
+    // to do when it arrived -- onPagesReady let go of it.
+    discardLoading(token);
     if (token === openSequence) bookState.loading = false;
   }
 }
@@ -874,8 +912,14 @@ function swapModelForBook() {
   });
   if (!home) return;
   bookCarry.takeFrom(home, (arrived) => {
+    // Flown back into its own slot: the shelf takes its copy back, and the real
+    // book goes to the desk. Let go of ANYWHERE ELSE -- dropped, or dropped
+    // because another book was picked up -- and it has left the shelf: it is
+    // out in the room now (book/bookInstance.js), and the gap it left stays a
+    // gap rather than the shelf quietly growing a second copy of it.
+    if (!arrived) return;
     home.takeBack();
-    if (arrived) stowBook();
+    stowBook();
   });
   if (hand) bookCarry.holdIn(hand);
 }
