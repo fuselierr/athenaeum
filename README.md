@@ -10,6 +10,11 @@ I've used a few ebook readers in the 2 decades I've spent alive. One thing kept 
 
 <img width="1299" height="769" alt="Screenshot 2026-09-09 175649" src="https://github.com/user-attachments/assets/4382e9e4-8d42-49c4-9a6b-0ababd104988" />
 
+<img width="1598" height="800" alt="Screenshot 2026-09-15 224415" src="https://github.com/user-attachments/assets/a7ab6639-1d3b-4b2f-a9c8-67258c52811f" />
+
+<img width="1838" height="807" alt="Screenshot 2026-09-15 224908" src="https://github.com/user-attachments/assets/a511e032-4982-4cf9-9abb-0aa66d8e9566" />
+
+
 ## What it currently does
 
 ### The book
