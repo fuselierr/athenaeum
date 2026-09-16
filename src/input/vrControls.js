@@ -183,6 +183,8 @@ export function createVRControls({
       previous: [], // each button's pressed state last frame
       action: null, // 'hold' | 'page' | 'cover' | 'menu' while the grip is closed on something
       menuHold: null, // where the menu panel sits in this hand, while it carries it
+      scrolling: null, // the part of the menu this hand's stick is scrolling
+      scrollLeftOver: 0, // the fraction of a pixel it could not scroll yet (scrollMenu)
       snapArmed: true,
       pointingAtMenu: false,
     };
@@ -544,6 +546,51 @@ export function createVRControls({
   });
 
   /**
+   * The part of the menu under a point on the panel that can be scrolled. The
+   * panel is a picture of a page that is still laid out on screen, so the page
+   * itself is asked what is at that point -- which finds a tab's own list as
+   * readily as the menu's body, the body being the fallback.
+   */
+  function scrollerUnder(uv) {
+    const rect = panel.element.getBoundingClientRect();
+    const x = rect.left + uv.x * rect.width;
+    const y = rect.top + (1 - uv.y) * rect.height;
+    for (let node = document.elementFromPoint(x, y);
+      node && panel.element.contains(node);
+      node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1) return node;
+    }
+    return panel.element.querySelector('.menu-body');
+  }
+
+  /**
+   * Scroll the menu under a hand by `by` pixels, and say whether it moved.
+   *
+   * A browser keeps scrollTop in WHOLE pixels, so whatever is left over is
+   * carried to the next frame: without that, a gentle push -- less than a
+   * pixel in a frame -- rounds away to nothing every frame and the menu never
+   * moves at all. Kept per hand, and dropped when the pointer moves to another
+   * list, so a leftover from one cannot jump another.
+   */
+  function scrollMenu(hand, uv, by) {
+    const scroller = scrollerUnder(uv);
+    if (!scroller) return false;
+    if (hand.scrolling !== scroller) {
+      hand.scrolling = scroller;
+      hand.scrollLeftOver = 0;
+    }
+    const limit = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const before = scroller.scrollTop;
+    const wanted = THREE.MathUtils.clamp(before + by + hand.scrollLeftOver, 0, limit);
+    scroller.scrollTop = wanted;
+    // What the rounding swallowed, for the next frame. Never more than a
+    // pixel: at the top or the bottom there is nowhere for it to go.
+    hand.scrollLeftOver = THREE.MathUtils.clamp(wanted - scroller.scrollTop, -1, 1);
+    return scroller.scrollTop !== before;
+  }
+
+  /**
    * The menu panel each frame: kept the size the menu is, redrawn after a
    * press, the lasers, and scrolling with the stick of a hand pointing at it.
    */
@@ -586,12 +633,11 @@ export function createVRControls({
       hand.pointingAtMenu = Boolean(hit);
       // The laser lives in the controller's space, which the rig scales.
       hand.laser.scale.z = (hit ? hit.distance : reach(LASER_LENGTH)) / rig.scale.x;
+      if (!hit) hand.scrolling = null;
       const scroll = hit ? stick(hand).y : 0;
-      const body = scroll ? panel.element.querySelector('.menu-body') : null;
-      if (body) {
-        body.scrollTop += scroll * MENU_SCROLL_SPEED * dt;
-        redrawPending = true;
-      }
+      // Scrolling changes nothing the panel's own observer watches, so a
+      // scroll that moved asks for the redraw itself (below).
+      if (scroll && scrollMenu(hand, hit.uv, scroll * MENU_SCROLL_SPEED * dt)) redrawPending = true;
     }
     // Scrolling changes nothing the panel's own observer watches, so it is
     // redrawn by hand -- a few times a second, not every frame.
