@@ -105,9 +105,13 @@ function ease(t) {
  *   -- not while a shelf model has the hand
  */
 export function createBookCarry({
-  scene, bookGroup, camera, renderer, getPages, placement,
+  scene, getGroup, camera, renderer, getPages, getPlacement,
   canTake = () => true,
 }) {
+  // The book being carried, and the body under it. Read through getters rather
+  // than captured: several books can be out at once and the one in your hands
+  // changes (book/bookInstance.js).
+  const group = () => getGroup();
   let held = false; // in the hand, or on the way there
   let returning = false; // on the way home
   let travel = 1; // 0..1 through the current trip
@@ -157,7 +161,7 @@ export function createBookCarry({
   }
 
   function partOfBook(object) {
-    for (let o = object; o; o = o.parent) if (o === bookGroup) return true;
+    for (let o = object; o; o = o.parent) if (o === group()) return true;
     return false;
   }
 
@@ -188,8 +192,8 @@ export function createBookCarry({
     // Lying where it lies, that is its home. Caught on its way back, it
     // keeps the home it was going to, and the way it was being held.
     if (!returning) {
-      homePosition.copy(bookGroup.position);
-      homeQuaternion.copy(bookGroup.quaternion);
+      homePosition.copy(group().position);
+      homeQuaternion.copy(group().quaternion);
       onReturn = null;
       resetAdjustments();
     }
@@ -201,8 +205,8 @@ export function createBookCarry({
 
   /** A new trip starts from wherever the book is now. */
   function startTrip() {
-    fromPosition.copy(bookGroup.position);
-    fromQuaternion.copy(bookGroup.quaternion);
+    fromPosition.copy(group().position);
+    fromQuaternion.copy(group().quaternion);
     travel = 0;
   }
 
@@ -219,8 +223,8 @@ export function createBookCarry({
   function holdWith(object) {
     hand = object;
     object.updateWorldMatrix(true, false);
-    bookGroup.updateWorldMatrix(true, false);
-    handOffset.copy(object.matrixWorld).invert().multiply(bookGroup.matrixWorld);
+    group().updateWorldMatrix(true, false);
+    handOffset.copy(object.matrixWorld).invert().multiply(group().matrixWorld);
     travel = 1; // already in the hand: no trip to make
   }
 
@@ -243,7 +247,7 @@ export function createBookCarry({
       return;
     }
     const frame = getPages().readingFrame(_targetCentre);
-    const scale = bookGroup.scale.x;
+    const scale = group().scale.x;
     const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
     const targetDistance = Math.max(
       (frame.height * scale) / (HOLD_FILL * 2 * tanHalf),
@@ -304,8 +308,8 @@ export function createBookCarry({
       // As a click: lying where it lies, that is its home; caught on its way
       // back, it keeps the home it was going to.
       if (!returning) {
-        homePosition.copy(bookGroup.position);
-        homeQuaternion.copy(bookGroup.quaternion);
+        homePosition.copy(group().position);
+        homeQuaternion.copy(group().quaternion);
         onReturn = null;
         resetAdjustments();
       }
@@ -434,18 +438,18 @@ export function createBookCarry({
       const t = ease(travel);
       if (held) {
         readHandPose(dt);
-        bookGroup.position.lerpVectors(fromPosition, _handPosition, t);
-        bookGroup.quaternion.slerpQuaternions(fromQuaternion, _handQuaternion, t);
+        group().position.lerpVectors(fromPosition, _handPosition, t);
+        group().quaternion.slerpQuaternions(fromQuaternion, _handQuaternion, t);
         return;
       }
 
-      bookGroup.position.lerpVectors(fromPosition, homePosition, t);
-      bookGroup.quaternion.slerpQuaternions(fromQuaternion, homeQuaternion, t);
+      group().position.lerpVectors(fromPosition, homePosition, t);
+      group().quaternion.slerpQuaternions(fromQuaternion, homeQuaternion, t);
       if (travel === 1) {
         // Home. Handed back to physics at rest, rather than carrying away
         // whatever speed the last frame of the trip happened to measure --
         // and then to whoever the home belongs to.
-        placement.reset(homePosition, homeQuaternion);
+        getPlacement().reset(homePosition, homeQuaternion);
         endCarry(true);
       }
     },

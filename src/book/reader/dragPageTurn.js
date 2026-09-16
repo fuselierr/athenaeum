@@ -65,7 +65,7 @@ import {
  * leaf's faces are N+1 and N+2, and N+3 is revealed underneath it.
  */
 export function createDragPageTurn({
-  getPages, camera, renderer, controls, content, onPageTurnSound,
+  getPages, camera, renderer, controls, getContent, onPageTurnSound,
 }) {
   const dom = renderer.domElement;
   const raycaster = new THREE.Raycaster();
@@ -345,14 +345,14 @@ export function createDragPageTurn({
     let landingTexture;
     let underneathTexture;
     if (commitNow) {
-      const advanced = content.advanceTurn(panel);
+      const advanced = getContent().advanceTurn(panel);
       landingTexture = advanced.landing;
       underneathTexture = advanced.underneath;
       turn.landingPanel = advanced.landingPanel;
       turn.pendingLanding = advanced.landing;
     } else {
-      landingTexture = content.landingTexture(panel);
-      underneathTexture = content.underneathTexture(panel);
+      landingTexture = getContent().landingTexture(panel);
+      underneathTexture = getContent().underneathTexture(panel);
     }
     turn.hasTurnTextures = !!landingTexture;
 
@@ -425,7 +425,7 @@ export function createDragPageTurn({
       }
     } else {
       if (committed && turn.hasTurnTextures) {
-        content.commitTurn(turn.panel);
+        getContent().commitTurn(turn.panel);
       } else if (pages && turn.originalTexture) {
         // Cancelled (or nothing was available to turn to) -- put the real
         // panel back exactly how it looked before the drag.
@@ -461,7 +461,7 @@ export function createDragPageTurn({
   function playTurn(panel) {
     if (dragTurn) return false; // don't stack turns onto a page being held
     const pages = getPages();
-    if (!pages || !content.canTurn(panel)) return false;
+    if (!pages || !getContent().canTurn(panel)) return false;
 
     createTurn(panel, pages, { commitNow: true });
     onPageTurnSound?.();
@@ -494,7 +494,7 @@ export function createDragPageTurn({
   function grabPage(panel, worldPoint) {
     if (dragTurn || pendingPress || turns.length > 0) return false;
     const pages = getPages();
-    if (!pages || !content.canTurn(panel)) return false;
+    if (!pages || !getContent().canTurn(panel)) return false;
     const turn = createTurn(panel, pages, { commitNow: false });
     turn.byHand = true;
     turn.handLast = handAngle(pages, worldPoint);
@@ -555,7 +555,7 @@ export function createDragPageTurn({
 
     const hitMesh = hits[0].object;
     const panel = hitMesh === pages.pageMeshes.B ? 'B' : 'C';
-    if (!content.canTurn(panel)) return; // already at the front/back cover on that side
+    if (!getContent().canTurn(panel)) return; // already at the front/back cover on that side
 
     // Screen-space pivot the drag's angular sweep is measured around --
     // the shared hinge, projected. Pointer-only: a turn that plays itself
@@ -592,7 +592,7 @@ export function createDragPageTurn({
     // Anything could have happened while the button was held still: a
     // keyboard turn started, the book was rebuilt, the end of the book
     // reached.
-    if (!pages || turns.length > 0 || !content.canTurn(press.panel)) {
+    if (!pages || turns.length > 0 || !getContent().canTurn(press.panel)) {
       controls.enabled = true;
       return;
     }

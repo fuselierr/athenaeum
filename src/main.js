@@ -12,16 +12,14 @@ import { addWallShelf } from './scene/inside/wallShelf.js';
 import { populateShelf } from './scene/inside/shelfBooks.js';
 import { addInstructionCard } from './scene/inside/instructionCard.js';
 import { createOutside } from './scene/outside/outside.js';
-import { PageSimulation } from './book/pageSim/PageSimulation.js';
-import { createBookPlacement } from './book/placement/bookPlacement.js';
+import { createBookInstance } from './book/bookInstance.js';
+import { install as focusBookConfig, capture as captureBookConfig }
+  from './book/pageSim/bookContext.js';
 import {
-  setPageDimensions, setSpineGap, spineGapForPageCount,
   setSpineRotation, SPINE_ROTATION, PANEL_REACH as INITIAL_PANEL_REACH,
   HINGE_LEN,
 } from './book/pageSim/config.js';
-import { updateLocalCorners } from './book/pageSim/math.js';
-import { BOOK_WORLD_SCALE } from './scene/worldScale.js';
-import { createBookContent, RIGHT_HAND_PANEL, LEFT_HAND_PANEL } from './book/reader/bookContent.js';
+import { RIGHT_HAND_PANEL, LEFT_HAND_PANEL } from './book/reader/bookContent.js';
 import { createDragCover } from './book/reader/dragCover.js';
 import { createBookOpening } from './book/reader/bookOpening.js';
 import { createDragPageTurn } from './book/reader/dragPageTurn.js';
@@ -97,6 +95,9 @@ const cameraModes = createCameraModes({
     // The book before the shelf: the shelf tests only its own books and
     // ignores what is in front of them, so a click on the book in your hand
     // would otherwise take down whichever shelf book is behind it.
+    // Whichever book was clicked is the one this is about, so a click on any
+    // of them takes THAT one up rather than the last one read.
+    focusBookUnder(event);
     if (bookCarry?.handleClick(event)) return;
     // Outside, the shelf and the desk are not there to click -- the shelf's
     // own test does not know its books are hidden, and the desk's would set
@@ -118,21 +119,82 @@ const cameraModes = createCameraModes({
   },
 });
 
-// The book hangs under its own group rather than directly under `scene` so
-// it can be rotated and slid as a whole (see input/bookManipulator.js)
-// without touching PageSimulation.root's own render flip or any physics
-// coordinates -- purely an outer, render-only transform.
-const bookGroup = new THREE.Group();
-// The book's page simulation is authored at its own working scale; this is
-// what brings it down to the metric world the desk and lamp live in. See
-// scene/worldScale.js for why it is a group scale and not smaller
-// constants. Everything under here -- meshes, raycasts, the hinge points
-// dragCover/dragPageTurn read through root.matrixWorld -- follows it for
-// free; the one thing that does not is the placement physics, which is
-// told the scale explicitly.
-bookGroup.scale.setScalar(BOOK_WORLD_SCALE);
-bookGroup.position.set(0, 0.02, 0); // 2 cm above the desk, so it settles rather than starting flush
-scene.add(bookGroup);
+// THE BOOKS IN THE ROOM. Several at once, each its own size, its own physics
+// and its own pages (book/bookInstance.js) -- you hold one of them, and the
+// rest lie where they were left, still settling on the desk.
+//
+// Everything the reader does with their hands works on the book IN FOCUS, so
+// these are `let`: focusOn() swaps them when another book comes off the shelf,
+// and every handler below goes on reading `pages`, `content`, `placement` and
+// `bookGroup` without knowing that happened.
+const books = [];
+// Past a handful, each copy is a physics world and a set of page textures, so
+// the oldest one nobody is holding is let go of instead.
+const MAX_BOOKS = 4;
+let focused = null;
+let pages = null;
+let content = null;
+let placement = null;
+let bookGroup = null;
+const getPages = () => pages;
+const getContent = () => content;
+
+const _pickRay = new THREE.Raycaster();
+const _pickNdc = new THREE.Vector2();
+
+/** Is an object drawn -- itself and everything it hangs under? */
+function shownInScene(object) {
+  for (let o = object; o; o = o.parent) if (!o.visible) return false;
+  return true;
+}
+
+/**
+ * The book under the pointer, or null.
+ *
+ * The whole scene is tested rather than the books alone, so something in front
+ * of one -- the lamp, the instruction card, another book -- keeps the press;
+ * and hidden things are skipped, because raycasting ignores `visible` and the
+ * walls you have switched off would otherwise be in the way.
+ */
+function bookUnderPointer(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  _pickNdc.set(
+    ((clientX - rect.left) / rect.width) * 2 - 1,
+    -((clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  _pickRay.setFromCamera(_pickNdc, camera);
+  const nearest = _pickRay.intersectObject(scene, true).find((hit) => shownInScene(hit.object));
+  for (let o = nearest?.object; o; o = o.parent) {
+    const book = books.find((one) => one.group === o);
+    if (book) return book;
+  }
+  return null;
+}
+
+/**
+ * The book a gesture landed on, brought into focus: a click takes THAT book up,
+ * a shift-drag slides it, a right-drag turns it. You hold one book at a time,
+ * so whatever is in your hands is let go of first and stays where it falls.
+ */
+function focusBookUnder(event) {
+  const book = bookUnderPointer(event.clientX, event.clientY);
+  if (!book || book === focused) return book;
+  if (bookCarry?.carrying) bookCarry.letGo();
+  focusOn(book);
+  return book;
+}
+
+/** Work on this book from here on: it is the one in your hands. */
+function focusOn(book) {
+  focused = book;
+  pages = book.pages;
+  content = book.content;
+  placement = book.placement;
+  bookGroup = book.group;
+  // Its dimensions are what the mechanism reads BETWEEN frames, which is when
+  // a drag or a key press lands (book/pageSim/bookContext.js).
+  focusBookConfig(book.config);
+}
 
 // Taking the book up off the desk to read (input/bookCarry.js). Built once
 // the placement physics exists, further down -- clicks can arrive sooner.
@@ -143,8 +205,7 @@ let bookCarry = null;
 // Loaded alongside the page simulation since none of the three waits on
 // the others.
 loadingScreen.status('Arranging the furniture…', 0.2, 0.45);
-const [pagesInstance, desk, lamp, bookshelf, surfaces, sofa] = await Promise.all([
-  PageSimulation.create(bookGroup),
+const [desk, lamp, bookshelf, surfaces, sofa] = await Promise.all([
   loadDesk(scene),
   // Lamp at its authored size, on the back corner of the desk.
   loadLamp(scene, { position: new THREE.Vector3(0.22, 0, -0.42) }),
@@ -379,7 +440,10 @@ let deckShelf = null;
       scene.getObjectByName('roomFill'),
     ].filter(Boolean),
     // It comes outside with you only in your hand.
-    book: { object: bookGroup, isCarried: () => Boolean(bookCarry?.carrying) },
+    book: {
+      objects: () => books.map((one) => one.group),
+      carried: () => (bookCarry?.carrying ? bookGroup : null),
+    },
     // Outside, you walk on the terrain rather than the room's floor -- and
     // coming back in, on the room's own floor, stair and balcony again.
     setGround: (ground) => cameraModes.setGround(ground ?? indoorGround),
@@ -495,29 +559,44 @@ watch(() => account.user?.id ?? null, () => {
   });
 }, { immediate: true });
 
-// Reassigned by applyPdfDimensions below, so everything downstream takes a
-// `getPages` closure rather than capturing the instance.
-let pages = pagesInstance;
-const getPages = () => pages;
+// What a book has to land on and stay inside, now that the room is measured.
+const FURNITURE = [
+  ...sofa.collision,
+  ...(mezzanine?.collision ?? []),
+  ...(wallShelf?.collision ?? []),
+  ...(deckShelf?.collision ?? []),
+];
 
-// The book as a whole is a rigid body now: it falls, lands on the desk and
-// settles on whichever cover is underneath. bookGroup is its render side --
-// driven by the body when the book is loose, and copied INTO the body while
-// a gesture is holding it (see bookManipulator's `grabbed`).
-const placement = await createBookPlacement({
-  bookGroup,
-  getPages,
-  desk,
-  room: roomInterior,
-  obstacles: [
-    ...sofa.collision,
-    ...(mezzanine?.collision ?? []),
-    ...(wallShelf?.collision ?? []),
-    ...(deckShelf?.collision ?? []),
-  ],
-});
+/**
+ * Another copy on the desk: its own size, its own physics world, its own pages.
+ * It falls, lands and settles on whichever cover is underneath, like the first.
+ */
+async function addBook({ at = null } = {}) {
+  const book = await createBookInstance({
+    scene, desk, room: roomInterior, obstacles: FURNITURE, at,
+  });
+  books.push(book);
+  while (books.length > MAX_BOOKS) {
+    const spare = books.find((one) => one !== book && one !== focused);
+    if (!spare) break;
+    books.splice(books.indexOf(spare), 1);
+    spare.dispose();
+  }
+  return book;
+}
 
-const content = createBookContent(getPages);
+/**
+ * Take a fresh copy. You hold one book at a time, so whatever is in your hands
+ * is let go of first -- and stays where it falls rather than going anywhere.
+ */
+async function takeFreshCopy() {
+  bookCarry?.letGo();
+  const book = await addBook();
+  focusOn(book);
+  return book;
+}
+
+focusOn(await addBook());
 // Constructed BEFORE dragPageTurn on purpose: both listen for pointerdown
 // in the capture phase on the same canvas, and capture-phase listeners on
 // one element fire in registration order. Covers therefore get first look
@@ -525,7 +604,7 @@ const content = createBookContent(getPages);
 // starts on whatever lies behind it.
 const dragCover = createDragCover({ getPages, camera, renderer, controls });
 const dragPageTurn = createDragPageTurn({
-  getPages, camera, renderer, controls, content,
+  getPages, camera, renderer, controls, getContent,
   onPageTurnSound: () => { console.log('onPageTurnSound fired'); audio.playPageTurn(); },
 });
 // Every keyboard and menu turn goes through this rather than straight to
@@ -533,12 +612,21 @@ const dragPageTurn = createDragPageTurn({
 // turn has anywhere visible to go.
 const bookOpening = createBookOpening({ getPages, dragCover, dragPageTurn });
 const bookManipulator = createBookManipulator({
-  bookGroup, camera, renderer, getPages,
+  getGroup: () => bookGroup,
+  camera,
+  renderer,
+  getPages,
+  pickBook: (event) => Boolean(focusBookUnder(event)),
   // Read through the closure: the carry is built just below.
   getCarry: () => bookCarry,
 });
 bookCarry = createBookCarry({
-  scene, bookGroup, camera, renderer, getPages, placement,
+  scene,
+  getGroup: () => bookGroup,
+  camera,
+  renderer,
+  getPages,
+  getPlacement: () => placement,
   // Not while a shelf model has the hand -- it is on its way to becoming
   // this very book.
   canTake: () => !shelfBooks?.held,
@@ -599,14 +687,13 @@ function applyJacket() {
 watch(() => community.attachments, () => { if (jacketBookId) applyJacket(); });
 
 async function applyPdfDimensions(pageWidthPts, pageHeightPts, pageCount) {
-  setPageDimensions(BASE_PANEL_REACH * (pageHeightPts / pageWidthPts), BASE_PANEL_REACH);
-  // Thickness comes from the page count -- a short book loads thin, a long
-  // one fat. Set before the rebuild, since SPINE_GAP is baked into the
-  // cover anchors when the spreads are constructed.
-  setSpineGap(spineGapForPageCount(pageCount));
-  updateLocalCorners();
-  pages.dispose();
-  pages = await PageSimulation.create(bookGroup);
+  // The book in focus takes the loaded book's shape, and the thickness its
+  // page count earns it. Its mechanism is built again at that size -- the
+  // dimensions are baked into bodies and geometry when the spreads are made.
+  await focused.resize(
+    BASE_PANEL_REACH * (pageHeightPts / pageWidthPts), BASE_PANEL_REACH, pageCount,
+  );
+  pages = focused.pages;
   applyJacket();
   refreshFlipLabel();
 }
@@ -655,6 +742,11 @@ async function openFromShelf(record) {
         bookState.chapters = chapters;
       },
       onDimensions: async (widthPts, heightPts, pageCount) => {
+        if (token !== openSequence) return;
+        // A copy of its own, taken the moment its shape is known: the book you
+        // were reading stays readable until this one is ready to take its place
+        // in your hands, and then stays in the room rather than being reused.
+        await takeFreshCopy();
         if (token !== openSequence) return;
         await applyPdfDimensions(widthPts, heightPts, pageCount);
       },
@@ -1004,6 +1096,16 @@ renderer.setAnimationLoop(() => {
     // down lands it on the desk like anything else.
     placement.step(dt, bookManipulator.grabbed || carried);
     dragPageTurn.update(dt);
+    // What that step did to the book in focus, kept: the spine leans a little
+    // further every step (config.js's setSpineRotation), and it is the MODULE
+    // bindings it leans in. Stepping another book below installs that book's
+    // numbers and puts these back afterwards -- so without reading them back
+    // first, every frame would hand the book in your hands the lean it had
+    // when it was picked up, and the spine would never move at all.
+    captureBookConfig(focused.config);
+    // And the books nobody is holding: each settles, falls and lands on its
+    // own, with its own dimensions in force for the step (bookInstance.js).
+    for (const book of books) if (book !== focused) book.stepParked(dt);
   }
   // OrbitControls poses the camera on every update() -- enabled or not --
   // so the modes that steer it directly must not let it run.
@@ -1026,7 +1128,16 @@ if (import.meta.env.DEV) {
   // THREE is included so console debugging can build THREE.Box3 etc.
   // against these objects without a separate import.
   window.__athenaeum = {
-    scene, camera, controls, cameraModes, renderer, bookGroup, content, dragPageTurn, dragCover, anglePanel, THREE,
+    scene, camera, controls, cameraModes, renderer, dragPageTurn, dragCover, anglePanel, THREE,
+    // The books in the room, and another copy on demand -- several can be out
+    // at once (book/bookInstance.js). Getters, not values: the one in focus
+    // changes as books are picked up.
+    books,
+    addBook,
+    focusOn,
+    get focused() { return focused; },
     get pages() { return pages; },
+    get content() { return content; },
+    get bookGroup() { return bookGroup; },
   };
 }

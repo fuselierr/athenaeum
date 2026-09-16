@@ -34,8 +34,16 @@ const WORLD_DOWN = new THREE.Vector3(0, -1, 0);
  * true world-down.
  */
 export function createBookManipulator({
-  bookGroup, camera, renderer, getPages, getCarry = () => null,
+  getGroup, camera, renderer, getPages, getCarry = () => null,
+  // The book under a press, brought into focus -- main.js's focusBookUnder.
+  // Several books can be out at once, and a gesture belongs to the one it
+  // landed on rather than to whichever was read last. Returns it, or null when
+  // the press was not on a book at all, in which case no gesture starts.
+  pickBook = () => true,
 }) {
+  // Whichever book is in focus: the room can hold several, and this one moves
+  // the one you are working with (book/bookInstance.js).
+  const group = () => getGroup();
   const dom = renderer.domElement;
   dom.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -45,8 +53,8 @@ export function createBookManipulator({
     return carry?.carrying ? carry : null;
   };
 
-  const arcball = installArcballRotate({ bookGroup, camera, dom, carried });
-  const slide = installScreenPlaneSlide({ bookGroup, camera, dom, carried });
+  const arcball = installArcballRotate({ getGroup, camera, dom, carried, pickBook });
+  const slide = installScreenPlaneSlide({ getGroup, camera, dom, carried, pickBook });
 
   // On WINDOW, in the capture phase: the look modes zoom on a capture
   // listener on the canvas that is registered first (cameraModes.js), and
@@ -91,7 +99,7 @@ export function createBookManipulator({
       if (carried) {
         _localDown.copy(WORLD_DOWN);
       } else {
-        _invBookQuat.copy(bookGroup.quaternion).invert();
+        _invBookQuat.copy(group().quaternion).invert();
         _localDown.copy(WORLD_DOWN).applyQuaternion(_invBookQuat);
       }
       getPages().setGravityDirection(_localDown);
@@ -111,7 +119,8 @@ export function createBookManipulator({
 // book. Axis and angle come from the arc between the previous and current
 // sphere points, so a diagonal or curved drag is one combined rotation
 // rather than two independent ones.
-function installArcballRotate({ bookGroup, camera, dom, carried }) {
+function installArcballRotate({ getGroup, camera, dom, carried, pickBook }) {
+  const group = () => getGroup();
   let rotating = false;
   const _last = new THREE.Vector3();
   const _cur = new THREE.Vector3();
@@ -144,6 +153,10 @@ function installArcballRotate({ bookGroup, camera, dom, carried }) {
 
   dom.addEventListener('pointerdown', (e) => {
     if (e.button !== 2) return;
+    // The book under the cursor is the one that turns -- and the one your
+    // hands are on from now on. A right-press on anything else is not a turn,
+    // and carries on to whatever else it means (sitting down on the sofa).
+    if (!pickBook(e)) return;
     rotating = true;
     pointerToSphere(e.clientX, e.clientY, _last);
   });
@@ -170,8 +183,8 @@ function installArcballRotate({ bookGroup, camera, dom, carried }) {
         // the gesture stays camera-relative however the book is oriented.
         _axis.transformDirection(camera.matrix);
         _delta.setFromAxisAngle(_axis, angle);
-        bookGroup.quaternion.premultiply(_delta);
-        bookGroup.quaternion.normalize(); // stop float drift accumulating over a long drag
+        group().quaternion.premultiply(_delta);
+        group().quaternion.normalize(); // stop float drift accumulating over a long drag
       }
     }
 
@@ -207,7 +220,8 @@ function installArcballRotate({ bookGroup, camera, dom, carried }) {
 // left-drags that hit a page via its own capture listener on the canvas,
 // and OrbitControls claims what is left in the bubble phase. Capture
 // descends window -> document -> canvas, so this runs before both.
-function installScreenPlaneSlide({ bookGroup, camera, dom, carried }) {
+function installScreenPlaneSlide({ getGroup, camera, dom, carried, pickBook }) {
+  const group = () => getGroup();
   const _plane = new THREE.Plane();
   const _lastHit = new THREE.Vector3(); // where the previous move landed, for a carried book
   const _step = new THREE.Vector3();
@@ -216,33 +230,8 @@ function installScreenPlaneSlide({ bookGroup, camera, dom, carried }) {
   const _hit = new THREE.Vector3();
   const _normal = new THREE.Vector3(); // view direction at pointerdown
   const _grab = new THREE.Vector3(); // where on the plane the drag started
-  const _origin = new THREE.Vector3(); // bookGroup.position at that moment
+  const _origin = new THREE.Vector3(); // group().position at that moment
   let sliding = false;
-
-  function shown(object) {
-    for (let o = object; o; o = o.parent) if (!o.visible) return false;
-    return true;
-  }
-
-  /**
-   * Is the book the nearest visible thing under the pointer? The whole scene
-   * is tested, not just the book, so something in front of it -- the lamp,
-   * the card -- keeps the press; visible, because raycasting ignores
-   * `visible` and hidden walls would otherwise be in the way.
-   */
-  function bookUnderPointer(clientX, clientY) {
-    const rect = dom.getBoundingClientRect();
-    _ndc.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    _ray.setFromCamera(_ndc, camera);
-    let root = bookGroup;
-    while (root.parent) root = root.parent;
-    const nearest = _ray.intersectObject(root, true).find((hit) => shown(hit.object));
-    for (let o = nearest?.object; o; o = o.parent) if (o === bookGroup) return true;
-    return false;
-  }
 
   function pointerToPlane(clientX, clientY, out) {
     const rect = dom.getBoundingClientRect();
@@ -259,16 +248,17 @@ function installScreenPlaneSlide({ bookGroup, camera, dom, carried }) {
     // Ignore shift-clicks on the overlaid UI panels -- only the 3D view
     // slides the book.
     if (e.target !== dom) return;
-    // And only a press that lands on the book. Shift held over anything else
-    // -- the desk, the room, the sky -- is not taking hold of it, and the
-    // press carries on to whatever else it means (looking round, orbiting).
-    if (!bookUnderPointer(e.clientX, e.clientY)) return;
+    // And only a press that lands on a book -- whichever one, which then
+    // becomes the one in your hands. Shift held over anything else -- the desk,
+    // the room, the sky -- is not taking hold of anything, and the press
+    // carries on to whatever else it means (looking round, orbiting).
+    if (!pickBook(e)) return;
 
     camera.getWorldDirection(_normal);
-    _plane.setFromNormalAndCoplanarPoint(_normal, bookGroup.position);
+    _plane.setFromNormalAndCoplanarPoint(_normal, group().position);
     if (!pointerToPlane(e.clientX, e.clientY, _grab)) return; // grazing view -- leave the event alone
 
-    _origin.copy(bookGroup.position);
+    _origin.copy(group().position);
     _lastHit.copy(_grab);
     sliding = true;
     dom.style.cursor = 'grabbing';
@@ -293,7 +283,7 @@ function installScreenPlaneSlide({ bookGroup, camera, dom, carried }) {
     }
     // The plane is screen-facing, so this is exactly the cursor's own
     // movement carried into world space.
-    bookGroup.position.copy(_origin).add(_hit).sub(_grab);
+    group().position.copy(_origin).add(_hit).sub(_grab);
   });
 
   window.addEventListener('pointerup', (e) => {

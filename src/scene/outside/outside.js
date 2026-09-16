@@ -75,8 +75,8 @@ function nextFrame() {
  * @param {THREE.Mesh} opts.floor
  * @param {THREE.Object3D[]} [opts.inside]  everything else of the room's that
  *   is drawn, to hide while outside
- * @param {{ object: THREE.Object3D, isCarried(): boolean }|null} [opts.book]
- *   the book, shown outside only while isCarried()
+ * @param {{ objects(): THREE.Object3D[], carried(): THREE.Object3D|null }|null} [opts.book]
+ *   the books in the room; only the one carried() is shown outside
  * @param {((ground: { heightAt(x: number, z: number): number, bounds: THREE.Box3 }|null) => void)|null} [opts.setGround]
  *   given the terrain to walk on when you arrive outside, and null when you
  *   leave -- input/cameraModes.js's setGround
@@ -129,7 +129,7 @@ export function createOutside({
     if (!indoorVisibility) return;
     for (const [object, visible] of indoorVisibility) object.visible = visible;
     indoorVisibility = null;
-    if (book) book.object.visible = true;
+    for (const object of book?.objects() ?? []) object.visible = true;
   }
 
   /**
@@ -139,9 +139,17 @@ export function createOutside({
    */
   function followBook() {
     if (!book) return;
-    const was = book.object.visible;
-    book.object.visible = book.isCarried();
-    if (book.object.visible || was) daylight?.requestShadowUpdate();
+    // The room can hold several books at once (book/bookInstance.js). The one
+    // in your hands is the only one that comes outside; the rest stay indoors
+    // with the room.
+    const carried = book.carried();
+    let moved = false;
+    for (const object of book.objects()) {
+      const was = object.visible;
+      object.visible = object === carried;
+      if (object.visible || was) moved = true;
+    }
+    if (moved) daylight?.requestShadowUpdate();
   }
 
   const _raycaster = new THREE.Raycaster();
