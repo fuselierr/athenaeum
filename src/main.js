@@ -50,7 +50,7 @@ import { settings } from './state/settings.js';
 import { watch } from 'vue';
 import { account } from './state/account.js';
 import { community } from './state/community.js';
-import { loadAttachments } from './community/covers.js';
+import { loadAttachments, rememberBook } from './community/covers.js';
 import { startPreferencesSync } from './auth/preferences.js';
 
 // Fixed spine-to-edge reach that the camera, lighting and SPINE_GAP are
@@ -707,6 +707,21 @@ async function openUploadedFile(file) {
       },
       onChapters: (chapters) => {
         if (current()) bookState.chapters = chapters;
+      },
+      // An upload is one of the shelf's books now (loader/bookLoader.js): it
+      // goes onto the shelf where it will be next time, and into the reader's
+      // own library if they are signed in. Neither is worth failing the open
+      // over -- the book they just uploaded is in front of them either way.
+      onShelved: async (entry) => {
+        if (!current() || !entry) return;
+        bookState.id = entry.id;
+        jacketBookId = entry.id;
+        try {
+          const size = await shelfBooks?.add(entry);
+          await rememberBook({ ...entry, size });
+        } catch (err) {
+          console.error('The uploaded book could not be added to the library:', err);
+        }
       },
       onDimensions: async (widthPts, heightPts, pageCount) => {
         if (!current()) return;

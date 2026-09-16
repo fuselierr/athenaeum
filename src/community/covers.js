@@ -165,6 +165,36 @@ export async function attachCover(book, design) {
   community.attachments = { ...community.attachments, [book.id]: design };
 }
 
+/**
+ * Write a book into the reader's own library: an epub they have just uploaded,
+ * which is on the shelf from now on (server/uploadServer.ts keeps it). Signed
+ * out there is nowhere to write it, and the book is simply theirs for this
+ * visit -- so this says whether a row was written rather than refusing.
+ *
+ * @param {{ id: string, title?: string|null, author?: string|null,
+ *   size?: { length: number, width: number, thickness: number }|null }} book
+ * @returns {Promise<boolean>}
+ */
+export async function rememberBook({ id, title = null, author = null, size = null }) {
+  const userId = account.user?.id ?? null;
+  if (!supabase || !userId || !id) return false;
+  // Uploaded twice, or already theirs from another visit: one row a book.
+  if (await libraryRow(userId, id)) return false;
+  const { error } = await supabase.from('library').insert({
+    user_id: userId,
+    epub_path: id,
+    title,
+    author,
+    design_id: null,
+    height_m: size?.length ?? 0,
+    width_m: size?.width ?? 0,
+    thickness_m: size?.thickness ?? 0,
+    progress: 0,
+  });
+  if (error) throw failure(error);
+  return true;
+}
+
 /** Take the shared cover off one of your books, back to its own. */
 export async function detachCover(bookId) {
   const user = requireUser();

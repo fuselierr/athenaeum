@@ -214,6 +214,22 @@ async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPag
 }
 
 /**
+ * The shelf's own record for a book, as GET /api/library lists it -- the shape
+ * scene/inside/shelfBooks.js expects to be handed. Null if the server has no
+ * such book, or no library at all.
+ */
+export async function libraryEntry(id) {
+  try {
+    const response = await fetch(api('/api/library'));
+    if (!response.ok) return null;
+    const books = await response.json();
+    return (Array.isArray(books) ? books : []).find((book) => book.id === id) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Open one of the shelf's books by its library id.
  *
  * The same pipeline an upload goes through, entered further along: the
@@ -281,12 +297,16 @@ export async function openLibraryBook(id, {
  *   conversion and before page rasterization.
  * @param {(chapters: { title: string, page: number }[]) => void} [opts.onChapters]
  *   The exact page each chapter starts on, as measured during conversion.
+ * @param {(entry: object|null) => void} [opts.onShelved]  the shelf's record for
+ *   the book that was just uploaded -- an upload joins the library (see
+ *   POST /api/books), so it belongs on the shelf as well. Null if the listing
+ *   could not be read back.
  * @param {Function} [opts.onDimensions]  see initBookLoader
  * @param {Function} [opts.onPagesReady]  see initBookLoader
  * @param {(text: string) => void} [opts.onStatus]  progress, as text
  */
 export async function uploadBook(file, {
-  onDimensions, onJacket, onChapters, onPagesReady, onStatus,
+  onDimensions, onJacket, onChapters, onPagesReady, onStatus, onShelved,
 } = {}) {
   const say = (text) => onStatus?.(text);
 
@@ -302,6 +322,11 @@ export async function uploadBook(file, {
     description: book.description ?? null,
   });
   if (Array.isArray(book.chapters) && book.chapters.length > 0) onChapters?.(book.chapters);
+
+  // The upload is one of the shelf's books now. Its record is read back from
+  // the library rather than pieced together from the response, so what the
+  // shelf is handed is exactly the shape the shelf lists.
+  if (onShelved) onShelved(await libraryEntry(book.id));
 
   say('Rendering pages…');
   const canvases = await renderPdfToCanvases(api(book.pdfUrl), {

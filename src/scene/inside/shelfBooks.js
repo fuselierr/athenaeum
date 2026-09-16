@@ -354,8 +354,11 @@ export async function populateShelf(bookshelf, {
   const step = FILL_FROM_LOW_END ? 1 : -1;
   let cursor = FILL_FROM_LOW_END ? startAcross : endAcross;
 
-  for (let i = 0; i < Math.min(library.length, limit); i++) {
-    const book = library[i];
+  /**
+   * Put one book on the shelf, standing against whatever is already there.
+   * Returns the size it was given, or null when the row has run out of room.
+   */
+  async function place(book, i) {
     // Thickness is the book's real length; height and reach still get a
     // little jitter, because real books vary in trim size and a row of
     // identically tall spines reads as wallpaper.
@@ -363,12 +366,9 @@ export async function populateShelf(bookshelf, {
     const length = clearHeight * HEIGHT_FILL * (1 - jitter(i, 2) * HEIGHT_VARIATION);
     const width = length * WIDTH_RATIO;
 
-    // Out of shelf: stop rather than overflow past the upright.
-    if (step > 0 ? cursor + thickness > endAcross : cursor - thickness < startAcross) break;
+    // Out of shelf: refuse rather than overflow past the upright.
+    if (step > 0 ? cursor + thickness > endAcross : cursor - thickness < startAcross) return null;
 
-    // eslint-disable-next-line no-await-in-loop -- deliberately sequential:
-    // each model may fetch a cover, and a shelf's worth at once is a burst
-    // of parallel decodes for scenery nobody is waiting on.
     const model = await dressModel(book, i, { length, width, thickness });
 
     model.group.quaternion.copy(upright);
@@ -405,6 +405,14 @@ export async function populateShelf(bookshelf, {
     });
 
     cursor += step * (thickness + GAP);
+    return { length, width, thickness };
+  }
+
+  for (let i = 0; i < Math.min(library.length, limit); i++) {
+    // eslint-disable-next-line no-await-in-loop -- deliberately sequential:
+    // each model may fetch a cover, and a shelf's worth at once is a burst
+    // of parallel decodes for scenery nobody is waiting on.
+    if (!await place(library[i], i)) break;
     onProgress?.({ stage: 'shelving', done: i + 1, total });
   }
 
@@ -583,6 +591,18 @@ export async function populateShelf(bookshelf, {
         coverUrl: api(book.coverUrl) ?? null,
         size: { ...size },
       }));
+    },
+
+    /**
+     * Shelve one more book. An uploaded epub joins the library
+     * (loader/bookLoader.js), so it joins the shelf too, without a reload.
+     *
+     * @param {object} book  a library record, as GET /api/library lists them
+     * @returns {Promise<{ length: number, width: number, thickness: number }|null>}
+     *   the size it was given, or null if the row was full
+     */
+    add(book) {
+      return place(book, hovering.length);
     },
 
     /**

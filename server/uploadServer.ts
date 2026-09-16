@@ -1,7 +1,9 @@
 // upload-server.ts
 //
 // A small Express server exposing:
-//   POST /api/books          -- upload an .epub, get back { id, pdfUrl, ...meta }
+//   POST /api/books          -- upload an .epub: it JOINS THE LIBRARY (kept in
+//                                src/books, so it is on the shelf from now on)
+//                                and comes back converted, { id, pdfUrl, ...meta }
 //   GET  /api/books/:id/pdf   -- fetch the converted PDF (what your client-side
 //                                PDF.js/three.js pipeline reads from)
 //   GET  /api/books/:id/cover -- the epub's own cover image, if it had one
@@ -16,10 +18,9 @@
 import express from 'express';
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
-import { access, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { epubToPdf, type PdfChapter } from './epubToPdf.ts';
-import { extractEpubMetadata } from './epubMetadata.ts';
 import { readLibrary } from './epubLibrary.ts';
 
 const STORAGE_DIR = path.join(process.cwd(), 'books');
@@ -118,59 +119,78 @@ const upload = multer({
   },
 });
 
+/** Whether something is already there. */
+async function exists(file: string): Promise<boolean> {
+  try {
+    await access(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where an uploaded epub goes in the library: its own name, made safe, and
+ * never over the top of a book already on the shelf.
+ */
+async function libraryPathFor(originalName: string): Promise<string> {
+  const stem = path.basename(originalName)
+    .replace(/\.epub$/i, '')
+    .replace(/[^\w\s.-]/g, '')
+    .trim()
+    .slice(0, 80) || 'book';
+  let name = `${stem}.epub`;
+  for (let n = 2; await exists(path.join(LIBRARY_DIR, name)); n += 1) {
+    name = `${stem}-${n}.epub`;
+  }
+  return path.join(LIBRARY_DIR, name);
+}
+
+/**
+ * Upload an epub. It JOINS THE LIBRARY: the file is kept in the shelf's own
+ * folder, so from here on it is one of the shelf's books -- listed by
+ * GET /api/library, opened by POST /api/library/:id/open, and converted ONCE
+ * under its library id rather than again on every visit.
+ *
+ * Which is why the whole of it, past keeping the file, is the shelf's own path
+ * (openLibraryBook): one way a book is converted rather than two that have to
+ * be kept saying the same thing.
+ */
 app.post('/api/books', upload.single('epub'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'Missing epub file (expected multipart field name "epub")' });
     return;
   }
 
-  const id = randomUUID();
-  const bookDir = path.join(STORAGE_DIR, id);
-  const pdfPath = path.join(bookDir, 'book.pdf');
-
+  let libraryPath: string | null = null;
+  let id: string | null = null;
   try {
-    await mkdir(bookDir, { recursive: true });
-    const converted = await epubToPdf(req.file.path, pdfPath);
+    await mkdir(LIBRARY_DIR, { recursive: true });
+    libraryPath = await libraryPathFor(req.file.originalname);
+    await copyFile(req.file.path, libraryPath);
 
-    // Jacket material, pulled straight from the epub rather than from the
-    // rendered PDF: the cover is usually absent from the reading order
-    // epubToPdf walks, so the PDF's first page is not reliably the cover.
-    // Non-fatal -- a book with no cover image still converts fine, it just
-    // gets a plain board in the viewer.
-    let meta: BookMeta = {
-      title: null, author: null, description: null, coverUrl: null,
-      chapters: converted.chapters,
-    };
-    try {
-      const extracted = await extractEpubMetadata(req.file.path);
-      if (extracted.cover) {
-        await writeFile(path.join(bookDir, `cover${extracted.cover.extension}`), extracted.cover.data);
-        await writeFile(path.join(bookDir, 'cover.type'), extracted.cover.mediaType, 'utf-8');
-        meta.coverUrl = `/api/books/${id}/cover`;
-      }
-      meta.title = extracted.title;
-      meta.author = extracted.author;
-      meta.description = extracted.description;
-    } catch (metaErr) {
-      console.error(`Cover/metadata extraction failed for ${req.file.originalname} (continuing):`, metaErr);
-    }
-    await writeFile(
-      path.join(bookDir, 'meta.json'),
-      JSON.stringify({ ...meta, conversion: CONVERSION_VERSION }),
-      'utf-8',
-    );
+    // Read back rather than worked out here: the library gives a book its id
+    // (from its title, deduped), and the id the shelf will use has to be the
+    // id this conversion is filed under.
+    const shelved = (await readLibrary(LIBRARY_DIR)).find((book) => book.file === libraryPath);
+    if (!shelved) throw new Error('The uploaded file could not be read as an epub');
+    id = shelved.id;
 
-    res.status(201).json({ id, pdfUrl: `/api/books/${id}/pdf`, ...meta });
+    const book = await openLibraryBook(id);
+    if (!book) throw new Error('The uploaded book left the library before it converted');
+    res.status(201).json(book);
   } catch (err) {
     // Most likely cause: the uploaded file passed the extension check above
     // but isn't actually a well-formed epub (missing container.xml, broken
     // spine, etc.) -- epubToPdf's own error messages say which.
     console.error(`Conversion failed for upload ${req.file.originalname}:`, err);
-    await rm(bookDir, { recursive: true, force: true });
+    // Nothing half-joined: a file that will not convert does not stay on the
+    // shelf, and half a conversion would look converted to the cache check.
+    if (libraryPath) await rm(libraryPath, { force: true });
+    if (id) await rm(path.join(STORAGE_DIR, id), { recursive: true, force: true });
     res.status(422).json({ error: 'Could not convert this file -- is it a valid epub?' });
   } finally {
-    // The raw upload is only scratch material once conversion has run (or
-    // failed) -- the PDF (or nothing, on failure) is what's kept.
+    // The raw upload is only scratch material once it has been kept (or not).
     await rm(req.file.path, { force: true });
   }
 });

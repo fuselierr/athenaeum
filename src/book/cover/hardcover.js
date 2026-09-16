@@ -101,14 +101,27 @@ export const SPINE_COLOR = 0x3d2620;
 const FACE_PY = BOARD_FACE_PY;
 const FACE_NY = BOARD_FACE_NY;
 
-// A shared cover's spine image stands up, head at the top, the way a spine
-// is seen shelved (community/covers.js), while the spine strip's u runs
-// along the book's height -- so it takes a quarter turn, as it does on the
-// shelf models (bookModel.js). If shared spine art comes out upside down on
-// the book in your hand, make this -Math.PI / 2; if it reads mirrored, set
-// SPINE_IMAGE_MIRROR.
+// A shared cover's spine image stands up, head at the top, the way a spine is
+// seen shelved (community/covers.js), while the spine strip's u runs along the
+// book's height -- so it takes a quarter turn, as it does on the shelf models
+// (bookModel.js). And a MIRROR with it: this strip's uv is handed the other way
+// round from the boards', so without it the art comes back reversed. Both were
+// read off the book with lettered test art rather than reasoned about.
 const SPINE_IMAGE_ROTATION = Math.PI / 2;
-const SPINE_IMAGE_MIRROR = false;
+const SPINE_IMAGE_MIRROR = true;
+// The same handedness, for the label drawn when there is no shared spine art:
+// its canvas is laid out along the strip already, so it needs the flip alone.
+const SPINE_LABEL_FLIP = true;
+
+// AND THE BOARDS TAKE THE SAME QUARTER TURN. A board's cap uv runs u along its
+// +X (boardGeometry.js), and +X here is the book's HEIGHT -- the way the spine
+// runs -- so art laid on a board arrives lying on its side, whatever it is a
+// picture of. This stands it up. The BACK board takes the same turn rather than
+// the opposite one: its v already runs the other way across it, which is what
+// looking at it from the other side needs. Both are exactly what the shelf's
+// models do (bookModel.js), which is the point -- the same jacket has to read
+// the same way whether the book is on the shelf or in your hands.
+const COVER_IMAGE_ROTATION = -Math.PI / 2;
 
 // How much is taken off a board's edges. Small on purpose: a real board is
 // eased, not rounded over -- it still reads as a rectangle with a definite
@@ -439,6 +452,13 @@ export function createHardcover({ parent, hardcoverAngles }) {
       let binding = { r: 74, g: 47, b: 36 }; // BOARD_COLOR, if there is no art to sample
       if (cover?.image) binding = sampleBindingColor(cover.image);
 
+      // Stood up on the boards before either is hung (see COVER_IMAGE_ROTATION).
+      for (const face of [cover, back]) {
+        if (!face) continue;
+        face.center.set(0.5, 0.5);
+        face.rotation = COVER_IMAGE_ROTATION;
+      }
+
       frontFaceMaterial.map?.dispose();
       frontFaceMaterial.map = cover;
       // The art's own colours, unmultiplied -- or, with none, the plain board.
@@ -478,6 +498,10 @@ export function createHardcover({ parent, hardcoverAngles }) {
         const labelTexture = new THREE.CanvasTexture(labelCanvas);
         labelTexture.colorSpace = THREE.SRGBColorSpace;
         labelTexture.anisotropy = 8;
+        if (SPINE_LABEL_FLIP) {
+          labelTexture.center.set(0.5, 0.5);
+          labelTexture.repeat.set(1, -1);
+        }
         spineMaterial.map = labelTexture;
       }
       spineMaterial.color.set(0xffffff);

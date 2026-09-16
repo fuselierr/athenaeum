@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "dependencies": {
     "@dimforge/rapier3d": "^0.20.0",
     "@dimforge/rapier3d-compat": "^0.14.0",
