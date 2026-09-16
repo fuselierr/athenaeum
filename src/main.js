@@ -8,6 +8,7 @@ import { addRoom, WINDOW_SILL_PROJECTION } from './scene/inside/room.js';
 import { loadRoomSurfaces } from './scene/inside/surfaces.js';
 import { loadSofa } from './scene/inside/sofa.js';
 import { addMezzanine } from './scene/inside/mezzanine.js';
+import { addWallShelf } from './scene/inside/wallShelf.js';
 import { populateShelf } from './scene/inside/shelfBooks.js';
 import { addInstructionCard } from './scene/inside/instructionCard.js';
 import { createOutside } from './scene/outside/outside.js';
@@ -181,6 +182,13 @@ const SILL_ABOVE_DESK = 0.08;
 // The back wall's window sits low: nothing stands against that wall -- the
 // stair climbs across it (scene/inside/mezzanine.js).
 const BACK_WINDOW_SILL = 0.5;
+// The +Z wall is shelved for most of its length (scene/inside/wallShelf.js).
+const WALL_SHELF_RUN = 0.76; // of that wall
+const WALL_SHELF_END_GAP = 0; // off the corner it starts from
+const WALL_SHELF_HEIGHT = 2.4; // unless the balcony above it is lower than that
+// The door is in the bookshelf wall (-X), up in its +Z corner: this is how far
+// the middle of it stands off that corner.
+const DOOR_FROM_CORNER = 0.9;
 // Above the tallest thing in the room. A ceiling that only just clears the
 // bookshelf reads as an attic, so give the room a bit more breathing room.
 const CEILING_CLEARANCE = 1.6;
@@ -201,6 +209,10 @@ let outside = null;
 // outside walks on the terrain, so coming back in has to put it back.
 let mezzanine = null;
 let indoorGround = null;
+// The shelves built into the +Z wall (scene/inside/wallShelf.js): one run on
+// the floor, and the same run again on the balcony above it.
+let wallShelf = null;
+let deckShelf = null;
 {
   const deskBox = new THREE.Box3().setFromObject(desk.object);
 
@@ -253,6 +265,10 @@ let indoorGround = null;
   footprint.max.x = deskBox.max.x + FURNITURE_WALL_CLEARANCE + WINDOW_SILL_PROJECTION;
 
   const floor = addFloor(scene, footprint, { margin: 0, material: surfaces.floor });
+  // Where the shelved run of the +Z wall begins. Worked out here because the
+  // walls are built from this same footprint, below.
+  const shelvedFrom = footprint.max.x - WALL_SHELF_END_GAP
+    - (footprint.max.x - footprint.min.x) * WALL_SHELF_RUN;
   // The floor IS the walkable area, so the first-person mode takes its
   // bounds from the mesh rather than recomputing them.
   const walkable = new THREE.Box3().setFromObject(floor);
@@ -296,27 +312,52 @@ let indoorGround = null;
         shadows: false,
       },
     ],
-    // To the right of the desk as you sit at it, facing the window: the +Z
-    // wall, level with the desk.
-    door: { side: '+z', along: (deskBox.min.x + deskBox.max.x) / 2 },
+    // In the bookshelf wall, up in its +Z corner. `along` is a world
+    // coordinate down the wall, which for the -X wall is z.
+    door: { side: '-x', along: footprint.max.z - DOOR_FROM_CORNER },
     wallMaterial: surfaces.walls,
+    ceilingMaterial: surfaces.pine,
   });
   // The balcony and the stair up to it: the flight climbs away from the back
   // wall toward the shelves, turning left onto a deck that runs to the door
   // wall and then back along it over the door. Built here because it is
   // measured off the room's own floor, ceiling, shelf and doorway.
+  const ceilingY = shell.ceiling.getWorldPosition(new THREE.Vector3()).y;
   mezzanine = addMezzanine(scene, {
     camera,
     floorBox: walkable,
-    ceilingY: shell.ceiling.getWorldPosition(new THREE.Vector3()).y,
+    ceilingY,
     shelfBox: placedShelf,
     doorBox: new THREE.Box3().setFromObject(shell.door),
     deckMaterial: surfaces.floor,
+    woodMaterial: surfaces.pine,
   });
   // The room is uneven ground now, so walking asks how high it is underfoot --
   // the same way it does outside.
   indoorGround = mezzanine.ground;
   cameraModes.setGround(indoorGround);
+
+  // The shelves built into the +Z wall, up to whatever head room the balcony
+  // over them leaves.
+  wallShelf = addWallShelf(scene, {
+    minX: shelvedFrom,
+    maxX: footprint.max.x - WALL_SHELF_END_GAP,
+    wallZ: footprint.max.z,
+    floorY: walkable.min.y,
+    height: Math.min(WALL_SHELF_HEIGHT, mezzanine.underY - walkable.min.y),
+    material: surfaces.pine,
+  });
+  // And the same run again upstairs, standing on the balcony that crosses the
+  // same wall -- wearing the material of the one below, so the pair costs two
+  // draws rather than two of everything.
+  deckShelf = addWallShelf(scene, {
+    minX: shelvedFrom,
+    maxX: footprint.max.x - WALL_SHELF_END_GAP,
+    wallZ: footprint.max.z,
+    floorY: mezzanine.deckY,
+    height: Math.min(WALL_SHELF_HEIGHT, ceilingY - mezzanine.deckY - 0.4),
+    material: wallShelf.object.material,
+  });
 
   outside = createOutside({
     scene,
@@ -332,6 +373,8 @@ let indoorGround = null;
       bookshelf,
       sofa.object,
       mezzanine.group,
+      wallShelf.object,
+      deckShelf.object,
       instructionCard.group,
       scene.getObjectByName('roomFill'),
     ].filter(Boolean),
@@ -466,7 +509,12 @@ const placement = await createBookPlacement({
   getPages,
   desk,
   room: roomInterior,
-  obstacles: [...sofa.collision, ...(mezzanine?.collision ?? [])],
+  obstacles: [
+    ...sofa.collision,
+    ...(mezzanine?.collision ?? []),
+    ...(wallShelf?.collision ?? []),
+    ...(deckShelf?.collision ?? []),
+  ],
 });
 
 const content = createBookContent(getPages);

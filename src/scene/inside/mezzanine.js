@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { box, slab } from './woodwork.js';
 
 /**
  * The mezzanine: a balcony that wraps two walls of the room, and the curved
@@ -73,25 +74,6 @@ const WOOD_COLOR = 0x4a3222; // walnut, as the instruction card's frame
 const UP = new THREE.Vector3(0, 1, 0);
 const QUARTER = Math.PI / 2;
 
-/** A box with its middle at a point, as a geometry waiting to be merged. */
-function box(width, height, depth, x, y, z) {
-  const geometry = new THREE.BoxGeometry(width, height, depth);
-  geometry.translate(x, y, z);
-  return geometry;
-}
-
-/** A flat rectangle of floor, with its UVs in metres so boards tile by the metre. */
-function boardsGeometry(minX, maxX, minZ, maxZ, y) {
-  const width = maxX - minX;
-  const depth = maxZ - minZ;
-  const geometry = new THREE.PlaneGeometry(width, depth);
-  geometry.rotateX(-Math.PI / 2);
-  const uv = geometry.attributes.uv;
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * width, uv.getY(i) * depth);
-  geometry.translate((minX + maxX) / 2, y, (minZ + maxZ) / 2);
-  return geometry;
-}
-
 /**
  * One step of a curving stair: the piece of a ring between two radii, spanning
  * `sweep` radians about the middle of +X, with its top face at y = 0 -- so an
@@ -122,6 +104,8 @@ function treadGeometry(inner, outer, sweep, thickness) {
  *   deck has to clear
  * @param {THREE.Box3} opts.doorBox  the doorway in the +Z wall, which the deck
  *   passes over: its head is what the deck has to clear
+ * @param {THREE.Material|null} [opts.woodMaterial]  what its joinery is made of
+ *   -- the pine (scene/inside/surfaces.js)
  * @param {THREE.Material|null} [opts.deckMaterial]  the floorboards
  *   (scene/inside/surfaces.js), whose textures tile by the metre
  * @returns {{ group: THREE.Group, deckY: number, edgeX: number,
@@ -129,7 +113,8 @@ function treadGeometry(inner, outer, sweep, thickness) {
  *   collision: Array<{ center: object, halfExtents: object }>, dispose(): void }}
  */
 export function addMezzanine(scene, {
-  camera, floorBox, ceilingY, shelfBox, doorBox, deckMaterial = null,
+  camera, floorBox, ceilingY, shelfBox, doorBox,
+  deckMaterial = null, woodMaterial = null,
 }) {
   const floorY = floorBox.min.y;
   const wallX = floorBox.min.x; // the wall the bookshelf stands against
@@ -194,14 +179,16 @@ export function addMezzanine(scene, {
   const group = new THREE.Group();
   group.name = 'mezzanine';
 
-  const wood = new THREE.MeshStandardMaterial({ color: WOOD_COLOR, roughness: 0.6, metalness: 0 });
+  const ownsWood = !woodMaterial;
+  const wood = woodMaterial
+    ?? new THREE.MeshStandardMaterial({ color: WOOD_COLOR, roughness: 0.6, metalness: 0 });
   const ownsBoards = !deckMaterial;
   const boards = deckMaterial
     ?? new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.9, metalness: 0 });
 
   const deck = new THREE.Mesh(
     mergeGeometries([longArm, doorArm].map(
-      (arm) => boardsGeometry(arm.minX, arm.maxX, arm.minZ, arm.maxZ, deckY),
+      (arm) => slab(arm.minX, arm.maxX, arm.minZ, arm.maxZ, deckY),
     ), false),
     boards,
   );
@@ -348,6 +335,8 @@ export function addMezzanine(scene, {
   return {
     group,
     deckY,
+    /** The underside of the deck: the head room anything beneath it has. */
+    underY: deckY - DECK_THICKNESS,
     edgeX,
 
     /**
@@ -394,7 +383,7 @@ export function addMezzanine(scene, {
       balusters.geometry.dispose();
       treads.dispose();
       balusters.dispose();
-      wood.dispose();
+      if (ownsWood) wood.dispose();
       if (ownsBoards) boards.dispose();
     },
   };

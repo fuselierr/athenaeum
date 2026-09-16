@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 /**
- * What the room is made of: the floorboards and the plywood walls.
+ * What the room is made of: the floorboards, the plywood walls, and the coated
+ * pine everything built of wood is finished in -- the balcony, the ceiling and
+ * the shelves run along the wall.
  *
  * Each is a Poly Haven texture set shipped as a glTF (public/textures) --
  * a plane wearing a full PBR material: colour, normal, and roughness (the
@@ -22,6 +24,10 @@ const SURFACES = {
   // plywood grain larger.
   floor: { url: '/textures/old_wooden_floor/old_wooden_floor_02_2k.gltf', tile: 1.6 },
   walls: { url: '/textures/plywood/plywood_2k.gltf', tile: 1.6 },
+  // The joinery. Finer than the floor and the walls: it is seen close to, on
+  // pieces a few centimetres across (scene/inside/woodwork.js lays their UVs
+  // out in metres so it tiles the same real size on all of them).
+  pine: { url: '/textures/coated_pine_2k.gltf/coated_pine_2k.gltf', tile: 1 },
 };
 
 /** The material off a texture set's glTF, tiled `tile` metres to a copy. */
@@ -53,16 +59,17 @@ async function loadSurface({ url, tile }) {
 }
 
 /**
- * Load the room's floor and wall materials. Never rejects: a set that does
- * not load comes back null, and that surface keeps its plain colour.
+ * Load the room's surfaces. Never rejects: a set that does not load comes back
+ * null, and whatever it was for keeps its plain colour.
  *
- * @returns {Promise<{ floor: THREE.Material|null, walls: THREE.Material|null }>}
+ * @returns {Promise<{ floor: THREE.Material|null, walls: THREE.Material|null,
+ *   pine: THREE.Material|null }>}
  */
 export async function loadRoomSurfaces() {
   const load = (name) => loadSurface(SURFACES[name]).catch((err) => {
     console.warn(`The room's ${name} texture did not load; it stays a plain colour.`, err);
     return null;
   });
-  const [floor, walls] = await Promise.all([load('floor'), load('walls')]);
-  return { floor, walls };
+  const [floor, walls, pine] = await Promise.all([load('floor'), load('walls'), load('pine')]);
+  return { floor, walls, pine };
 }

@@ -88,6 +88,9 @@ const WINDOW_LIGHT_COLOR = 0xfff1d8;
  *   whether that daylight casts -- worth turning off on a second one, which
  *   would double the shadow map otherwise. Without this, the single window
  *   that `windowSide` and `sill` describe.
+ * @param {THREE.Material|null} [opts.ceilingMaterial]  what the ceiling is made
+ *   of -- the pine (scene/inside/surfaces.js). Its UVs are in metres too, so
+ *   the same material tiles across it at the size it does everywhere else.
  * @param {THREE.Material|null} [opts.wallMaterial]  what the walls are made of
  *   -- the plywood (scene/inside/surfaces.js). Wall UVs are in metres, so its
  *   textures should tile by the metre. Without one, a plain painted colour.
@@ -106,6 +109,7 @@ export function addRoom(scene, floor, {
   windows = null,
   door = null,
   wallMaterial: suppliedWallMaterial = null,
+  ceilingMaterial: suppliedCeilingMaterial = null,
 } = {}) {
   floor.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(floor);
@@ -120,7 +124,7 @@ export function addRoom(scene, floor, {
   const wallMaterial = suppliedWallMaterial ?? new THREE.MeshStandardMaterial({
     color: WALL_COLOR, roughness: 0.94, metalness: 0, side: THREE.FrontSide,
   });
-  const ceilingMaterial = new THREE.MeshStandardMaterial({
+  const ceilingMaterial = suppliedCeilingMaterial ?? new THREE.MeshStandardMaterial({
     color: CEILING_COLOR, roughness: 0.96, metalness: 0, side: THREE.FrontSide,
   });
 
@@ -227,10 +231,14 @@ export function addRoom(scene, floor, {
   }
 
   // --- the ceiling -------------------------------------------------------
-  const ceiling = new THREE.Mesh(
-    new THREE.PlaneGeometry(size.x, size.z),
-    ceilingMaterial,
-  );
+  // Its UVs in metres, like the floor's and the walls', so a tiling material
+  // covers it at the same real size rather than being stretched over the room.
+  const ceilingGeometry = new THREE.PlaneGeometry(size.x, size.z);
+  const ceilingUv = ceilingGeometry.attributes.uv;
+  for (let i = 0; i < ceilingUv.count; i++) {
+    ceilingUv.setXY(i, ceilingUv.getX(i) * size.x, ceilingUv.getY(i) * size.z);
+  }
+  const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
   ceiling.name = 'ceiling';
   // PlaneGeometry faces +Z; +90 degrees about X turns that to face DOWN,
   // which is the only way a single-sided ceiling is visible from below.
