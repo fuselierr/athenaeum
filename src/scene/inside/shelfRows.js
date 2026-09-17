@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { dressModel, thicknessForPages, SHELF_LAYOUT } from './shelfBooks.js';
+import { inOrder as orderBooks } from './shelfOrder.js';
 
 /**
  * Books filed on the wall's shelves.
@@ -33,17 +34,12 @@ const REACH_BELOW = 0.03;
 const REACH_ABOVE = 0.06;
 const REACH_ACROSS = 0.05;
 
-/** The books in the order asked for: as they were filed, by title, or by author. */
-function inOrder(books, sort) {
-  const text = (value) => (value ?? '').toString().trim().toLowerCase();
-  const byTitle = (a, b) => text(a.record?.title).localeCompare(text(b.record?.title));
-  const sorted = [...books];
-  if (sort === 'title') sorted.sort(byTitle);
-  else if (sort === 'author') {
-    sorted.sort((a, b) => text(a.record?.author).localeCompare(text(b.record?.author)) || byTitle(a, b));
-  } else sorted.sort((a, b) => a.filed - b.filed);
-  return sorted;
-}
+/** The books in the order asked for -- the room's one set of rules (shelfOrder.js). */
+const inOrder = (books, sort) => orderBooks(books, sort, (book) => ({
+  title: book.record?.title,
+  author: book.record?.author,
+  filed: book.filed,
+}));
 
 /**
  * @param {object} opts
@@ -282,20 +278,25 @@ export function createShelfRows({ scene, camera, renderer, runs = [] }) {
         if (justify === 'middle') lead = slack / 2;
         else if (justify === 'right') lead = slack;
 
-        let at = row.shelf.minX + lead;
+        // LEFT AND RIGHT ARE THE READER'S, not the world's. These runs are built
+        // against the +Z wall, so you stand facing +Z to read them -- and facing
+        // +Z, your left hand is toward +X. So a row is laid out from its high
+        // end DOWNWARD: the first book of the order stands at the reader's left
+        // with the next to its right, and 'left' packs the run against +X.
+        let at = row.shelf.maxX - lead;
         for (const book of order) {
           // A book on its way to this shelf keeps its place in the row without
           // being drawn out under the cursor on the way.
           if (!book.model.group.visible) book.offset = 0;
           book.rest.set(
-            at + book.size.thickness / 2,
+            at - book.size.thickness / 2,
             row.shelf.y + book.size.length / 2,
             row.shelf.z,
           );
           // Posed from rest by update(); set here as well so a book that has
           // just been filed is standing in place on the very next frame.
           book.model.group.position.copy(book.rest).addScaledVector(OUT, book.offset);
-          at += book.size.thickness + SHELF_LAYOUT.gap;
+          at -= book.size.thickness + SHELF_LAYOUT.gap;
         }
       }
     },

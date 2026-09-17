@@ -131,7 +131,8 @@ function go(place) {
       >
         <option value="shelf">However they came</option>
         <option value="title">Title</option>
-        <option value="author">Author</option>
+        <option value="author">Author, first name</option>
+        <option value="surname">Author, last name</option>
       </select>
     </div>
 

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { api } from '../../loader/api.js';
+import { inOrder as orderBooks } from './shelfOrder.js';
 import { createBookModel } from '../../book/cover/bookModel.js';
 
 /**
@@ -432,18 +433,12 @@ export async function populateShelf(bookshelf, {
   }
 
   // --- keeping the shelf ---------------------------------------------------
-  /** The books in the order asked for: as the library lists them, by title, or by author. */
-  function inOrder(entries, sort) {
-    const text = (value) => (value ?? '').toString().trim().toLowerCase();
-    const byTitle = (a, b) => text(a.book.title).localeCompare(text(b.book.title));
-    const sorted = [...entries];
-    if (sort === 'title') sorted.sort(byTitle);
-    // One author's books stand together, in title order among themselves.
-    else if (sort === 'author') {
-      sorted.sort((a, b) => text(a.book.author).localeCompare(text(b.book.author)) || byTitle(a, b));
-    } else sorted.sort((a, b) => a.index - b.index);
-    return sorted;
-  }
+  /** The books in the order asked for -- the room's one set of rules (shelfOrder.js). */
+  const inOrder = (entries, sort) => orderBooks(entries, sort, (entry) => ({
+    title: entry.book.title,
+    author: entry.book.author,
+    filed: entry.index, // as the library listed them
+  }));
 
   /**
    * Stand the row up again: in `sort` order, with the run of books pushed to
