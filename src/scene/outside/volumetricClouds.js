@@ -43,11 +43,11 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
  */
 
 export const CLOUDS = {
-  coverage: 0.45, // 0 clear .. 1 overcast
+  coverage: 0.35, // 0 clear .. 1 overcast
   density: 0.02, // extinction per metre of full cloud
   bottom: 1200, // metres
   top: 2600,
-  shapeScale: 4000, // metres a repeat of the shape noise covers
+  shapeScale: 6000, // metres a repeat of the shape noise covers
   detailScale: 650,
   detailStrength: 0.35, // how much the detail erodes the edges
   wind: [9, 3], // metres per second, x and z

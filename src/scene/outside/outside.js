@@ -6,6 +6,7 @@ import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../../ui/loadingScreen.js';
 import { createGrass } from './grass.js';
+import { createDistantRange } from './distantRange.js';
 import { loadParkBench } from './parkBench.js';
 import { loadTree } from './tree.js';
 import { world } from '../../state/world.js';
@@ -54,7 +55,7 @@ const HEIGHTMAP_URL = '/heightmaps/swissalps.raw'; // public/heightmaps
 const TERRAIN = {
   width: 400, // metres on a side
   height: 60, // metres from the map's lowest point to its highest, before exaggeration
-  exaggeration: 2.2, // every height times this: taller mountains, steeper slopes
+  exaggeration: 0.5, // every height times this: taller mountains, steeper slopes
   sharpness: 1.5, // above 1, valley floors pressed down and their walls steepened
   segments: 255,
 };
@@ -105,6 +106,7 @@ export function createOutside({
   let grass = null;
   let bench = null;
   let tree = null;
+  let range = null;
 
   // The graphics quality reaches whatever outdoors is built right now; a trip
   // built later reads the preset as it builds.
@@ -231,6 +233,10 @@ export function createOutside({
       scene.remove(tree.object);
       tree.dispose();
     }
+    // Never in `scene` -- it lives in the far pass's own scene
+    // (outdoorPost.js), which goes with the composer above.
+    range?.dispose();
+    range = null;
     tree = null;
     bench = null;
     post = null;
@@ -373,6 +379,19 @@ export function createOutside({
       // The cloud noise is generated here, which takes a moment.
       loadingScreen.status('Gathering clouds…', 0.8, 0.88);
       await nextFrame();
+      // The mountains beyond the terrain: the middle distance the scene did
+      // not have, and the horizon it never reached
+      // (scene/outside/distantRange.js). Built after the sky, because the
+      // haze it fades into is that sky.
+      loadingScreen.status('Raising the mountains…', 0.76, 0.8);
+      await nextFrame();
+      range = createDistantRange({
+        terrain,
+        terrainOpts: TERRAIN,
+        skyTexture: daylight.skyTexture,
+        sunDirection: daylight.sunDirection,
+      });
+
       post = createOutdoorPost({
         renderer,
         scene,
@@ -381,6 +400,9 @@ export function createOutside({
         groundHeight: floorBox.max.y,
         skyTexture: daylight.skyTexture,
         sun: daylight.sun,
+        // The mountains, and the sky they stand against: both belong to the
+        // far pass, and the sky is only lent to it (see createOutdoorPost).
+        distant: { ...range, sky: daylight.sky },
       });
       post.applyQuality(qualityPreset());
 
@@ -421,6 +443,7 @@ export function createOutside({
     get daylight() { return daylight; },
     get post() { return post; },
     get grass() { return grass; },
+    get range() { return range; },
 
     /**
      * Draw the frame, if outside: through the fog and exposure chain.

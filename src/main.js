@@ -1010,6 +1010,9 @@ function setBookStatus(text) {
  *   (scene/inside/shelfRows.js): the book arrives standing in it and flies into
  *   the hand from there, goes back to it when put back -- and is PUT BACK ON IT
  *   if this open is abandoned, so giving up never loses the book off the shelf.
+ * @returns {Promise<boolean>} whether the book is now open -- false for one
+ *   that would not convert, and for an open abandoned part way (the welcome
+ *   page waits on this before taking anyone outside).
  */
 async function openFromShelf(record, slot = null) {
   const token = (openSequence += 1);
@@ -1083,9 +1086,11 @@ async function openFromShelf(record, slot = null) {
         } else swapModelForBook();
       },
     });
+    return token === openSequence;
   } catch (err) {
     console.error('Opening a shelf book failed:', err);
     setBookStatus(`Error: ${err.message}`);
+    return false;
   } finally {
     // Abandoned, or failed part way: the copy this open made goes too. Nothing
     // to do when it arrived -- onPagesReady let go of it.
@@ -1175,24 +1180,25 @@ async function openUploadedFile(file) {
 }
 
 /**
- * The welcome page's one move: open the EPUB a visitor brought and take them
- * outside with it (ui/LandingScreen.vue).
+ * How the welcome page ends, whichever book was chosen there
+ * (ui/LandingScreen.vue): out of the door with it in your hand.
  *
  * The book goes INTO THE HAND before the door opens, because the hand is
- * what decides: outdoors draws the one book being carried and leaves the
- * rest in the room with the furniture (scene/outside/outside.js's
+ * what decides: outdoors draws the books it has been told are out there, and
+ * the one you are holding is always one of them (scene/outside/outside.js's
  * followBook). Handed over the other way round it would be a book left
  * behind on a desk nobody can see.
  *
- * The welcome stays up until the book is open, so a file that will not
- * convert leaves the visitor where they were, with the reason on the page,
- * rather than alone outside with nothing to read.
+ * The welcome stays up until the book is open, so one that will not convert
+ * leaves the visitor where they were, with the reason on the page, rather
+ * than alone outside with nothing to read.
+ *
+ * @param {() => Promise<boolean>} open  whatever opens the book
  */
-async function startWithBook(file) {
+async function startOutsideWith(open) {
   landing.error = '';
-  const opened = await openUploadedFile(file);
-  if (!opened) {
-    landing.error = bookState.status || 'That file could not be opened.';
+  if (!await open()) {
+    landing.error = bookState.status || 'That book could not be opened.';
     setBookStatus('');
     return;
   }
@@ -1200,6 +1206,17 @@ async function startWithBook(file) {
   bookCarry?.takeUp();
   await outside?.goOutside();
 }
+
+/** An EPUB the visitor brought from their own computer. */
+const startWithBook = (file) => startOutsideWith(() => openUploadedFile(file));
+
+/**
+ * Or one already on the shelf, for someone who has not got an EPUB to hand
+ * and wants to see what this is. Opened by exactly the path the shelf itself
+ * uses -- converted once and cached under its library id, so the example
+ * everybody tries is converted for the first visitor and free after that.
+ */
+const startWithExample = (record) => startOutsideWith(() => openFromShelf(record));
 
 // Which way a book comes off the shelf shut -- see PageSimulation.close.
 // 'front' is shut the ordinary way: cover up, and the first arrow press opens
@@ -1448,7 +1465,7 @@ mountMenu({
 // The welcome page, for a visitor who is not signed in. Mounted every visit
 // and showing nothing until the startup below says so, so there is no second
 // load between the loading screen lifting and the welcome appearing.
-mountLanding({ startWithBook });
+mountLanding({ startWithBook, startWithExample });
 
 // The account control, top right. Independent of the menu and of the room.
 mountAccount({

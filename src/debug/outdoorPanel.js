@@ -12,6 +12,12 @@ import * as THREE from 'three';
  * top puts every control back to what it was when the panel was built --
  * the values the outdoor scene starts with.
  *
+ * EVERY SECTION FOLDS. There are well over a hundred controls here and the
+ * panel is taller than the window; each heading is a <details> that opens on
+ * a click, so the list of headings fits on screen and you open the one you
+ * are working on. They all start shut, and which are open is not remembered:
+ * the panel is rebuilt from scratch on every trip outside.
+ *
  * Built the first time it is needed on each trip outside, from whatever
  * scene/outside/outdoorLight.js and scene/outside/outdoorPost.js hand back. The outdoors is
  * unloaded when you go in and rebuilt when you come out, so a panel from an
@@ -31,7 +37,7 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
   let el = null;
   let builtFor = null; // the post chain the current panel controls
 
-  function build(daylight, post, terrain, grass) {
+  function build(daylight, post, terrain, grass, range) {
     el = document.createElement('div');
     Object.assign(el.style, {
       position: 'fixed',
@@ -74,17 +80,32 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     });
     el.append(resetButton);
 
-    /** A heading, with an on/off checkbox when `toggle` is given. */
+    // Where the controls being declared right now go: the panel itself until
+    // the first section opens a folder, and that folder's body after.
+    let into = el;
+
+    /**
+     * A heading that folds, with an on/off checkbox when `toggle` is given.
+     * Everything declared after it goes inside it, until the next one.
+     */
     function section(title, toggle) {
-      const head = document.createElement('label');
+      const folder = document.createElement('details');
+      folder.style.margin = '6px 0 0';
+
+      const head = document.createElement('summary');
       Object.assign(head.style, {
         display: 'flex', alignItems: 'center', gap: '6px',
-        margin: '10px 0 4px', fontWeight: 'bold', color: '#ffd9a8',
+        margin: '4px 0', padding: '2px 0', cursor: 'pointer',
+        fontWeight: 'bold', color: '#ffd9a8', listStyle: 'revert',
       });
+
       if (toggle) {
         const box = document.createElement('input');
         box.type = 'checkbox';
         box.checked = toggle.get();
+        // The box is inside the summary, so a click on it would fold the
+        // section as well as switching the thing off.
+        box.addEventListener('click', (e) => e.stopPropagation());
         box.addEventListener('change', () => toggle.set(box.checked));
         head.append(box);
         const initial = box.checked;
@@ -94,7 +115,15 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
         });
       }
       head.append(title);
-      el.append(head);
+
+      const body = document.createElement('div');
+      body.style.padding = '2px 0 6px 6px';
+      body.style.borderLeft = '1px solid rgba(255, 255, 255, 0.10)';
+      body.style.marginLeft = '3px';
+
+      folder.append(head, body);
+      el.append(folder);
+      into = body;
     }
 
     /**
@@ -130,7 +159,7 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
         show();
       });
       row.append(name, value, input);
-      el.append(row);
+      into.append(row);
     }
 
     // --- grass --------------------------------------------------------------------
@@ -539,6 +568,121 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
         });
       }
     }
+
+    // --- the mountains ------------------------------------------------------------
+    // Last, and only when there are any: the range is scenery the trip may
+    // have gone without (scene/outside/distantRange.js).
+    if (range) rangeControls({ section, slider, range });
+  }
+
+  /**
+   * The distant range (scene/outside/distantRange.js).
+   *
+   * Two kinds of control, and the difference matters. The SHADING is uniforms
+   * and shows on the next frame, so those sliders steer as you drag them. The
+   * SHAPE is baked into the mesh, so those lay the whole ring out again -- a
+   * fifth of a second -- and do it on `settle`, when the slider is let go,
+   * rather than sixty times through a drag.
+   */
+  function rangeControls({ section, slider, range }) {
+    const u = range.uniforms;
+    const shape = range.shape;
+    const relay = () => range.rebuild();
+
+    section('Mountains: shape (rebuilds)', {
+      get: () => range.object.visible,
+      set: (on) => { range.object.visible = on; },
+    });
+    slider('Relief at 1 km (m)', {
+      min: 40, max: 900, step: 5,
+      get: () => shape.relief, set: (v) => { shape.relief = v; }, settle: relay,
+    });
+    slider('Growth with distance', {
+      min: 0.5, max: 1.2, step: 0.01,
+      get: () => shape.growth, set: (v) => { shape.growth = v; }, settle: relay,
+    });
+    slider('Valley floors rise', {
+      min: 0, max: 1, step: 0.01,
+      get: () => shape.baseRise, set: (v) => { shape.baseRise = v; }, settle: relay,
+    });
+    slider('Ridge spacing (m)', {
+      min: 600, max: 8000, step: 50,
+      get: () => shape.ridgeScale, set: (v) => { shape.ridgeScale = v; }, settle: relay,
+    });
+    slider('Crest sharpness', {
+      min: 1, max: 5, step: 0.05,
+      get: () => shape.sharpness, set: (v) => { shape.sharpness = v; }, settle: relay,
+    });
+    slider('Detail gathers on ridges', {
+      min: 0.5, max: 3, step: 0.05,
+      get: () => shape.gain, set: (v) => { shape.gain = v; }, settle: relay,
+    });
+    slider('Detail thins from (m)', {
+      min: 500, max: 20000, step: 100,
+      get: () => shape.detailFrom, set: (v) => { shape.detailFrom = v; }, settle: relay,
+    });
+    slider('...over (m)', {
+      min: 500, max: 25000, step: 100,
+      get: () => shape.detailOver, set: (v) => { shape.detailOver = v; }, settle: relay,
+    });
+
+    section('Mountains: surface');
+    slider('Ridge / hollow shading', {
+      min: 0, max: 1.5, step: 0.01,
+      get: () => u.reliefShading.value, set: (v) => { u.reliefShading.value = v; },
+    });
+    slider('Rib strength', {
+      min: 0, max: 2, step: 0.01,
+      get: () => u.ribStrength.value, set: (v) => { u.ribStrength.value = v; },
+    });
+    slider('Rib size (m)', {
+      min: 20, max: 1200, step: 10,
+      get: () => u.ribScale.value, set: (v) => { u.ribScale.value = v; },
+    });
+    slider('Grain strength', {
+      min: 0, max: 2, step: 0.01,
+      get: () => u.grainStrength.value, set: (v) => { u.grainStrength.value = v; },
+    });
+    slider('Grain size (m)', {
+      min: 5, max: 300, step: 1,
+      get: () => u.grainScale.value, set: (v) => { u.grainScale.value = v; },
+    });
+    slider('Ambient', {
+      min: 0, max: 1, step: 0.01,
+      get: () => u.ambient.value, set: (v) => { u.ambient.value = v; },
+    });
+
+    section('Mountains: snow and tree line');
+    slider('Snow line (m)', {
+      min: 0, max: 4000, step: 10,
+      get: () => u.snowLine.value, set: (v) => { u.snowLine.value = v; },
+    });
+    slider('Snow fade (m)', {
+      min: 10, max: 2000, step: 10,
+      get: () => u.snowFade.value, set: (v) => { u.snowFade.value = v; },
+    });
+    slider('Snow line wander', {
+      min: 0, max: 2, step: 0.01,
+      get: () => u.snowScatter.value, set: (v) => { u.snowScatter.value = v; },
+    });
+    slider('Tree line (m)', {
+      min: 0, max: 3000, step: 10,
+      get: () => u.treeLine.value, set: (v) => { u.treeLine.value = v; },
+    });
+    slider('Tree line fade (m)', {
+      min: 10, max: 1500, step: 10,
+      get: () => u.treeFade.value, set: (v) => { u.treeFade.value = v; },
+    });
+
+    section('Mountains: distance');
+    slider('Haze density', {
+      min: 0, max: 0.001, step: 0.000005,
+      get: () => u.hazeDensity.value, set: (v) => { u.hazeDensity.value = v; },
+    });
+    slider('Contrast loss', {
+      min: 0, max: 0.002, step: 0.00001,
+      get: () => u.flattenDensity.value, set: (v) => { u.flattenDensity.value = v; },
+    });
   }
 
   return {
@@ -553,7 +697,7 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
         builtFor = null;
       }
       if (show && !el) {
-        build(outside.daylight, outside.post, outside.terrain, outside.grass);
+        build(outside.daylight, outside.post, outside.terrain, outside.grass, outside.range);
         builtFor = outside.post;
       }
       if (el) el.style.display = show ? 'block' : 'none';

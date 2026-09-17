@@ -602,12 +602,16 @@ class ColorGradingPass extends Pass {
  *   and the clouds' ambient light
  * @param {THREE.DirectionalLight} opts.sun  the clouds are lit by its colour
  *   and intensity
+ * @param {{ object: THREE.Object3D, camera: THREE.Camera, sky: THREE.Object3D,
+ *   update(camera: THREE.Camera): void }|null} [opts.distant]
+ *   the mountains beyond the terrain (scene/outside/distantRange.js), drawn
+ *   in a pass of their own before the scene -- see the note at that pass
  * @returns {{ render(dt: number): void, dispose(): void, fog: HeightFogPass,
  *   exposure: AutoExposurePass, grading: ColorGradingPass }}  the passes, for
  *   switching them off (`enabled`) and tuning them live
  */
 export function createOutdoorPost({
-  renderer, scene, camera, sunDirection, groundHeight, skyTexture, sun,
+  renderer, scene, camera, sunDirection, groundHeight, skyTexture, sun, distant = null,
 }) {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   // Half float for HDR, multisampled because a render target does not get the
@@ -618,11 +622,77 @@ export function createOutdoorPost({
     samples: 4,
     depthTexture: new THREE.DepthTexture(size.x, size.y, THREE.FloatType),
   });
+  // What the sky's visibility was before the far pass hid it for a moment;
+  // see the two passes below.
+  let skyShowing = true;
+
   const composer = new EffectComposer(renderer, target);
   composer.setPixelRatio(renderer.getPixelRatio());
   composer.setSize(window.innerWidth, window.innerHeight);
 
-  composer.addPass(new RenderPass(scene, camera));
+  // --- the mountains, first and furthest ------------------------------------
+  // In their own pass with their own camera, because the scene's near plane
+  // is 1 cm -- a book at arm's length -- and 1 cm against 30 km leaves no
+  // depth precision at the far end at all: the ridges would z-fight through
+  // one another. So they are drawn into a cleared buffer with a camera whose
+  // near plane is 100 m, and the scene then keeps the COLOUR and clears the
+  // DEPTH, drawing over them with a depth range of its own.
+  //
+  // Safe because everything in the scene really is nearer than everything
+  // there: the ring begins where the walkable terrain ends.
+  //
+  // They are not in the depth buffer the height fog reads, which is why they
+  // carry their own aerial perspective (distantRange.js).
+  //
+  // THE SKY GOES WITH THEM, which is the whole reason these two passes have to
+  // cooperate rather than simply run in order. The Sky is an opaque dome in
+  // the SCENE, drawn at the far plane -- so a scene pass that keeps the far
+  // pass's colour would still paint the dome straight over the mountains, and
+  // the mountains would be there, correct, and invisible.
+  //
+  // It is BORROWED for the far pass rather than moved into it, because the
+  // scene owns it: outdoorLight.js's captureSkyLight re-adds it to the scene
+  // every time the sun moves, and the XR path (renderXR below) renders the
+  // scene with the dome in it. So the far pass takes it for the length of one
+  // render, hands it straight back, and leaves it hidden for the scene pass,
+  // which puts it back as it found it.
+  let distantScene = null;
+  if (distant) {
+    distantScene = new THREE.Scene();
+    distantScene.add(distant.object);
+    // Before the mountains, whatever the sort order makes of a dome centred
+    // on the camera. It writes no depth, so this is only about colour.
+    distant.sky.renderOrder = -1;
+
+    const farPass = new RenderPass(distantScene, distant.camera);
+    const drawFar = farPass.render.bind(farPass);
+    farPass.render = (...args) => {
+      const home = distant.sky.parent;
+      // What the rest of the app wants the sky to be doing -- the debug panel
+      // can switch it off -- so the scene pass restores that and not `true`.
+      skyShowing = distant.sky.visible;
+      distant.sky.visible = true;
+      distantScene.add(distant.sky);
+      drawFar(...args);
+      home?.add(distant.sky);
+      distant.sky.visible = false;
+    };
+    composer.addPass(farPass);
+  }
+
+  const scenePass = new RenderPass(scene, camera);
+  if (distant) {
+    // Keep the sky and the mountains the far pass drew; start depth afresh,
+    // because everything here is nearer than everything there.
+    scenePass.clear = false;
+    scenePass.clearDepth = true;
+    const drawScene = scenePass.render.bind(scenePass);
+    scenePass.render = (...args) => {
+      drawScene(...args);
+      distant.sky.visible = skyShowing;
+    };
+  }
+  composer.addPass(scenePass);
   const clouds = new VolumetricCloudsPass({ camera, sun, sunDirection, skyTexture });
   composer.addPass(clouds);
   const fog = new HeightFogPass({ camera, sunDirection, groundHeight, skyTexture, clouds });
@@ -802,6 +872,8 @@ export function createOutdoorPost({
       // draw them a second time.
       xrSky.visible = false;
       xr.presenting = false;
+      // Wherever the scene's camera is looking, with its own near and far.
+      distant?.update(camera);
       composer.render(dt);
     },
 
