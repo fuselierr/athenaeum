@@ -9,6 +9,8 @@ import { loadRoomSurfaces } from './scene/inside/surfaces.js';
 import { loadSofa } from './scene/inside/sofa.js';
 import { addMezzanine } from './scene/inside/mezzanine.js';
 import { addWallShelf } from './scene/inside/wallShelf.js';
+import { numberSections } from './scene/inside/callNumbers.js';
+import { createShelfRows } from './scene/inside/shelfRows.js';
 import { populateShelf } from './scene/inside/shelfBooks.js';
 import { addInstructionCard } from './scene/inside/instructionCard.js';
 import { createOutside } from './scene/outside/outside.js';
@@ -104,6 +106,23 @@ const cameraModes = createCameraModes({
     // the book down on nothing.
     if (outside?.outside) return;
     if (shelfBooks?.handleClick(event)) return;
+    // The wall's shelves: holding a book, a click files it on THAT row; empty
+    // handed, a click takes the book you clicked back down off it.
+    if (bookCarry?.held) {
+      const row = shelfRows?.rowUnder(event.clientX, event.clientY);
+      if (row) {
+        fileHeldBook(row);
+        return;
+      }
+    } else {
+      const filed = shelfRows?.filedUnder(event.clientX, event.clientY);
+      // Only one that can be opened again: a book with no library record of its
+      // own has nothing to load, and is better left standing.
+      if (filed?.record?.id) {
+        openFiledBook(filed);
+        return;
+      }
+    }
     putBookDown(event); // a click past the shelf, holding a book
   },
   // A right-click on the bench outside, or anywhere on the sofa inside, sits
@@ -526,6 +545,8 @@ populateShelf(bookshelf, {
 })
   .then((result) => {
     shelfBooks = result;
+    // Standing the way the reader last left it (state/settings.js).
+    result.arrange(settings.shelf);
     // What the Community tab can put a cover on -- and any covers already on them.
     community.books = result.books;
     applyDesigns();
@@ -597,6 +618,136 @@ async function takeFreshCopy() {
 }
 
 /**
+ * Every book in the room back on its shelf: the copies are let go of, the shelf
+ * stands its own models up again, and the desk is left as it was when you came
+ * in -- one book on it, nothing open. The Scene tab's "shelve books".
+ */
+async function shelveBooks() {
+  // Anything still loading is abandoned, and anything in hand let go of.
+  openSequence += 1;
+  bookCarry?.letGo();
+  shelfBooks?.release();
+
+  // A fresh copy is focused BEFORE the old ones go: everything downstream reads
+  // the book in focus, and there must never be a frame without one.
+  const cleared = books.splice(0, books.length);
+  focused = null;
+  focusOn(await addBook());
+  for (const book of cleared) book.dispose();
+
+  shelfBooks?.shelveAll(settings.shelf);
+
+  jacket = null;
+  jacketBookId = null;
+  bookState.id = null;
+  bookState.title = '';
+  bookState.author = null;
+  bookState.chapters = [];
+  bookState.status = '';
+}
+
+/**
+ * File the book in your hands on a row of the wall's shelves: it becomes one of
+ * the books standing there (scene/inside/shelfRows.js), laid out with the rest
+ * of that row, and the copy that was in the room is let go of -- a shelved book
+ * has nothing left to simulate.
+ */
+/**
+ * The pose the real book has to be in for its shut self to sit exactly where a
+ * shelf model does: the model's own pose with the book's shut offset taken back
+ * out of it. The same arithmetic the standing shelf does when it swaps a model
+ * for the book (shelfBooks' mirrorTo), for a slot on the wall.
+ */
+function poseAtSlot(slot) {
+  const shut = pages.close(SHUT_ON);
+  const scale = slot.size.length / HINGE_LEN;
+  bookGroup.scale.setScalar(scale);
+  const quaternion = slot.quaternion.clone().multiply(shut.quaternion.clone().invert());
+  const position = slot.position.clone()
+    .sub(shut.centre.clone().multiplyScalar(scale).applyQuaternion(quaternion));
+  return { position, quaternion };
+}
+
+/** The copy in focus leaves the room: another is focused first, then it goes. */
+function letCopyGo(book) {
+  const at = books.indexOf(book);
+  if (at >= 0) books.splice(at, 1);
+  // Callers focus a spare first; this is the belt and braces, because a frame
+  // with nothing in focus is a frame that throws.
+  if (focused === book) {
+    const spare = books[books.length - 1];
+    if (spare) focusOn(spare);
+  }
+  book.dispose();
+  jacket = null;
+  jacketBookId = null;
+  bookState.id = null;
+  bookState.title = '';
+  bookState.author = null;
+  bookState.chapters = [];
+}
+
+/** Take a book down off one of the wall's shelves and open it. */
+async function openFiledBook(entry) {
+  const slot = shelfRows.remove(entry);
+  if (!slot) return;
+  shelfRows.arrange(settings.shelf);
+  // Where it came from: the book arrives there, goes back there, and is put
+  // back there if the open is given up on.
+  await openFromShelf(slot.record, slot);
+}
+
+async function fileHeldBook(row) {
+  const book = focused;
+  if (!book) return;
+  // What the shelf needs to dress a model: the library record it was opened
+  // from, or what is known about whatever is open.
+  const record = book.record ?? {
+    id: bookState.id,
+    title: bookState.title || 'Untitled',
+    author: bookState.author,
+    description: null,
+    coverUrl: null,
+    pages: content?.pageCount ?? null,
+  };
+  const entry = await shelfRows.file(
+    row, record, community.attachments[record.id] ?? null, { hidden: true },
+  );
+  if (!entry) {
+    setBookStatus('That shelf is full.');
+    return;
+  }
+  // Laid out first, so the book flies to where it will actually stand rather
+  // than to where the row happened to end before it joined.
+  shelfRows.arrange(settings.shelf);
+
+  // And it FLIES there, shutting on the way, the same trip a book makes going
+  // back to the shelf it came off. The model it becomes is standing there
+  // already, out of sight, and shows the moment the book lands on it.
+  const spare = books.find((one) => one !== book) ?? null;
+  const home = poseAtSlot({ ...entry, position: entry.rest, quaternion: shelfRows.upright });
+  const sent = bookCarry?.returnTo(home, async () => {
+    shelfRows.reveal(entry);
+    focusOn(spare ?? await addBook());
+    letCopyGo(book);
+  });
+  if (!sent) {
+    // Nothing was being carried after all: it simply stands there.
+    shelfRows.reveal(entry);
+    focusOn(spare ?? await addBook());
+    letCopyGo(book);
+  }
+}
+
+// The shelves stand the way the Scene tab asks: in their order, and pushed to
+// one end, the middle or the other (state/settings.js). Both the standing shelf
+// and whatever has been filed on the walls.
+watch(() => [settings.shelf.sort, settings.shelf.justify], () => {
+  shelfBooks?.arrange(settings.shelf);
+  shelfRows?.arrange(settings.shelf);
+});
+
+/**
  * The copy an open is loading into while it loads: { token, copy, focusWas }.
  *
  * An open can be abandoned after its copy exists -- Escape, or another book
@@ -612,7 +763,10 @@ function discardLoading(token) {
   const { copy, focusWas } = loading;
   loading = null;
   const at = books.indexOf(copy);
-  if (at >= 0) books.splice(at, 1);
+  // Already gone: shelved, or let go of to make room for another book. Nothing
+  // to give up, and disposing a second time would free its physics twice.
+  if (at < 0) return;
+  books.splice(at, 1);
   // Back to the book that was in your hands before this one was started.
   if (focused === copy) {
     const back = books.includes(focusWas) ? focusWas : books[books.length - 1];
@@ -656,7 +810,47 @@ bookCarry = createBookCarry({
   // this very book.
   canTake: () => !shelfBooks?.held,
 });
+// The wall's shelves, and what is filed on them: click a row holding a book and
+// the book goes there (scene/inside/shelfRows.js).
+const shelfRows = createShelfRows({
+  scene, camera, renderer, runs: [wallShelf, deckShelf],
+});
+
 const debugLabels = createDebugLabels({ scene, camera, renderer, getPages });
+
+// --- the shelving, filed ----------------------------------------------------
+// Every section of shelving in the room gets a call number, counting along the
+// wall: the lower run, the balcony run above it, and then the standing shelf
+// the books actually come off. They are labels rather than a filing system --
+// nothing is shelved by them -- and they show with the ` overlay, where knowing
+// which bay is which is worth something (scene/inside/callNumbers.js).
+{
+  let filed = 0;
+  for (const run of [wallShelf, deckShelf]) {
+    if (!run) continue;
+    filed += numberSections(run.sections, filed);
+    for (const section of run.sections) {
+      debugLabels.mark(section.callNumber, section.position);
+      // And each shelf within it, in its own colour: the bay says what it
+      // holds, a row says where in that span you are standing.
+      for (const shelf of section.shelves) {
+        debugLabels.mark(shelf.callNumber, shelf.position, 'rgba(58, 74, 34, 0.86)');
+      }
+    }
+  }
+  // The standing bookshelf is one section of its own: its front face, up at the
+  // top, where a run of shelving would carry its label.
+  const shelfFront = new THREE.Box3().setFromObject(bookshelf);
+  const standing = [{
+    position: new THREE.Vector3(
+      shelfFront.max.x + 0.03,
+      shelfFront.max.y - 0.14,
+      (shelfFront.min.z + shelfFront.max.z) / 2,
+    ),
+  }];
+  numberSections(standing, filed);
+  debugLabels.mark(standing[0].callNumber, standing[0].position);
+}
 const anglePanel = createAnglePanel({ getPages, getPageTurn: () => dragPageTurn });
 // Outdoor lighting switches and sliders, in the same ` overlay -- outside only.
 const outdoorPanel = createOutdoorPanel({ getOutside: () => outside, renderer, scene });
@@ -743,8 +937,18 @@ function setBookStatus(text) {
   bookState.status = text;
 }
 
-async function openFromShelf(record) {
+/**
+ * @param {object} record  the library record to open
+ * @param {object|null} [slot]  the slot on the wall it was taken down from
+ *   (scene/inside/shelfRows.js): the book arrives standing in it and flies into
+ *   the hand from there, goes back to it when put back -- and is PUT BACK ON IT
+ *   if this open is abandoned, so giving up never loses the book off the shelf.
+ */
+async function openFromShelf(record, slot = null) {
   const token = (openSequence += 1);
+  // Whether the slot has been handed to the book that arrived. Until it has,
+  // this open owes the shelf a book.
+  let slotTaken = false;
   // Chapters come off the shelf with the book: the library listing already
   // carries them, so the Book tab is populated the moment you pick it up
   // rather than when the last page finishes rasterizing.
@@ -775,6 +979,8 @@ async function openFromShelf(record) {
         // the copy with it (discardLoading).
         const focusWas = focused;
         loading = { token, copy: await takeFreshCopy(), focusWas };
+        // Which book this copy IS, for whenever it is filed on a shelf.
+        loading.copy.record = record;
         if (token !== openSequence) {
           discardLoading(token);
           return;
@@ -788,7 +994,26 @@ async function openFromShelf(record) {
         // up on it later is no longer this open's business.
         loading = null;
         content.setCanvases(canvases);
-        swapModelForBook();
+        if (slot) {
+          slotTaken = true;
+          // Standing in its slot, and into your hand from there -- and back to
+          // that same slot, as a model again, if it is put back.
+          const home = poseAtSlot(slot);
+          bookGroup.position.copy(home.position);
+          bookGroup.quaternion.copy(home.quaternion);
+          placement.reset(home.position, home.quaternion);
+          bookCarry.takeFrom(home, async (arrived) => {
+            if (!arrived) return;
+            const back = focused;
+            await shelfRows.file(
+              slot.row, slot.record, community.attachments[slot.record?.id] ?? null,
+            );
+            shelfRows.arrange(settings.shelf);
+            const spare = books.find((one) => one !== back) ?? null;
+            focusOn(spare ?? await addBook());
+            letCopyGo(back);
+          });
+        } else swapModelForBook();
       },
     });
   } catch (err) {
@@ -798,6 +1023,13 @@ async function openFromShelf(record) {
     // Abandoned, or failed part way: the copy this open made goes too. Nothing
     // to do when it arrived -- onPagesReady let go of it.
     discardLoading(token);
+    // And the shelf gets its book back. Taking one down removes its model, so
+    // an open that never finished would otherwise lose the book from both the
+    // shelf and the room.
+    if (slot && !slotTaken) {
+      await shelfRows.file(slot.row, slot.record, community.attachments[slot.record?.id] ?? null);
+      shelfRows.arrange(settings.shelf);
+    }
     if (token === openSequence) bookState.loading = false;
   }
 }
@@ -1064,6 +1296,8 @@ mountMenu({
   // The Scene tab's room / outside switch (scene/outside/outside.js).
   goOutside: () => outside?.goOutside(),
   goInside: () => outside?.goInside(),
+  // And its shelf: every book in the room back where it came from.
+  shelveBooks,
 
   // Escape, innermost meaning first: a book in the hand goes back before
   // the menu will open. Returning true means the press was spent.
@@ -1157,6 +1391,7 @@ renderer.setAnimationLoop(() => {
   // After the camera has finished moving for the frame: a book in hand is
   // posed from it, and stepping first would leave it a frame behind.
   shelfBooks?.update(dt);
+  shelfRows.update(dt); // the books filed on the walls draw out under the cursor too
   bookCarry.update(dt); // posed from the camera too
   instructionCard?.update(dt); // also posed from the camera, so also after it has moved
   // Outside draws through its own fog and exposure chain (scene/outside/outdoorPost.js).

@@ -171,8 +171,23 @@ const BINDINGS = [
   0x6b4a1f, 0x2b4a4a, 0x4d3a5a, 0x7a4b2a, 0x33403a,
 ];
 
+/**
+ * How a book stands on a shelf, shared with the wall's rows (shelfRows.js) so
+ * that a book filed there is the same object it would be here.
+ */
+export const SHELF_LAYOUT = {
+  heightFill: HEIGHT_FILL,
+  widthRatio: WIDTH_RATIO,
+  gap: GAP,
+  // And how a book under the cursor draws itself out, so one filed on a wall
+  // behaves exactly like one on the standing shelf.
+  pullFraction: PULL_FRACTION,
+  pullRate: PULL_RATE,
+  returnRate: RETURN_RATE,
+};
+
 /** Spine thickness for a book of `pages` pages. See REFERENCE_PAGES. */
-function thicknessForPages(pages) {
+export function thicknessForPages(pages) {
   const count = Number.isFinite(pages) && pages > 0 ? pages : FALLBACK_PAGES;
   const scaled = REFERENCE_THICKNESS * Math.sqrt(count / REFERENCE_PAGES);
   return Math.max(MIN_THICKNESS, Math.min(MAX_THICKNESS, scaled));
@@ -186,7 +201,7 @@ function thicknessForPages(pages) {
  * generated from it. The palette is only reached by a book with no art at
  * all to sample a binding colour from.
  */
-function dressModel(book, index, { length, width, thickness }, design = null) {
+export function dressModel(book, index, { length, width, thickness }, design = null) {
   const cover = design?.front ?? api(book.coverUrl);
   return createBookModel({
     length,
@@ -416,6 +431,70 @@ export async function populateShelf(bookshelf, {
     onProgress?.({ stage: 'shelving', done: i + 1, total });
   }
 
+  // --- keeping the shelf ---------------------------------------------------
+  /** The books in the order asked for: as the library lists them, by title, or by author. */
+  function inOrder(entries, sort) {
+    const text = (value) => (value ?? '').toString().trim().toLowerCase();
+    const byTitle = (a, b) => text(a.book.title).localeCompare(text(b.book.title));
+    const sorted = [...entries];
+    if (sort === 'title') sorted.sort(byTitle);
+    // One author's books stand together, in title order among themselves.
+    else if (sort === 'author') {
+      sorted.sort((a, b) => text(a.book.author).localeCompare(text(b.book.author)) || byTitle(a, b));
+    } else sorted.sort((a, b) => a.index - b.index);
+    return sorted;
+  }
+
+  /**
+   * Stand the row up again: in `sort` order, with the run of books pushed to
+   * one end of the shelf, centred, or pushed to the other (`justify`).
+   *
+   * Only books actually ON the shelf are placed -- one that has been taken down
+   * leaves no gap behind it, and takes its place again when it is shelved. What
+   * moves is each book's `rest`; update() poses them from that, so they are
+   * standing in their new places on the next frame.
+   */
+  function arrange({ sort = 'shelf', justify = 'left' } = {}) {
+    const shelved = hovering.filter((entry) => entry.group.visible);
+    const run = shelved.reduce((sum, entry) => sum + entry.size.thickness, 0)
+      + GAP * Math.max(0, shelved.length - 1);
+    const slack = Math.max(0, (endAcross - startAcross) - run);
+    let lead = 0;
+    if (justify === 'middle') lead = slack / 2;
+    else if (justify === 'right') lead = slack;
+
+    let at = (FILL_FROM_LOW_END ? startAcross : endAcross) + step * lead;
+    for (const entry of inOrder(shelved, sort)) {
+      const alongAxis = at + step * (entry.size.thickness / 2);
+      entry.rest.set(
+        alongWidth ? depthOffset : alongAxis,
+        floorY + entry.size.length / 2,
+        alongWidth ? alongAxis : depthOffset,
+      );
+      at += step * (entry.size.thickness + GAP);
+    }
+    // Where a book added later would stand (add()).
+    cursor = at;
+  }
+
+  /**
+   * Every book back on the shelf -- whatever was taken down is standing in the
+   * row again -- and the row laid out to match.
+   *
+   * The reader's own copies are the CALLER's business: the shelf only knows
+   * about its models. main.js lets go of the books in the room and calls
+   * release() for anything still in hand before this.
+   */
+  function shelveAll(order) {
+    for (const entry of hovering) {
+      entry.group.visible = true;
+      entry.hold = 0;
+      entry.offset = 0;
+      entry.target = 0;
+    }
+    arrange(order);
+  }
+
   // --- hover pull-out ----------------------------------------------------
   const pointer = new THREE.Vector2();
   const raycaster = new THREE.Raycaster();
@@ -592,6 +671,12 @@ export async function populateShelf(bookshelf, {
         size: { ...size },
       }));
     },
+
+    /** Stand the row up in a given order and justification. See arrange. */
+    arrange,
+
+    /** Every book back on the shelf, and the row laid out again. See shelveAll. */
+    shelveAll,
 
     /**
      * Shelve one more book. An uploaded epub joins the library

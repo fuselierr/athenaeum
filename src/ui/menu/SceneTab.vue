@@ -22,6 +22,20 @@ const props = defineProps({ bridge: { type: Object, required: true } });
 
 const loading = ref(null);
 const failed = ref(null);
+const shelving = ref(false);
+
+/** Every book lying about the room, back on the shelf it came off. */
+async function shelve() {
+  if (shelving.value) return;
+  shelving.value = true;
+  try {
+    await props.bridge.shelveBooks();
+  } catch (err) {
+    console.error('Shelving the books failed:', err);
+  } finally {
+    shelving.value = false;
+  }
+}
 
 async function choose(background) {
   if (loading.value) return;
@@ -87,6 +101,55 @@ function go(place) {
   </section>
 
   <section class="menu-section">
+    <h3>The shelf</h3>
+    <p class="menu-hint" style="margin-bottom: 12px;">
+      <template v-if="world.place === 'room'">
+        How the shelf keeps itself, and where the books you have taken down end
+        up. Books on the shelf are laid out again as soon as you change either.
+      </template>
+      <template v-else>
+        The shelf is in the room — go back inside to put it in order.
+      </template>
+    </p>
+
+    <div class="menu-row">
+      <span class="label">Books out in the room</span>
+      <button
+        type="button"
+        class="menu-button"
+        :disabled="world.place !== 'room' || shelving"
+        @click="shelve"
+      >{{ shelving ? 'Shelving…' : 'Shelve them all' }}</button>
+    </div>
+
+    <div class="menu-row">
+      <span class="label">Sort by</span>
+      <select
+        v-model="settings.shelf.sort"
+        class="shelf-field"
+        :disabled="world.place !== 'room'"
+      >
+        <option value="shelf">However they came</option>
+        <option value="title">Title</option>
+        <option value="author">Author</option>
+      </select>
+    </div>
+
+    <div class="menu-row">
+      <span class="label">Justify</span>
+      <select
+        v-model="settings.shelf.justify"
+        class="shelf-field"
+        :disabled="world.place !== 'room'"
+      >
+        <option value="left">Left</option>
+        <option value="middle">Middle</option>
+        <option value="right">Right</option>
+      </select>
+    </div>
+  </section>
+
+  <section class="menu-section">
     <h3>Background</h3>
     <p class="menu-hint" style="margin-bottom: 12px;">
       <template v-if="world.place === 'room'">
@@ -123,6 +186,18 @@ function go(place) {
 </template>
 
 <style scoped>
+.shelf-field {
+  min-width: 180px;
+  padding: 5px 7px;
+  background: var(--ath-field);
+  color: var(--ath-text);
+  border: 1px solid var(--ath-line);
+  border-radius: var(--ath-radius-sm);
+  font: inherit;
+}
+.shelf-field:focus { border-color: var(--ath-orange); }
+.shelf-field:disabled { opacity: 0.45; }
+
 .scenes {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));

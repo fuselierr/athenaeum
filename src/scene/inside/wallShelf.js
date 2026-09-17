@@ -29,6 +29,7 @@ const PILLAR_PROUD = 0.07; // how far a pillar stands out past the shelf fronts
 const PILLAR_SPACING = 1.5; // about this far apart across the run
 const LAYERS = 8; // counting the solid one at the bottom and the solid one on top
 const WOOD_COLOR = 0x4a3222; // walnut, as the rest of the room's woodwork
+const SHELF_LABEL_LIFT = 0.08; // a row's label, above the board it stands on
 
 /**
  * @param {THREE.Scene} scene
@@ -41,8 +42,11 @@ const WOOD_COLOR = 0x4a3222; // walnut, as the rest of the room's woodwork
  * @param {number} [opts.depth]  how far it comes out from the wall
  * @param {number} [opts.layers]  including the solid bottom and top
  * @param {THREE.Material|null} [opts.material]
- * @returns {{ object: THREE.Mesh, collision: Array<{ center: object, halfExtents: object }>,
- *   dispose(): void }}
+ * @returns {{ object: THREE.Mesh, sections: Array<{ bay: number, position: THREE.Vector3,
+ *   width: number, callNumber: string|null,
+ *   shelves: Array<{ row: number, position: THREE.Vector3, callNumber: string|null,
+ *     minX: number, maxX: number, y: number, z: number, height: number }> }>,
+ *   collision: Array<{ center: object, halfExtents: object }>, dispose(): void }}
  */
 export function addWallShelf(scene, {
   minX, maxX, wallZ, floorY, height,
@@ -84,6 +88,44 @@ export function addWallShelf(scene, {
     ));
   }
 
+  // THE SECTIONS: one to a bay, the way a library counts shelving -- a bay is
+  // the vertical unit between two uprights, and it is the bay that carries the
+  // label saying what is filed in it (scene/inside/callNumbers.js). The point
+  // named is where such a label would be nailed: the middle of the bay, on the
+  // solid head at the top, just proud of the pillars.
+  const sections = [];
+  const frontZ = wallZ - (depth + PILLAR_PROUD) - 0.03;
+  for (let bay = 0; bay < bays; bay++) {
+    const middleOfBay = minX + (width * (bay + 0.5)) / bays;
+    // And the rows inside it: the open layers, TOP FIRST, which is the order a
+    // bay is read and filled in. A row's label sits just above the board it
+    // stands on -- where a shelf's own label goes.
+    const shelves = [];
+    for (let board = layers - 2; board >= 1; board--) {
+      // What a book standing here has to work with: the span between the
+      // pillars either side, the top of the board it stands on, how much head
+      // room there is to the next board, and how far in it stands.
+      const standsOn = floorY + board * layer + BOARD / 2;
+      shelves.push({
+        row: shelves.length,
+        position: new THREE.Vector3(middleOfBay, standsOn + SHELF_LABEL_LIFT, frontZ),
+        minX: minX + (width * bay) / bays + PILLAR_WIDTH / 2,
+        maxX: minX + (width * (bay + 1)) / bays - PILLAR_WIDTH / 2,
+        y: standsOn,
+        z: middleZ,
+        height: layer - BOARD,
+        callNumber: null,
+      });
+    }
+    sections.push({
+      bay,
+      width: width / bays,
+      position: new THREE.Vector3(middleOfBay, floorY + height - layer / 2, frontZ),
+      callNumber: null, // given one by whoever is numbering the room
+      shelves,
+    });
+  }
+
   const ownsMaterial = !material;
   const wood = material
     ?? new THREE.MeshStandardMaterial({ color: WOOD_COLOR, roughness: 0.62, metalness: 0 });
@@ -96,6 +138,12 @@ export function addWallShelf(scene, {
 
   return {
     object,
+
+    /**
+     * Its bays, each one a section to be filed under a call number
+     * (scene/inside/callNumbers.js). In the order they stand along the wall.
+     */
+    sections,
 
     /**
      * The run as one box for the book's placement physics

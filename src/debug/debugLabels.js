@@ -5,6 +5,11 @@ import { HINGE_LEN } from '../book/pageSim/config.js';
 import { CURL_ROWS } from '../book/pageSim/curlGeometry.js';
 
 /**
+ * The ` overlay's labels. Two kinds: the book's own, which follow it, and ones
+ * FIXED in the room -- the shelving's call numbers (scene/inside/callNumbers.js),
+ * put up once by main.js and left where they are. Both go up and down together
+ * with the key.
+ *
  * Floating orientation labels: TOP/BOTTOM at the two ends of the spine
  * (the hinge line every page swings from -- world X, per math.js's
  * "every page rotates about world X"), and A/B/C/D on each panel's own
@@ -144,5 +149,24 @@ export function createDebugLabels({ scene, camera, renderer, getPages }) {
     cssRenderer.render(scene, camera);
   }
 
-  return { update };
+  return {
+    update,
+
+    /**
+     * Hang a label at a point in the room and leave it there -- a shelf
+     * section's call number. It shows and hides with the book's own labels,
+     * and needs no per-frame work: nothing it is attached to moves.
+     *
+     * @param {string} text
+     * @param {THREE.Vector3} position  world space
+     * @param {string} [color]
+     * @returns {CSS2DObject}
+     */
+    mark(text, position, color = 'rgba(28, 52, 96, 0.88)') {
+      const label = makeLabel(text, color);
+      label.position.copy(position);
+      labelGroup.add(label);
+      return label;
+    },
+  };
 }

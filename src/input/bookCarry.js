@@ -407,6 +407,27 @@ export function createBookCarry({
     },
 
     /**
+     * Send the book home to a pose of the caller's choosing -- a slot on a
+     * shelf it is being filed into -- and be told when it lands. The same trip
+     * putBack makes, to somewhere other than where the book came from, so a
+     * book being shelved FLIES there rather than appearing there.
+     *
+     * @param {{ position: THREE.Vector3, quaternion: THREE.Quaternion }} home
+     * @param {(arrived: boolean) => void} [onArrival]
+     */
+    returnTo(home, onArrival = null) {
+      if (!held && !returning) return false;
+      homePosition.copy(home.position);
+      homeQuaternion.copy(home.quaternion);
+      onReturn = onArrival;
+      hand = null;
+      held = false;
+      returning = true;
+      startTrip();
+      return true;
+    },
+
+    /**
      * Stop carrying it on the spot, for a caller that is placing the book
      * itself (setting it down on the desk, resetting it).
      */

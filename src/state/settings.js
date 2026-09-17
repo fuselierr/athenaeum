@@ -35,6 +35,12 @@ export const settings = reactive({
   scene: {
     background: null, // a background id; null means the one built in
   },
+  // The shelf in the room. Not a look but an ORDER: how the books stand on it
+  // (scene/inside/shelfBooks.js's arrange).
+  shelf: {
+    sort: 'shelf', // 'shelf' as the library lists them, or 'title' / 'author'
+    justify: 'left', // where the run of them sits: 'left', 'middle', 'right'
+  },
 });
 
 /**
