@@ -7,6 +7,7 @@ import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../../ui/loadingScreen.js';
 import { createGrass } from './grass.js';
 import { loadParkBench } from './parkBench.js';
+import { loadTree } from './tree.js';
 import { world } from '../../state/world.js';
 import { watch } from 'vue';
 import { settings } from '../../state/settings.js';
@@ -34,7 +35,9 @@ import { qualityPreset } from '../../state/quality.js';
  *
  * A BENCH stands a few steps ahead of where you come out, facing the way you
  * were looking, with the grass kept off it (scene/outside/parkBench.js).
- * Right-click it, near enough, and you sit down on it.
+ * Right-click it, near enough, and you sit down on it. A TREE stands over it
+ * (scene/outside/tree.js), rooted behind the backrest so the canopy is
+ * overhead and the view from the seat is clear.
  *
  * AND BACK. goInside() puts the room's look back -- its fog, its view
  * distance, its backdrop and light, no tone mapping -- exactly as they were
@@ -98,6 +101,7 @@ export function createOutside({
   let post = null;
   let grass = null;
   let bench = null;
+  let tree = null;
 
   // The graphics quality reaches whatever outdoors is built right now; a trip
   // built later reads the preset as it builds.
@@ -219,6 +223,11 @@ export function createOutside({
       scene.remove(bench.object);
       bench.dispose();
     }
+    if (tree) {
+      scene.remove(tree.object);
+      tree.dispose();
+    }
+    tree = null;
     bench = null;
     post = null;
     daylight = null;
@@ -251,10 +260,15 @@ export function createOutside({
     state = 'loading';
     world.place = 'loading';
     loadingScreen.show('Opening the door…');
-    // The bench downloads alongside the land. It is only scenery, so one that
-    // will not load is left out rather than keeping you indoors.
+    // The bench and its tree download alongside the land. They are only
+    // scenery, so one that will not load is left out rather than keeping you
+    // indoors.
     const benchLoading = loadParkBench().catch((err) => {
       console.warn('The park bench did not load; going out without it.', err);
+      return null;
+    });
+    const treeLoading = loadTree().catch((err) => {
+      console.warn('The tree did not load; going out without it.', err);
       return null;
     });
     try {
@@ -311,6 +325,27 @@ export function createOutside({
         });
         scene.add(bench.object);
         grass.setClearing(bench.object.position.x, bench.object.position.z, bench.clearingRadius);
+      }
+
+      // Over the bench, once the bench has chosen its spot -- and before the
+      // sun is made, whose shadow map is drawn once over whatever is standing
+      // by then (scene/outside/outdoorLight.js).
+      tree = await treeLoading;
+      if (tree && bench) {
+        // The way the BENCH ended up facing, from the seat itself, rather
+        // than the camera direction it was placed from -- the same heading,
+        // said by the thing the tree is standing over.
+        const seatYaw = bench.seat.yaw;
+        tree.place({
+          x: bench.object.position.x,
+          z: bench.object.position.z,
+          facing: new THREE.Vector3(-Math.sin(seatYaw), 0, -Math.cos(seatYaw)),
+          heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+        });
+        scene.add(tree.object);
+      } else if (tree) {
+        tree.dispose();
+        tree = null;
       }
 
       loadingScreen.status('Lighting the sky…', 0.72, 0.8);
@@ -391,6 +426,7 @@ export function createOutside({
       if (state !== 'outside' || !post) return false;
       followBook();
       grass?.update(dt);
+      tree?.update(dt);
       // In VR the chain cannot run -- it renders into targets of its own,
       // which an XR session cannot present -- so the headset gets the clouds
       // and the exposure another way (outdoorPost.js's renderXR). The grass

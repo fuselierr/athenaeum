@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { sampleTerrain } from './terrain.js';
+import { WIND, WIND_GLSL } from './wind.js';
 
 /**
  * Grass: a field of blades, each one a single triangle, that goes where you go.
@@ -96,8 +97,10 @@ const GRASS = {
   tipColour: 0x9cc24f,
   groundInfluence: 0.25, // how much of the ground texture shows in a blade, 0..1
   windStrength: 0.6, // how far a tip leans, as a fraction of its height
-  windSpeed: 0.7,
-  windDirection: [1, 0.3],
+  // The wind itself is the meadow's, not the grass's: the tree standing in
+  // the field leans in the same gust (scene/outside/wind.js).
+  windSpeed: WIND.speed,
+  windDirection: WIND.direction,
   nearHeight: 0.5, // a blade's height right where you stand, as a fraction of its full height
   fullHeightAt: 25, // metres out, along the ground, where blades reach full height
   partRadius: 1.4, // metres round you the grass parts when you sit or lie down
@@ -155,6 +158,7 @@ const GRASS = {
  * drift apart.
  */
 const MEADOW_GLSL = /* glsl */`
+  ${WIND_GLSL}
   uniform float grassTime;
   uniform float grassWindStrength;
   uniform float grassWindSpeed;
@@ -219,7 +223,7 @@ const MEADOW_GLSL = /* glsl */`
   // rolling across the field and its own flutter, and -- when you sit or lie
   // down -- away from you and flat, the nearest the most.
   vec2 meadowLean(vec3 root, float height, float phase) {
-    float gust = sin(dot(root.xz, grassWindDirection) * 0.25 - grassTime * grassWindSpeed) * 0.5 + 0.5;
+    float gust = windGust(root.xz, grassTime, grassWindDirection, grassWindSpeed);
     float flutter = sin(grassTime * 2.7 * grassWindSpeed + phase) * 0.25;
     vec2 lean = grassWindDirection * (gust + flutter) * grassWindStrength * height;
     vec2 fromYou = root.xz - grassPartCentre;
