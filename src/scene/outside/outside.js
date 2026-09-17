@@ -87,6 +87,9 @@ function nextFrame() {
  *   for the grass to part round them
  * @param {((seat: { eye: THREE.Vector3, yaw: number, standAt: { x: number, z: number } }) => void)|null} [opts.sit]
  *   sit the player on the bench -- input/cameraModes.js's sitOn
+ * @param {{ objects: () => THREE.Object3D[], outdoors: () => THREE.Object3D[] }} [opts.book]
+ *   every book in the room, and which of them are out here -- the one in
+ *   your hand, and any you have set down on the grass
  * @param {() => THREE.Object3D[]} [opts.vrHidden]  what VR holds in front of
  *   your face -- the controllers, the menu panel -- which the exposure outside
  *   is not metered off (scene/outside/outdoorPost.js's renderXR)
@@ -137,20 +140,21 @@ export function createOutside({
   }
 
   /**
-   * Outside, the book is there only while you are holding it. It is the one
-   * thing out there that casts a moving shadow, so while it shows -- and on
-   * the frame it goes -- the sun's otherwise frozen shadow map is redrawn.
+   * Outside, a book is there if you brought it: in your hand, or lying
+   * wherever you put it down out here. Books are the one thing out there that
+   * casts a moving shadow, so while one shows -- and on the frame it goes --
+   * the sun's otherwise frozen shadow map is redrawn.
    */
   function followBook() {
     if (!book) return;
-    // The room can hold several books at once (book/bookInstance.js). The one
-    // in your hands is the only one that comes outside; the rest stay indoors
-    // with the room.
-    const carried = book.carried();
+    // The room can hold several books at once (book/bookInstance.js), and
+    // main.js says which of them belong out here; the rest stay indoors with
+    // the room.
+    const here = book.outdoors();
     let moved = false;
     for (const object of book.objects()) {
       const was = object.visible;
-      object.visible = object === carried;
+      object.visible = here.includes(object);
       if (object.visible || was) moved = true;
     }
     if (moved) daylight?.requestShadowUpdate();

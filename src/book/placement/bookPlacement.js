@@ -39,6 +39,23 @@ const ANGULAR_DAMPING = 0.6;
 const RESTITUTION = 0.05;
 const FRICTION = 0.9;
 
+// --- the patch of ground that follows the book, outside --------------------
+// Out there the room is gone but its slabs are still at the room's own place
+// in the world, and you can walk a hundred metres from them -- so a book let
+// go on the hillside would fall for ever.
+//
+// Rather than hand the whole terrain to this world, one slab is kept under
+// the book and tilted to the slope beneath it. All a book can ever rest on is
+// the few centimetres it covers; the other 160,000 square metres are not
+// physics, they are scenery. The price is two height samples and a
+// setTranslation a frame, and only while the book is moving.
+const GROUND_HALF = 2; // metres each way -- no book slides off the edge of it
+const GROUND_DEPTH = 0.25; // deep enough that nothing tunnels through it
+const GROUND_SAMPLE = 0.4; // how far apart the slope under it is measured
+// Where it waits while you are indoors. Parked rather than destroyed and
+// remade: one collider serves every trip outside.
+const GROUND_PARKED = -1e4;
+
 // How deep the room's floor, wall and ceiling slabs are. Far deeper than any
 // real wall needs to be, on purpose: the book is two thin boards, and a slab
 // only a few centimetres deep is exactly what a fast one can skip clean
@@ -101,8 +118,11 @@ const MAX_RELEASE_SPIN = 12; // rad/s
 // wall to wall. Optional: without it the desk is the only thing to land on.
 // `obstacles` are more furniture to land on, as world-space boxes
 // ({ center, halfExtents }, like the desk's collision) -- the sofa's.
+// `getGround` is asked every frame where the ground is, for the places that
+// have one instead of a room: outside, the terrain (scene/outside/outside.js
+// hands main.js the same contract the walking uses). Null indoors.
 export async function createBookPlacement({
-  bookGroup, getPages, desk, room = null, obstacles = [],
+  bookGroup, getPages, desk, room = null, obstacles = [], getGround = () => null,
 }) {
   await RAPIER.init();
 
@@ -123,6 +143,12 @@ export async function createBookPlacement({
   );
 
   // --- the room -----------------------------------------------------------
+  // Kept, because the room is not always there: outside, its walls are
+  // switched off and the ground below takes over. A book carried out of the
+  // door and dropped should land on the hillside it is over, not fetch up
+  // against a wall that is no longer being drawn.
+  const roomColliders = [];
+  //
   // Floor, four walls and a ceiling, so a book knocked off the desk lands on
   // the floor and a thrown one stops at a wall, instead of falling out of
   // the world. Each is a slab sitting just OUTSIDE the room, so its inner
@@ -144,14 +170,14 @@ export async function createBookPlacement({
     ];
     const roomBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     for (const [x, y, z, hx, hy, hz] of slabs) {
-      world.createCollider(
+      roomColliders.push(world.createCollider(
         RAPIER.ColliderDesc
           .cuboid(hx, hy, hz)
           .setTranslation(x, y, z)
           .setFriction(FRICTION)
           .setRestitution(RESTITUTION),
         roomBody,
-      );
+      ));
     }
   }
 
@@ -168,6 +194,62 @@ export async function createBookPlacement({
         furnitureBody,
       );
     }
+  }
+
+  // --- the ground under it, outside ---------------------------------------
+  const groundBody = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(0, GROUND_PARKED, 0),
+  );
+  world.createCollider(
+    RAPIER.ColliderDesc
+      .cuboid(GROUND_HALF, GROUND_DEPTH / 2, GROUND_HALF)
+      .setFriction(FRICTION)
+      .setRestitution(RESTITUTION),
+    groundBody,
+  );
+
+  const _up = new THREE.Vector3(0, 1, 0);
+  const _slope = new THREE.Vector3();
+  const _lie = new THREE.Quaternion();
+  let onGround = false; // whether the room is off and the ground is in play
+
+  /**
+   * Put the patch of ground under the book, lying along the slope there --
+   * and with it, whether the room's walls apply at all.
+   *
+   * NOT WOKEN BY THIS. The slab is centred on the book, so it only moves when
+   * the book does, and a book asleep on the grass leaves it exactly where it
+   * went to sleep. Waking the body to tell it the floor had moved would mean
+   * no dropped book ever settled.
+   */
+  function followGround(ground) {
+    if (Boolean(ground) !== onGround) {
+      onGround = Boolean(ground);
+      for (const collider of roomColliders) collider.setEnabled(!onGround);
+      if (!onGround) groundBody.setTranslation({ x: 0, y: GROUND_PARKED, z: 0 }, false);
+    }
+    if (!ground) return;
+
+    const { x, z } = bookGroup.position;
+    const d = GROUND_SAMPLE;
+    // The surface normal from the ground either side of it, so the terrain
+    // does not have to hand one out: the fall across 2d either way, against
+    // that 2d.
+    _slope.set(
+      ground.heightAt(x - d, z) - ground.heightAt(x + d, z),
+      2 * d,
+      ground.heightAt(x, z - d) - ground.heightAt(x, z + d),
+    ).normalize();
+    _lie.setFromUnitVectors(_up, _slope);
+    // Its top face on the ground: the slab's middle is half its depth down
+    // the normal from the point the book is over.
+    const y = ground.heightAt(x, z);
+    groundBody.setTranslation({
+      x: x - _slope.x * (GROUND_DEPTH / 2),
+      y: y - _slope.y * (GROUND_DEPTH / 2),
+      z: z - _slope.z * (GROUND_DEPTH / 2),
+    }, false);
+    groundBody.setRotation({ x: _lie.x, y: _lie.y, z: _lie.z, w: _lie.w }, false);
   }
 
   // --- the book ---------------------------------------------------------
@@ -459,10 +541,20 @@ export async function createBookPlacement({
       const pages = getPages();
       syncBoards(pages);
 
+      // Before anything else this frame: where the book may be, and what it
+      // would land on, are the same question.
+      const ground = getGround();
+      followGround(ground);
+
       if (grabbed) {
         // The hand is authoritative -- within the room -- and the body just
         // tracks it, so whatever it is pushed into still generates contacts.
-        keepInsideRoom();
+        // Outside there is no room to be inside of: the walls are switched
+        // off above, and a book held a hundred metres from them must not be
+        // dragged back between them -- which is also where a book let go out
+        // there would otherwise reappear, since the release takes the body's
+        // position, not the hand's.
+        if (!ground) keepInsideRoom();
         bookBody.setNextKinematicTranslation({
           x: bookGroup.position.x, y: bookGroup.position.y, z: bookGroup.position.z,
         });

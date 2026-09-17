@@ -5,7 +5,9 @@ import { signInWith, signOut } from '../auth/session.js';
 import { ui } from '../state/ui.js';
 import { keys, label } from '../state/keybindings.js';
 import { world } from '../state/world.js';
+import { bookControls } from '../state/bookControls.js';
 import LibraryButton from './LibraryButton.vue';
+import BookControls from './BookControls.vue';
 
 /**
  * The controls in the top right corner: the menu button, and the account --
@@ -23,6 +25,12 @@ import LibraryButton from './LibraryButton.vue';
  * The account: signed out, it opens a small panel offering Google and
  * Discord. Signed in, it shows who you are and the same panel offers a way
  * out.
+ *
+ * The book button puts up the card of what you can do to the book
+ * (BookControls.vue). It is rendered from here rather than from its own app
+ * because this one is always mounted, whatever else is on screen -- and the
+ * card is `position: fixed` over the book, so nothing about where it hangs
+ * depends on sitting in this corner.
  */
 
 // What the corner may ask of the room -- see ui/mountAccount.js.
@@ -60,6 +68,22 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
 <template>
   <div class="corner">
   <div class="corner-row">
+  <button
+    class="menu-trigger"
+    type="button"
+    :title="bookControls.showing ? 'Hide the book controls' : 'Book controls'"
+    :aria-label="bookControls.showing ? 'Hide the book controls' : 'Show the book controls'"
+    :aria-pressed="bookControls.showing"
+    :class="{ on: bookControls.showing }"
+    @click="bookControls.showing = !bookControls.showing"
+  >
+    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none"
+         stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 5.6C8.6 4.7 6.9 4.3 4.6 4.3a.6.6 0 0 0-.6.6v8.6c0 .3.3.6.6.6 2.3 0 4 .4 5.4 1.3 1.4-.9 3.1-1.3 5.4-1.3a.6.6 0 0 0 .6-.6V4.9a.6.6 0 0 0-.6-.6c-2.3 0-4 .4-5.4 1.3Z" />
+      <path d="M10 5.6v9.8" />
+    </svg>
+  </button>
+
   <button
     class="menu-trigger"
     type="button"
@@ -138,6 +162,9 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
 
   <LibraryButton v-if="world.place === 'outside'" :bridge="props.bridge" />
   </div>
+
+  <!-- Over the book, wherever the book is; see BookControls.vue. -->
+  <BookControls />
 </template>
 
 <style scoped>
@@ -186,6 +213,14 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
 }
 .menu-trigger:hover { filter: brightness(1.15); }
 .menu-trigger:focus-visible { outline: none; box-shadow: var(--ath-focus); }
+/* A trigger that is a toggle, while it is on: the orange that means "this
+   one" everywhere else in the interface (ui/theme.css). */
+.menu-trigger.on {
+  background:
+    linear-gradient(var(--ath-selected), var(--ath-selected)) padding-box,
+    var(--ath-accent-gradient) border-box;
+  color: var(--ath-orange-soft);
+}
 
 .account-trigger {
   display: flex;

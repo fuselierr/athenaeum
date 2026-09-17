@@ -1,3 +1,4 @@
+import { watch } from 'vue';
 import { createClient } from '@supabase/supabase-js';
 import { account } from '../state/account.js';
 
@@ -78,6 +79,34 @@ export async function startSession() {
   // sign out and in again.
   if (!heard) account.user = data?.session?.user ?? null;
   account.ready = true;
+}
+
+/**
+ * Resolves once it is known whether anyone is signed in -- `account.ready`,
+ * whichever way it got there.
+ *
+ * Almost nothing needs this: the interface simply shows nothing until it is
+ * ready, and the room is built without waiting on the network. What does is
+ * the one decision that cannot be taken twice -- whether an arriving visitor
+ * sees the welcome page or their own room (main.js), which has to be right
+ * before the loading screen lifts rather than corrected a moment after.
+ *
+ * @param {number} [timeoutMs]  how long to wait before giving up and letting
+ *   the caller treat them as signed out. startSession() marks the account
+ *   ready down every path it has, including failure, so this only comes into
+ *   play if the network hangs without ever answering.
+ */
+export function sessionReady(timeoutMs = 10000) {
+  if (account.ready) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { stop(); resolve(); }, timeoutMs);
+    const stop = watch(() => account.ready, (ready) => {
+      if (!ready) return;
+      clearTimeout(timer);
+      stop();
+      resolve();
+    });
+  });
 }
 
 /**

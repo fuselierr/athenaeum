@@ -43,6 +43,12 @@ import './ui/theme.css'; // the interface's colours, for every panel
 import { loadingScreen } from './ui/loadingScreen.js';
 import { mountMenu } from './ui/mountMenu.js';
 import { mountAccount } from './ui/mountAccount.js';
+import { mountLanding } from './ui/mountLanding.js';
+import { createBookAnchor } from './ui/bookAnchor.js';
+import { sessionReady } from './auth/session.js';
+import { landing } from './state/landing.js';
+import { world } from './state/world.js';
+import { placeFor, startRememberingPlace } from './state/lastPlace.js';
 import { bindSettings } from './ui/bindSettings.js';
 import { book as bookState } from './state/book.js';
 import { matches } from './state/keybindings.js';
@@ -214,6 +220,17 @@ function focusOn(book) {
   // a drag or a key press lands (book/pageSim/bookContext.js).
   focusBookConfig(book.config);
 }
+
+// The ground outside, while you are out on it: null in the room, where the
+// floor and the furniture are what a book lands on. Read by every copy's
+// placement physics through the getter passed to createBookInstance.
+let outdoorGround = null;
+
+// Books set down on the hillside and not picked up again. Outside they are
+// drawn where they lie rather than vanishing the moment they leave your hand
+// (createOutside's `book.outdoors`), and coming back in they are fetched home
+// -- see the watch on world.place below.
+const leftOutside = new Set();
 
 // Taking the book up off the desk to read (input/bookCarry.js). Built once
 // the placement physics exists, further down -- clicks can arrive sooner.
@@ -458,14 +475,25 @@ let deckShelf = null;
       instructionCard.group,
       scene.getObjectByName('roomFill'),
     ].filter(Boolean),
-    // It comes outside with you only in your hand.
+    // A book is outside if you are holding it, or if you put it down out
+    // there (Q) and have not picked it up again.
     book: {
       objects: () => books.map((one) => one.group),
-      carried: () => (bookCarry?.carrying ? bookGroup : null),
+      outdoors: () => {
+        const here = [...leftOutside].map((one) => one.group);
+        if (bookCarry?.carrying) here.push(bookGroup);
+        return here;
+      },
     },
     // Outside, you walk on the terrain rather than the room's floor -- and
-    // coming back in, on the room's own floor, stair and balcony again.
-    setGround: (ground) => cameraModes.setGround(ground ?? indoorGround),
+    // coming back in, on the room's own floor, stair and balcony again. The
+    // books are told the same thing: it is what a dropped one lands on out
+    // there, where the room's floor is somewhere behind you
+    // (book/placement/bookPlacement.js).
+    setGround: (ground) => {
+      outdoorGround = ground ?? null;
+      cameraModes.setGround(ground ?? indoorGround);
+    },
     // Sitting or lying down (X), for the grass to part round you.
     lying: () => cameraModes.lying,
     // Right-clicking the bench.
@@ -556,10 +584,46 @@ populateShelf(bookshelf, {
     libraryAnswered = false;
   })
   .then(() => firstFrame)
-  .then(() => {
-    if (libraryAnswered) loadingScreen.finish();
-    else loadingScreen.fail('The library isn’t answering, so the shelf is empty for now.');
-  });
+  // Whether anyone is signed in decides what is behind the loading screen
+  // when it lifts, so it is settled BEFORE lifting it rather than corrected
+  // a moment later in front of the reader.
+  .then(() => sessionReady())
+  .then(() => openTheDoors());
+
+/**
+ * What the reader arrives to, once the room is standing.
+ *
+ *   NOT SIGNED IN -- the welcome page (ui/LandingScreen.vue). Put up first,
+ *     so the cover comes off onto the welcome rather than onto a room they
+ *     were not offered.
+ *   SIGNED IN -- where they were when they closed the tab
+ *     (state/lastPlace.js). Coming back outside, the door is opened while
+ *     the loading screen is still up and goOutside() takes it down at the
+ *     end, so it reads as one load rather than two.
+ *
+ * Only after that does the place start being written down: the world begins
+ * every visit in the room, and a watcher running any earlier would record
+ * 'room' over the 'outside' it is about to be asked for.
+ */
+async function openTheDoors() {
+  // Up before the cover comes off, whatever else is wrong: a shelf that
+  // would not load is all the more reason to offer someone a book of their
+  // own.
+  if (!account.user) landing.showing = true;
+
+  const resuming = Boolean(account.user && outside && placeFor(account.user.id) === 'outside');
+  if (resuming) {
+    // Takes the loading screen down itself when the hillside is ready -- and
+    // the shelf's trouble, if it had any, is not worth a message in front of
+    // a door that is already opening onto a place with no shelf in it.
+    await outside.goOutside();
+  } else if (libraryAnswered) {
+    loadingScreen.finish();
+  } else {
+    loadingScreen.fail('The library isn’t answering, so the shelf is empty for now.');
+  }
+  startRememberingPlace();
+}
 
 // --- shared covers (the Community tab) -------------------------------------
 // Which shared cover each of your books wears is kept in your account
@@ -595,6 +659,9 @@ const FURNITURE = [
 async function addBook({ at = null } = {}) {
   const book = await createBookInstance({
     scene, desk, room: roomInterior, obstacles: FURNITURE, at,
+    // Asked every frame, not captured: a copy made in the room is the same
+    // copy you carry outside.
+    getGround: () => outdoorGround,
   });
   books.push(book);
   while (books.length > MAX_BOOKS) {
@@ -1041,6 +1108,10 @@ async function openFromShelf(record, slot = null) {
  *
  * Guarded by openSequence exactly as a shelf book is, so picking something
  * off the shelf mid-upload abandons the upload, and the other way round.
+ *
+ * @returns {Promise<boolean>} whether the book is now open. False covers
+ *   both a file that would not convert and an open that was abandoned part
+ *   way -- in neither case is there a book to go outside with.
  */
 async function openUploadedFile(file) {
   // Whatever is in hand goes back first. Putting a shelf model back bumps
@@ -1093,12 +1164,41 @@ async function openUploadedFile(file) {
         if (current()) content.setCanvases(canvases);
       },
     });
+    return current();
   } catch (err) {
     console.error('Opening an uploaded book failed:', err);
     if (current()) setBookStatus(`Error: ${err.message}`);
+    return false;
   } finally {
     if (current()) bookState.loading = false;
   }
+}
+
+/**
+ * The welcome page's one move: open the EPUB a visitor brought and take them
+ * outside with it (ui/LandingScreen.vue).
+ *
+ * The book goes INTO THE HAND before the door opens, because the hand is
+ * what decides: outdoors draws the one book being carried and leaves the
+ * rest in the room with the furniture (scene/outside/outside.js's
+ * followBook). Handed over the other way round it would be a book left
+ * behind on a desk nobody can see.
+ *
+ * The welcome stays up until the book is open, so a file that will not
+ * convert leaves the visitor where they were, with the reason on the page,
+ * rather than alone outside with nothing to read.
+ */
+async function startWithBook(file) {
+  landing.error = '';
+  const opened = await openUploadedFile(file);
+  if (!opened) {
+    landing.error = bookState.status || 'That file could not be opened.';
+    setBookStatus('');
+    return;
+  }
+  landing.showing = false;
+  bookCarry?.takeUp();
+  await outside?.goOutside();
 }
 
 // Which way a book comes off the shelf shut -- see PageSimulation.close.
@@ -1237,6 +1337,31 @@ function resetBook() {
   refreshFlipLabel();
 }
 
+/**
+ * Coming back in off the hillside: anything left lying out there comes home
+ * to the desk.
+ *
+ * A book put down outside keeps its place in world coordinates -- a hundred
+ * metres of terrain away from a room that is about to be drawn again, with
+ * every book in it visible once more (scene/outside/outside.js's showInside).
+ * Left alone it would hang in the air past the wall, out over ground that is
+ * no longer there. It could as easily be walked back to and picked up, but
+ * the door is not where you dropped it, and a book you have to go outside
+ * again to retrieve is a book you have lost.
+ *
+ * The one in your hands is not fetched: it came in with you.
+ */
+watch(() => world.place, (place, before) => {
+  if (place !== 'room' || before !== 'outside') return;
+  for (const one of leftOutside) {
+    if (one === focused && bookCarry?.carrying) continue;
+    one.group.position.copy(RESET_POSITION);
+    one.group.quaternion.copy(RESET_QUATERNION);
+    one.placement?.reset(RESET_POSITION, RESET_QUATERNION);
+  }
+  leftOutside.clear();
+});
+
 flipBtn?.addEventListener('click', () => { pages.toggleFlip(); refreshFlipLabel(); });
 resetBtn?.addEventListener('click', resetBook);
 refreshFlipLabel();
@@ -1253,14 +1378,17 @@ window.addEventListener('keydown', (e) => {
     else resetBook();
   }
   // Let go of the book right where it is held: the hand opens and it falls,
-  // keeping however the hand was moving, onto whatever is under it. Outside,
-  // the book's physics has no ground to land on, so it goes home instead of
-  // falling forever. A shelf model still waiting for its pages has nothing to
-  // fall with yet, so it just goes back to its slot.
+  // keeping however the hand was moving, onto whatever is under it -- the
+  // desk or the floor in the room, the hillside outside, where a patch of
+  // ground follows the book about for exactly this
+  // (book/placement/bookPlacement.js). A shelf model still waiting for its
+  // pages has nothing to fall with yet, so it just goes back to its slot.
   if (matches('book.drop', e) && !e.repeat) {
     if (bookCarry.held) {
-      if (outside?.outside) bookCarry.putBack();
-      else bookCarry.letGo();
+      bookCarry.letGo();
+      // Out here it is now scenery, not something in your hands, and the
+      // outdoors draws only what it has been told is out here.
+      if (outdoorGround && focused) leftOutside.add(focused);
     } else if (shelfBooks?.held) {
       shelfBooks.release();
     }
@@ -1317,6 +1445,11 @@ mountMenu({
   },
 });
 
+// The welcome page, for a visitor who is not signed in. Mounted every visit
+// and showing nothing until the startup below says so, so there is no second
+// load between the loading screen lifting and the welcome appearing.
+mountLanding({ startWithBook });
+
 // The account control, top right. Independent of the menu and of the room.
 mountAccount({
   // The books button outside: a book off the shelf into your hand -- or, if
@@ -1328,6 +1461,15 @@ mountAccount({
 });
 // Settings and key bindings follow the account while someone is signed in.
 startPreferencesSync();
+
+// Where the book is on screen, for the card of controls held over it
+// (ui/BookControls.vue). Reads the book in focus, like everything else that
+// follows the one in your hands.
+const bookAnchor = createBookAnchor({
+  camera,
+  renderer,
+  getGroup: () => bookGroup,
+});
 
 // --- render loop ---
 let lastFrameTime = performance.now();
@@ -1396,6 +1538,9 @@ renderer.setAnimationLoop(() => {
   instructionCard?.update(dt); // also posed from the camera, so also after it has moved
   // Outside draws through its own fog and exposure chain (scene/outside/outdoorPost.js).
   if (!outside?.render(dt)) renderer.render(scene, camera);
+  // After the render, with every matrix for this frame settled: the card over
+  // the book is placed from the same pose that was just drawn.
+  bookAnchor.update();
   debugLabels.update();
   anglePanel.update();
   outdoorPanel.update(anglePanel.visible);

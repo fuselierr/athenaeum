@@ -40,12 +40,15 @@ const RESTING = new THREE.Vector3(0, 0.02, 0);
  * @param {object} opts.desk  what loadDesk returned -- the surface it lands on
  * @param {THREE.Box3|null} [opts.room]  the walls it stays inside
  * @param {Array<object>} [opts.obstacles]  the rest of the furniture, as boxes
+ * @param {() => object|null} [opts.getGround]  where the ground is, in the
+ *   places that have one instead of a room -- outside (bookPlacement.js)
  * @param {THREE.Vector3|null} [opts.at]  where to stand it; the desk by default
  * @param {string|null} [opts.name]
  * @returns {Promise<object>} the instance
  */
 export async function createBookInstance({
   scene, desk, room = null, obstacles = [], at = null, name = 'book',
+  getGround = () => null,
 }) {
   const config = createBookConfig();
 
@@ -75,7 +78,7 @@ export async function createBookInstance({
   await useAsync(config, async () => {
     book.pages = await PageSimulation.create(group);
     book.placement = await createBookPlacement({
-      bookGroup: group, getPages, desk, room, obstacles,
+      bookGroup: group, getPages, desk, room, obstacles, getGround,
     });
     book.content = createBookContent(getPages);
   });
