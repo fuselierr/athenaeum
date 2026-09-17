@@ -60,14 +60,23 @@ export async function startSession() {
   // session loads is not lost between the two. Nothing async is awaited
   // inside the callback: supabase-js holds a lock while it runs, and
   // calling back into auth from there can deadlock.
+  let heard = false; // whether a change has already said who is signed in
   supabase.auth.onAuthStateChange((_event, session) => {
+    heard = true;
     account.user = session?.user ?? null;
     account.ready = true;
   });
 
   const { data, error } = await supabase.auth.getSession();
   if (error) account.error = error.message;
-  account.user = data?.session?.user ?? null;
+  // ONLY IF NOTHING HAS BEEN HEARD SINCE. Coming back from a provider, the
+  // one-time code in the URL is exchanged for the new session while this read
+  // is in flight -- and this read is of the session STORED BEFORE it, which is
+  // the account that was signed in last time. The exchange lands on the
+  // listener above with the right user; letting this overwrite it is how
+  // signing in as somebody else leaves the old name in the corner until you
+  // sign out and in again.
+  if (!heard) account.user = data?.session?.user ?? null;
   account.ready = true;
 }
 
@@ -82,10 +91,18 @@ export async function signInWith(provider) {
   account.error = '';
   const { error } = await supabase.auth.signInWithOAuth({
     provider,
-    // Back to exactly this page. It must also be allowed under Redirect
-    // URLs in the Supabase dashboard, or Supabase sends the reader to the
-    // project's Site URL instead.
-    options: { redirectTo: `${window.location.origin}${window.location.pathname}` },
+    options: {
+      // Back to exactly this page. It must also be allowed under Redirect
+      // URLs in the Supabase dashboard, or Supabase sends the reader to the
+      // project's Site URL instead.
+      redirectTo: `${window.location.origin}${window.location.pathname}`,
+      // ASK WHICH ACCOUNT. Google signs straight back in as whoever was last
+      // used when it is not asked, which is exactly wrong for someone who has
+      // just signed out in order to sign in as somebody else: they never see a
+      // chooser, and land back in the account they were leaving. (Discord has
+      // no equivalent -- switching there means signing out of Discord itself.)
+      ...(provider === 'google' ? { queryParams: { prompt: 'select_account' } } : {}),
+    },
   });
   // On success the browser is already on its way to the provider, so only
   // a failure is ever handled here.
