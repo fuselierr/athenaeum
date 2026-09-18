@@ -776,6 +776,10 @@ export function createOutdoorPost({
     farDistance = new FarDistancePass({ camera: distant.camera, clouds });
     composer.addPass(farDistance);
     clouds.setFarDistance(farDistance.texture);
+    // One haze for rock and cloud: the same uniform object, so the range's
+    // haze slider moves both, and a cloud at the mountains fades exactly as
+    // far into the sky as the slope behind it.
+    if (distant.uniforms?.hazeDensity) clouds.material.uniforms.hazeDensity = distant.uniforms.hazeDensity;
   }
 
   const scenePass = new RenderPass(scene, camera);

@@ -422,6 +422,8 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       ['Silver lining (g)', 'forwardScattering', 0, 0.99, 0.01],
       ['Steps', 'stepCount', 8, 64, 1],
       ['Max distance (m)', 'maxDistance', 2000, 150000, 500],
+      // The haze's density is the mountains' own, on their Haze slider.
+      ['Haze height (m)', 'hazeHeight', 100, 8000, 50],
     ]) {
       slider(label, {
         min, max, step,

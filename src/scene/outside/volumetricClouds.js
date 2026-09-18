@@ -71,9 +71,9 @@ export const CLOUDS = {
   // coverage remap and the erosion most of a cloud is a fraction of "full",
   // and at 0.02 the bodies were a veil -- the cirrus above showed straight
   // through them.
-  density: 0.05,
+  density: 0.035,
   bottom: 400, // metres
-  top: 2200,
+  top: 2000,
   shapeScale: 6000, // metres a repeat of the shape noise covers
   detailScale: 650,
   detailStrength: 0.35, // how much the detail erodes the edges
@@ -102,6 +102,17 @@ export const CLOUDS = {
   cirrusScale: 46000, // metres a repeat covers
   highLight: 0.75, // its brightness
   highFade: 51000, // metres: gone by here, where they would only be a smear
+
+  // --- aerial perspective ---
+  // The air between you and a cloud lays the sky's colour over it, as it does
+  // over the mountains: the density is the range's own (distantRange.js's
+  // HAZE_DENSITY -- outdoorPost shares the very uniform when there is a
+  // range), so a cloud at the mountains is as hazy as the rock behind it.
+  hazeDensity: 0.000135, // per metre, at ground level
+  // Metres in which the haze thins by e: it is low-lying air, so a cloud
+  // straight overhead is barely touched and one on the horizon, seen through
+  // tens of kilometres of it, dissolves into the sky.
+  hazeHeight: 1000,
 };
 
 // --- noise ------------------------------------------------------------------------
@@ -428,6 +439,8 @@ export class VolumetricCloudsPass extends Pass {
         cirrusScale: { value: CLOUDS.cirrusScale },
         highLight: { value: CLOUDS.highLight },
         highFade: { value: CLOUDS.highFade },
+        hazeDensity: { value: CLOUDS.hazeDensity },
+        hazeHeight: { value: CLOUDS.hazeHeight },
       },
       vertexShader: /* glsl */`
         varying vec2 vUv;
@@ -476,6 +489,8 @@ export class VolumetricCloudsPass extends Pass {
         uniform float cirrusScale;
         uniform float highLight;
         uniform float highFade;
+        uniform float hazeDensity;
+        uniform float hazeHeight;
         varying vec2 vUv;
 
         const int MAX_STEPS = 64;
@@ -497,6 +512,16 @@ export class VolumetricCloudsPass extends Pass {
         const mat2 SHAPE_TURN = mat2(0.8, -0.6, 0.6, 0.8);
         const mat2 DETAIL_TURN = mat2(0.28, -0.96, 0.96, 0.28);
         const mat2 WEATHER_TURN = mat2(0.96, 0.28, -0.28, 0.96);
+
+        // How much of the sky's colour the air has laid over whatever is t
+        // metres out along a ray rising at "rise" (direction.y): haze thick at
+        // the ground and thinning with height, integrated along the ray --
+        // the same closed form the height fog uses (outdoorPost.js).
+        float hazeAt(float t, float rise) {
+          float x = rise * t / hazeHeight;
+          float spread = abs(x) > 1e-4 ? (1.0 - exp(-x)) / x : 1.0 - 0.5 * x;
+          return 1.0 - exp(-hazeDensity * t * spread);
+        }
 
         float remap(float v, float fromLow, float fromHigh, float toLow, float toHigh) {
           return toLow + (v - fromLow) * (toHigh - toLow) / max(fromHigh - fromLow, 1e-4);
@@ -569,6 +594,10 @@ export class VolumetricCloudsPass extends Pass {
           // No sun once it is below the horizon.
           vec3 sun = sunColour * sunLight * smoothstep(-0.05, 0.08, sunDirection.y);
           vec3 skyAbove = textureLod(skyColour, vec3(0.0, 1.0, 0.0), 5.0).rgb * ambient;
+          // What the haze fades a cloud toward: the sky right behind it, the
+          // same colour the mountains fade toward, so the two go together.
+          // Never below the horizon, where the sky model goes dark.
+          vec3 hazeSky = textureLod(skyColour, normalize(vec3(direction.x, max(direction.y, 0.0), direction.z)), 0.0).rgb;
 
           // --- the cirrus ----------------------------------------------------------------
           // One sheet, read before anything branches: it is read with
@@ -594,6 +623,7 @@ export class VolumetricCloudsPass extends Pass {
 
           // Ice, thin: bright, a strong forward glow, never self-shadowed.
           vec3 cirrusLight = (sun * mix(1.0, phaseHG(cosTheta, 0.65), 0.5) + skyAbove * 0.9) * highLight;
+          cirrusLight = mix(cirrusLight, hazeSky, hazeAt(tCirrus, direction.y));
           vec3 highScattered = cirrusLight * cirrusAlpha;
           float highTransmittance = 1.0 - cirrusAlpha;
 
@@ -641,6 +671,8 @@ export class VolumetricCloudsPass extends Pass {
                 float powdered = mix(1.0, 1.0 - exp(-opticalDepth * absorption * 2.0), powder);
                 float height = clamp((p.y - bottom) / max(top - bottom, 1.0), 0.0, 1.0);
                 vec3 light = sun * phase * toSun * powdered + skyAbove * mix(0.35, 1.0, height);
+                // Faded toward the sky behind by the air in between.
+                light = mix(light, hazeSky, hazeAt(t, direction.y));
 
                 float stepTransmittance = exp(-extinction * stepLength);
                 scattered += transmittance * light * (1.0 - stepTransmittance);
