@@ -14,6 +14,7 @@ import { loadParkBench } from './parkBench.js';
 import { loadTree } from './tree.js';
 import { loadEggChair } from './eggChair.js';
 import { createFallingLeaves } from './fallingLeaves.js';
+import { shadeSceneWithClouds } from './cloudShadows.js';
 import { world } from '../../state/world.js';
 import { watch } from 'vue';
 import { settings } from '../../state/settings.js';
@@ -134,6 +135,10 @@ export function createOutside({
   let leaves = null;
   let tree = null;
   let range = null;
+  // Seconds since the scene was last looked over for materials the cloud
+  // shadows have not reached yet -- a book brought out, say.
+  let sinceShaded = 0;
+  const SHADE_EVERY = 1;
 
   // The graphics quality reaches whatever outdoors is built right now; a trip
   // built later reads the preset as it builds.
@@ -519,6 +524,10 @@ export function createOutside({
       });
       post.applyQuality(qualityPreset());
 
+      // Everything sunlit takes the clouds' shadows (cloudShadows.js):
+      // before the compile below, so it is compiled with them.
+      shadeSceneWithClouds(scene);
+
       // Compiled now, behind the screen, rather than as a stall on the first
       // frame outside.
       loadingScreen.status('Almost there…', 0.88, 0.98);
@@ -574,6 +583,14 @@ export function createOutside({
     render(dt) {
       if (state !== 'outside' || !post) return false;
       followBook(dt);
+      // Anything that has come into the scene since, into the cloud shadows
+      // too. Materials already done are skipped, so this is a walk and
+      // nothing more.
+      sinceShaded += dt;
+      if (sinceShaded >= SHADE_EVERY) {
+        sinceShaded = 0;
+        shadeSceneWithClouds(scene);
+      }
       grass?.update(dt);
       tree?.update(dt);
       leaves?.update(dt);

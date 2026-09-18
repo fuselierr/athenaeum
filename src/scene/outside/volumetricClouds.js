@@ -72,13 +72,13 @@ export const CLOUDS = {
   // and at 0.02 the bodies were a veil -- the cirrus above showed straight
   // through them.
   density: 0.035,
-  bottom: 400, // metres
-  top: 2000,
-  shapeScale: 6000, // metres a repeat of the shape noise covers
+  bottom: 200, // metres
+  top: 1600,
+  shapeScale: 4000, // metres a repeat of the shape noise covers
   detailScale: 650,
   detailStrength: 0.35, // how much the detail erodes the edges
   weatherScale: 42000, // metres a repeat of the weather map covers
-  weatherContrast: 0.9, // how far the weather pushes coverage up and down
+  weatherContrast: 0.5, // how far the weather pushes coverage up and down
   warp: 0.35, // how far the weather bends the shape noise, in shape repeats
   wind: [15, 10], // metres per second, x and z
   sunLight: 1.2, // the sun's brightness on the clouds, times the sun light's
@@ -376,6 +376,91 @@ function skyNoise(size = 512) {
   return texture;
 }
 
+// --- the cloud field, shared -------------------------------------------------------
+
+/**
+ * The cumulus as a field of density, in GLSL: where it is, how thick, how the
+ * weather and the wind move it. The march on screen reads it, and so does the
+ * cloud shadow map (scene/outside/cloudShadows.js) -- one definition, so the
+ * shadows on the ground are cast by the very clouds you see. Its uniforms are
+ * the pass's own objects (VolumetricCloudsPass.fieldUniforms), so the panel
+ * moves both at once.
+ */
+export const CLOUD_FIELD_GLSL = /* glsl */`
+  precision highp sampler3D;
+
+  uniform sampler3D shapeNoise;
+  uniform sampler3D detailNoise;
+  uniform sampler2D skyNoise;
+  uniform float time;
+  uniform vec2 wind;
+  uniform float coverage;
+  uniform float density;
+  uniform float bottom;
+  uniform float top;
+  uniform float shapeScale;
+  uniform float detailScale;
+  uniform float detailStrength;
+  uniform float weatherScale;
+  uniform float weatherContrast;
+  uniform float warp;
+
+  // Each field read turned its own way, so none of them repeats along
+  // the world's axes -- or along the others' -- and their tiles never
+  // line up into a grid.
+  const mat2 SHAPE_TURN = mat2(0.8, -0.6, 0.6, 0.8);
+  const mat2 DETAIL_TURN = mat2(0.28, -0.96, 0.96, 0.28);
+  const mat2 WEATHER_TURN = mat2(0.96, 0.28, -0.28, 0.96);
+
+  float remap(float v, float fromLow, float fromHigh, float toLow, float toHigh) {
+    return toLow + (v - fromLow) * (toHigh - toLow) / max(fromHigh - fromLow, 1e-4);
+  }
+
+  // The weather where p is: r how cloudy, g which variety of cloud.
+  vec4 weatherAt(vec3 p) {
+    vec2 q = WEATHER_TURN * (p.xz + wind * time);
+    return textureLod(skyNoise, q / weatherScale, 0.0);
+  }
+
+  // Extinction per metre at p. Without detail: the cheap shape only,
+  // for the sun march.
+  float cloudDensity(vec3 p, vec4 weather, float localCoverage, bool withDetail) {
+    if (localCoverage <= 0.0) return 0.0;
+    float altitude = p.y;
+    // Some patches of sky grow tall clouds, some stay low and flat.
+    float tallness = mix(0.45, 1.0, smoothstep(0.3, 0.7, weather.g));
+    float height = (altitude - bottom) / max((top - bottom) * tallness, 1.0);
+    // Outside the layer: no texture reads at all.
+    if (height <= 0.0 || height >= 1.0) return 0.0;
+    // Rounded bottoms, softer tops.
+    float profile = smoothstep(0.0, 0.12, height) * (1.0 - smoothstep(0.55, 1.0, height));
+
+    vec2 moved = p.xz + wind * time;
+    // Turned, bent by the weather, and read from a different depth of
+    // the (tileable, three-dimensional) noise in every patch of sky:
+    // so one tile of it is not stamped out again every few kilometres.
+    vec2 across = SHAPE_TURN * moved + (weather.rg - 0.5) * warp * shapeScale;
+    vec3 s = vec3(across.x, altitude + weather.g * shapeScale, across.y);
+    float shape = textureLod(shapeNoise, s / shapeScale, 0.0).r * profile;
+    float cloud = clamp(remap(shape, 1.0 - localCoverage, 1.0, 0.0, 1.0), 0.0, 1.0);
+    if (cloud <= 0.0 || !withDetail) return cloud * density;
+
+    vec2 fine = DETAIL_TURN * moved;
+    float detail = textureLod(detailNoise, vec3(fine.x, altitude, fine.y) / detailScale, 0.0).r;
+    cloud = clamp(remap(cloud, detail * detailStrength, 1.0, 0.0, 1.0), 0.0, 1.0);
+    return cloud * density;
+  }
+
+  // How much of the sky is cloud where this weather is.
+  float coverageFrom(vec4 weather) {
+    return clamp(coverage + (weather.r - 0.5) * weatherContrast, 0.0, 1.0);
+  }
+`;
+
+// The names of the uniforms CLOUD_FIELD_GLSL reads.
+const FIELD_UNIFORMS = ['shapeNoise', 'detailNoise', 'skyNoise', 'time', 'wind', 'coverage', 'density',
+  'bottom', 'top', 'shapeScale', 'detailScale', 'detailStrength', 'weatherScale', 'weatherContrast', 'warp'];
+
 // --- the pass -----------------------------------------------------------------------
 
 /**
@@ -449,11 +534,8 @@ export class VolumetricCloudsPass extends Pass {
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }`,
       fragmentShader: /* glsl */`
-        precision highp sampler3D;
+        ${CLOUD_FIELD_GLSL}
 
-        uniform sampler3D shapeNoise;
-        uniform sampler3D detailNoise;
-        uniform sampler2D skyNoise;
         uniform samplerCube skyColour;
         uniform sampler2D farDistance;
         uniform float farOn;
@@ -462,18 +544,6 @@ export class VolumetricCloudsPass extends Pass {
         uniform vec3 cameraPos;
         uniform vec3 sunDirection;
         uniform vec3 sunColour;
-        uniform float time;
-        uniform vec2 wind;
-        uniform float coverage;
-        uniform float density;
-        uniform float bottom;
-        uniform float top;
-        uniform float shapeScale;
-        uniform float detailScale;
-        uniform float detailStrength;
-        uniform float weatherScale;
-        uniform float weatherContrast;
-        uniform float warp;
         uniform float sunLight;
         uniform float ambient;
         uniform float absorption;
@@ -506,13 +576,6 @@ export class VolumetricCloudsPass extends Pass {
         // horizon of a curved world dips, a little.
         const float HORIZON_DIP = -0.03;
 
-        // Each field read turned its own way, so none of them repeats along
-        // the world's axes -- or along the others' -- and their tiles never
-        // line up into a grid.
-        const mat2 SHAPE_TURN = mat2(0.8, -0.6, 0.6, 0.8);
-        const mat2 DETAIL_TURN = mat2(0.28, -0.96, 0.96, 0.28);
-        const mat2 WEATHER_TURN = mat2(0.96, 0.28, -0.28, 0.96);
-
         // How much of the sky's colour the air has laid over whatever is t
         // metres out along a ray rising at "rise" (direction.y): haze thick at
         // the ground and thinning with height, integrated along the ray --
@@ -521,10 +584,6 @@ export class VolumetricCloudsPass extends Pass {
           float x = rise * t / hazeHeight;
           float spread = abs(x) > 1e-4 ? (1.0 - exp(-x)) / x : 1.0 - 0.5 * x;
           return 1.0 - exp(-hazeDensity * t * spread);
-        }
-
-        float remap(float v, float fromLow, float fromHigh, float toLow, float toHigh) {
-          return toLow + (v - fromLow) * (toHigh - toLow) / max(fromHigh - fromLow, 1e-4);
         }
 
         // Henyey-Greenstein, scaled so it averages 1 over the sphere.
@@ -545,41 +604,6 @@ export class VolumetricCloudsPass extends Pass {
           float c = (cameraPos.y - altitude) * (2.0 * PLANET_RADIUS + cameraPos.y + altitude);
           float s = sqrt(max(b * b - c, 0.0));
           return b > 0.0 ? -c / (b + s) : s - b;
-        }
-
-        // The weather where p is: r how cloudy, g which variety of cloud.
-        vec4 weatherAt(vec3 p) {
-          vec2 q = WEATHER_TURN * (p.xz + wind * time);
-          return textureLod(skyNoise, q / weatherScale, 0.0);
-        }
-
-        // Extinction per metre at p. Without detail: the cheap shape only,
-        // for the sun march.
-        float cloudDensity(vec3 p, vec4 weather, float localCoverage, bool withDetail) {
-          if (localCoverage <= 0.0) return 0.0;
-          float altitude = p.y;
-          // Some patches of sky grow tall clouds, some stay low and flat.
-          float tallness = mix(0.45, 1.0, smoothstep(0.3, 0.7, weather.g));
-          float height = (altitude - bottom) / max((top - bottom) * tallness, 1.0);
-          // Outside the layer: no texture reads at all.
-          if (height <= 0.0 || height >= 1.0) return 0.0;
-          // Rounded bottoms, softer tops.
-          float profile = smoothstep(0.0, 0.12, height) * (1.0 - smoothstep(0.55, 1.0, height));
-
-          vec2 moved = p.xz + wind * time;
-          // Turned, bent by the weather, and read from a different depth of
-          // the (tileable, three-dimensional) noise in every patch of sky:
-          // so one tile of it is not stamped out again every few kilometres.
-          vec2 across = SHAPE_TURN * moved + (weather.rg - 0.5) * warp * shapeScale;
-          vec3 s = vec3(across.x, altitude + weather.g * shapeScale, across.y);
-          float shape = textureLod(shapeNoise, s / shapeScale, 0.0).r * profile;
-          float cloud = clamp(remap(shape, 1.0 - localCoverage, 1.0, 0.0, 1.0), 0.0, 1.0);
-          if (cloud <= 0.0 || !withDetail) return cloud * density;
-
-          vec2 fine = DETAIL_TURN * moved;
-          float detail = textureLod(detailNoise, vec3(fine.x, altitude, fine.y) / detailScale, 0.0).r;
-          cloud = clamp(remap(cloud, detail * detailStrength, 1.0, 0.0, 1.0), 0.0, 1.0);
-          return cloud * density;
         }
 
         void main() {
@@ -653,7 +677,7 @@ export class VolumetricCloudsPass extends Pass {
               if (i >= steps || transmittance < 0.02) break;
               vec3 p = cameraPos + direction * t;
               vec4 weather = weatherAt(p);
-              float localCoverage = clamp(coverage + (weather.r - 0.5) * weatherContrast, 0.0, 1.0);
+              float localCoverage = coverageFrom(weather);
               // Thinned toward the far end, where a step is a kilometre long.
               float reach = 1.0 - smoothstep(maxDistance * 0.55, maxDistance, t);
               // And thinned over the last stretch before a mountain, so a
@@ -719,6 +743,15 @@ export class VolumetricCloudsPass extends Pass {
    */
   setFarDistance(texture) {
     this.farDistance = texture;
+  }
+
+  /**
+   * The uniforms CLOUD_FIELD_GLSL reads -- this pass's own objects, not
+   * copies, for another material to share.
+   */
+  fieldUniforms() {
+    const u = this.material.uniforms;
+    return Object.fromEntries(FIELD_UNIFORMS.map((name) => [name, u[name]]));
   }
 
   /** Blow the clouds on by `dt` seconds. render() does this; renderCubeFace does not. */

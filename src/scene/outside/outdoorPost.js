@@ -4,6 +4,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { VolumetricCloudsPass } from './volumetricClouds.js';
+import { createCloudShadows } from './cloudShadows.js';
 
 /**
  * Outside's post-processing: exponential height fog, and a post process
@@ -748,6 +749,8 @@ export function createOutdoorPost({
   // render, hands it straight back, and leaves it hidden for the scene pass,
   // which puts it back as it found it.
   const clouds = new VolumetricCloudsPass({ camera, sun, sunDirection, skyTexture });
+  // Their shadows on the ground, from the same cloud (cloudShadows.js).
+  const cloudShadows = createCloudShadows({ clouds, sunDirection, groundHeight });
   let farDistance = null;
   let distantScene = null;
   if (distant) {
@@ -948,6 +951,7 @@ export function createOutdoorPost({
 
   return {
     clouds,
+    cloudShadows,
     fog,
     exposure,
     grading,
@@ -975,6 +979,7 @@ export function createOutdoorPost({
       xr.presenting = false;
       // Wherever the scene's camera is looking, with its own near and far.
       distant?.update(camera);
+      cloudShadows.update(renderer, camera, dt);
       composer.render(dt);
     },
 
@@ -1011,6 +1016,7 @@ export function createOutdoorPost({
         xr.clouded = false;
         xr.metered = false;
       }
+      cloudShadows.update(renderer, camera, dt);
       camera.getWorldPosition(_head);
       xrViews.position.copy(_head);
       if (xrViews.coordinateSystem !== renderer.coordinateSystem) {
@@ -1071,6 +1077,7 @@ export function createOutdoorPost({
       xrCloudTarget.dispose();
       xrMeterTarget.dispose();
       clouds.dispose();
+      cloudShadows.dispose();
       farDistance?.dispose();
       fog.dispose();
       exposure.dispose();

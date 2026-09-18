@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { sampleTerrain } from './terrain.js';
+import { cloudShadowUniforms, CLOUD_SHADOW_GLSL } from './cloudShadows.js';
 
 /**
  * The mountains you never reach: a ring of land around the walkable terrain,
@@ -131,6 +132,13 @@ const RIDGE_GAIN = 2.1;
 // range without them is a smooth wave.
 const DETAIL_FADE_FROM = 9000;
 const DETAIL_FADE_OVER = 16000;
+
+// Which range: every whole number is a different one, the same every visit.
+// It moves where in the (endless, unrepeating) noise the ring is read from --
+// far enough per step that neighbouring seeds share nothing -- so the
+// character set above stays and only the particular peaks change.
+const SEED = 25;
+const SEED_STRIDE = [173.31, 91.73]; // noise units per step, in x and z
 
 // --- and the limit that is not a matter of taste -------------------------------
 // An octave whose features are finer than the mesh's own spacing CANNOT be
@@ -376,6 +384,7 @@ export function createDistantRange({ terrain, terrainOpts, skyTexture, sunDirect
     gain: RIDGE_GAIN,
     detailFrom: DETAIL_FADE_FROM,
     detailOver: DETAIL_FADE_OVER,
+    seed: SEED,
   };
 
   // --- the grid -------------------------------------------------------------
@@ -423,7 +432,9 @@ export function createDistantRange({ terrain, terrainOpts, skyTexture, sunDirect
     const x = centre.x + Math.cos(angle) * radius;
     const z = centre.z + Math.sin(angle) * radius;
     const crest = ridged(
-      x / shape.ridgeScale, z / shape.ridgeScale, detail, cellSizeAt(radius, rim), shape,
+      x / shape.ridgeScale + shape.seed * SEED_STRIDE[0],
+      z / shape.ridgeScale + shape.seed * SEED_STRIDE[1],
+      detail, cellSizeAt(radius, rim), shape,
     );
     const mountains = rootedFrom + relief * (shape.baseRise + crest);
     // Rooted in the terrain's own edge for the first sliver of the way out,
@@ -529,6 +540,8 @@ export function createDistantRange({ terrain, terrainOpts, skyTexture, sunDirect
     grainScale: { value: GRAIN_SCALE },
     grainStrength: { value: GRAIN_STRENGTH },
     grainFade: { value: GRAIN_FADE },
+    // The clouds' shadows, drifting over the range (cloudShadows.js).
+    ...cloudShadowUniforms,
   };
 
   const material = new THREE.ShaderMaterial({
@@ -568,6 +581,7 @@ export function createDistantRange({ terrain, terrainOpts, skyTexture, sunDirect
       uniform float grainScale;
       uniform float grainStrength;
       uniform float grainFade;
+      ${CLOUD_SHADOW_GLSL}
 
       varying vec3 vWorld;
       varying vec3 vNormal;
@@ -626,7 +640,8 @@ export function createDistantRange({ terrain, terrainOpts, skyTexture, sunDirect
         vec3 colour = mix(ground, snowColour, clamp(snow, 0.0, 1.0));
 
         // --- light ------------------------------------------------------------
-        float sun = max(dot(normal, normalize(sunDirection)), 0.0);
+        // Less where a cloud is between the slope and the sun.
+        float sun = max(dot(normal, normalize(sunDirection)), 0.0) * cloudShadowAt(vWorld);
         // The sky lights what faces up, which is what separates a shadowed
         // face from the ground in front of it.
         float skyward = 0.5 + 0.5 * normal.y;

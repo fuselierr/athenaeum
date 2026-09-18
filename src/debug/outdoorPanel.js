@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CLOUD_SHADOWS } from '../scene/outside/cloudShadows.js';
 
 /**
  * Outdoor lighting controls, for the debug overlay (the ` key).
@@ -472,6 +473,28 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       set: (v) => { cloud.windAloft.value.y = v; },
     });
 
+    // --- cloud shadows ----------------------------------------------------------
+    const shadows = post.cloudShadows;
+    section('Cloud shadows', {
+      get: () => shadows.enabled,
+      set: (on) => { shadows.enabled = on; },
+    });
+    slider('Strength', {
+      min: 0, max: 1, step: 0.01,
+      get: () => shadows.strength,
+      set: (v) => { shadows.strength = v; },
+    });
+    slider('Map span (m)', {
+      min: 8000, max: 120000, step: 1000,
+      get: () => CLOUD_SHADOWS.span,
+      set: (v) => { CLOUD_SHADOWS.span = v; },
+    });
+    slider('Redraws a second', {
+      min: 1, max: 60, step: 1,
+      get: () => CLOUD_SHADOWS.rate,
+      set: (v) => { CLOUD_SHADOWS.rate = v; },
+    });
+
     section('Exponential height fog', {
       get: () => post.fog.fogEnabled,
       set: (on) => { post.fog.fogEnabled = on; },
@@ -670,6 +693,10 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     section('Mountains: shape (rebuilds)', {
       get: () => range.object.visible,
       set: (on) => { range.object.visible = on; },
+    });
+    slider('Seed', {
+      min: 0, max: 100, step: 1,
+      get: () => shape.seed, set: (v) => { shape.seed = v; }, settle: relay,
     });
     slider('Relief at 1 km (m)', {
       min: 40, max: 900, step: 5,

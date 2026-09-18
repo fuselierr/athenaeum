@@ -30,8 +30,8 @@ import { qualityPreset } from '../../state/quality.js';
 
 // Where the sun is, in degrees: elevation above the horizon, and azimuth
 // clockwise from +Z seen from above.
-const SUN_ELEVATION = 35;
-const SUN_AZIMUTH = 200;
+const SUN_ELEVATION = 55;
+const SUN_AZIMUTH = 255;
 const SUN_COLOR = 0xfff8f0;
 const SUN_INTENSITY = 12;
 
