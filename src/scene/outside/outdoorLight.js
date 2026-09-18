@@ -33,7 +33,7 @@ import { qualityPreset } from '../../state/quality.js';
 const SUN_ELEVATION = 35;
 const SUN_AZIMUTH = 200;
 const SUN_COLOR = 0xfff8f0;
-const SUN_INTENSITY = 8;
+const SUN_INTENSITY = 12;
 
 // The atmosphere. Turbidity is haze (2 very clear, 10 hazy); rayleigh is
 // the blue of clean air; the Mie terms are the glow around the sun.
@@ -45,7 +45,7 @@ const ATMOSPHERE = {
 };
 
 // How strongly the captured sky lights the scene.
-const SKY_LIGHT_INTENSITY = 0.75;
+const SKY_LIGHT_INTENSITY = 0.5;
 
 /**
  * @param {object} opts

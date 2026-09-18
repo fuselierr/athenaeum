@@ -497,7 +497,7 @@ let deckShelf = null;
     // Sitting or lying down (X), for the grass to part round you.
     lying: () => cameraModes.lying,
     // Right-clicking the bench.
-    sit: (seat) => cameraModes.sitOn(seat),
+    sit: (seat, options) => cameraModes.sitOn(seat, options),
     // Outside in VR, the exposure is metered off the land around you -- not
     // off the controllers and the menu in front of your face.
     vrHidden: () => vr.overlay,

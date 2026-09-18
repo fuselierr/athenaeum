@@ -12,7 +12,9 @@ export async function createScene() {
   scene.background = new THREE.Color(0x11141a); // until the EXR below loads
   scene.fog = new THREE.Fog(0x11141a, 8, 20);
 
-  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 50);
+  // 70 degrees: the settings' default (state/settings.js), which bindSettings
+  // applies -- given here too so the first frames are not drawn narrower.
+  const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 50);
   // Metres (scene/worldScale.js): roughly half a metre back from a book
   // about 16 cm across, keeping the old viewing direction.
   camera.position.set(-0.48, 0.27, 0.15);

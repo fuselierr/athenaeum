@@ -11,6 +11,8 @@ import { createWindField } from './wind.js';
 import { createDistantRange } from './distantRange.js';
 import { loadParkBench } from './parkBench.js';
 import { loadTree } from './tree.js';
+import { loadEggChair } from './eggChair.js';
+import { createFallingLeaves } from './fallingLeaves.js';
 import { world } from '../../state/world.js';
 import { watch } from 'vue';
 import { settings } from '../../state/settings.js';
@@ -40,7 +42,9 @@ import { qualityPreset } from '../../state/quality.js';
  * were looking, with the grass kept off it (scene/outside/parkBench.js).
  * Right-click it, near enough, and you sit down on it. A TREE stands over it
  * (scene/outside/tree.js), rooted behind the backrest so the canopy is
- * overhead and the view from the seat is clear.
+ * overhead and the view from the seat is clear, and an EGG CHAIR hangs from
+ * one of its limbs beside the bench (scene/outside/eggChair.js) -- a second
+ * seat, sat in the same way, and the one you arrive in.
  *
  * AND BACK. goInside() puts the room's look back -- its fog, its view
  * distance, its backdrop and light, no tone mapping -- exactly as they were
@@ -88,8 +92,9 @@ function nextFrame() {
  *   leave -- input/cameraModes.js's setGround
  * @param {() => number} [opts.lying]  how far down the player is lying, 0..1,
  *   for the grass to part round them
- * @param {((seat: { eye: THREE.Vector3, yaw: number, standAt: { x: number, z: number } }) => void)|null} [opts.sit]
- *   sit the player on the bench -- input/cameraModes.js's sitOn
+ * @param {((seat: { eye: THREE.Vector3, yaw: number, standAt: { x: number, z: number } },
+ *   options?: { instantly?: boolean }) => void)|null} [opts.sit]
+ *   sit the player on a seat -- input/cameraModes.js's sitOn
  * @param {{ objects: () => THREE.Object3D[], outdoors: () => THREE.Object3D[] }} [opts.book]
  *   every book in the room, and which of them are out here -- the one in
  *   your hand, and any you have set down on the grass
@@ -109,6 +114,8 @@ export function createOutside({
   let clumps = null;
   let wind = null;
   let bench = null;
+  let chair = null;
+  let leaves = null;
   let tree = null;
   let range = null;
 
@@ -242,6 +249,16 @@ export function createOutside({
       scene.remove(tree.object);
       tree.dispose();
     }
+    if (chair) {
+      scene.remove(chair.object);
+      chair.dispose();
+    }
+    chair = null;
+    if (leaves) {
+      scene.remove(leaves.object);
+      leaves.dispose();
+    }
+    leaves = null;
     // Never in `scene` -- it lives in the far pass's own scene
     // (outdoorPost.js), which goes with the composer above.
     range?.dispose();
@@ -286,23 +303,19 @@ export function createOutside({
       console.warn('The park bench did not load; going out without it.', err);
       return null;
     });
+    const treeLoading = loadTree().catch((err) => {
+      console.warn('The tree did not load; going out without it.', err);
+      return null;
+    });
+    const chairLoading = loadEggChair().catch((err) => {
+      console.warn('The egg chair did not load; going out without it.', err);
+      return null;
+    });
     // The grass's tuft, and with it the wind's noise field. Unlike the
     // scenery this one is not optional -- without it there is no grass to
-    // plant -- and the tree waits on it for the field, so that the canopy and
-    // the meadow lean in one gust (scene/outside/wind.js).
+    // plant -- and the tree is grown from the same field, so that the crown
+    // and the meadow lean in one gust (scene/outside/wind.js).
     const clumpsLoading = loadGrassClumps();
-    // ONE field, made once and given to both. Made here rather than inside
-    // either of them because it is neither's: two calls to createWindField
-    // would hand the grass and the tree their own uniform objects, and a
-    // slider that widened the gusts would widen them over the meadow while
-    // the tree carried on in the old wind.
-    const fieldLoading = clumpsLoading.then(({ windNoise }) => createWindField(windNoise));
-    const treeLoading = fieldLoading
-      .then((windField) => loadTree({ windField }))
-      .catch((err) => {
-        console.warn('The tree did not load; going out without it.', err);
-        return null;
-      });
     try {
       const heightmap = await loadHeightmap(HEIGHTMAP_URL, (fraction) => {
         loadingScreen.status('Surveying the land…', 0.3 * fraction);
@@ -334,7 +347,11 @@ export function createOutside({
       loadingScreen.status('Growing the grass…', 0.65, 0.72);
       await nextFrame();
       clumps = await clumpsLoading;
-      wind = await fieldLoading;
+      // ONE field, made once and given to both the grass and the tree. Two
+      // calls to createWindField would hand them their own uniform objects,
+      // and a slider that widened the gusts over the meadow would leave the
+      // tree in the old wind.
+      wind = createWindField(clumps.windNoise);
       grass = createGrass({
         terrain,
         terrainWidth: TERRAIN.width,
@@ -379,8 +396,40 @@ export function createOutside({
         });
         scene.add(tree.object);
       } else if (tree) {
+        // Nothing to stand over.
         tree.dispose();
         tree = null;
+      }
+
+      // Hung from the tree, beside the bench -- and, like the tree, before the
+      // sun is made, so it is in the shadow map that is drawn once.
+      chair = await chairLoading;
+      if (chair && tree && bench) {
+        const seatYaw = bench.seat.yaw;
+        const onLimb = chair.place({
+          tree,
+          facing: new THREE.Vector3(-Math.sin(seatYaw), 0, -Math.cos(seatYaw)),
+          bench: bench.object.position,
+          heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+        });
+        if (!onLimb) console.info('No limb of the tree suited the egg chair; hung under the crown instead.');
+        scene.add(chair.object);
+        // Its own clearing -- the bench has the first -- or the grass grows up
+        // through the bottom of the egg.
+        grass.setClearing(chair.clearing.x, chair.clearing.z, chair.clearing.radius, 1);
+      } else if (chair) {
+        // Nothing to hang from.
+        chair.dispose();
+        chair = null;
+      }
+
+      // Leaves coming down out of the crown (scene/outside/fallingLeaves.js).
+      if (tree) {
+        leaves = createFallingLeaves({
+          tree,
+          heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+        });
+        scene.add(leaves.object);
       }
 
       loadingScreen.status('Lighting the sky…', 0.72, 0.8);
@@ -401,6 +450,10 @@ export function createOutside({
         centre: terrain.position.clone().setY(floorBox.max.y),
         reach: TERRAIN.width / 2,
       });
+      // The tree's crown is coloured by which side of it faces the sun, so it
+      // is told where the sun is -- the light's own vector, which follows the
+      // sun if it moves (scene/outside/tree.js).
+      tree?.setSunDirection(daylight.sunDirection);
       // The cloud noise is generated here, which takes a moment.
       loadingScreen.status('Gathering clouds…', 0.8, 0.88);
       await nextFrame();
@@ -446,6 +499,13 @@ export function createOutside({
         ),
       });
 
+      // You arrive sat in the egg chair: the loading screen lifts on the view
+      // from it, not on the spot you happened to come out at. Instantly, not
+      // the usual glide onto a seat, which would be you sliding across the
+      // meadow into it. Moving gets you up, as from any seat. Not in VR, where
+      // the headset is where you are.
+      if (chair?.seat && sit && !renderer.xr.isPresenting) sit(chair.seat, { instantly: true });
+
       state = 'outside';
       world.place = 'outside';
       loadingScreen.finish();
@@ -469,6 +529,8 @@ export function createOutside({
     get post() { return post; },
     get grass() { return grass; },
     get range() { return range; },
+    get tree() { return tree; },
+    get leaves() { return leaves; },
 
     /**
      * Draw the frame, if outside: through the fog and exposure chain.
@@ -479,6 +541,7 @@ export function createOutside({
       followBook();
       grass?.update(dt);
       tree?.update(dt);
+      leaves?.update(dt);
       // In VR the chain cannot run -- it renders into targets of its own,
       // which an XR session cannot present -- so the headset gets the clouds
       // and the exposure another way (outdoorPost.js's renderXR). The grass
@@ -497,23 +560,29 @@ export function createOutside({
     },
 
     /**
-     * A right-click. Outside, on the bench and within reach, it sits you down
-     * on it. Returns whether it did.
+     * A right-click. Outside, on a seat -- the bench, or the egg chair -- and
+     * within reach, it sits you down in it. Returns whether it did.
      */
     handleRightClick(event) {
-      if (state !== 'outside' || !bench?.seat || !sit) return false;
+      const seats = [bench, chair].filter((one) => one?.seat);
+      if (state !== 'outside' || seats.length === 0 || !sit) return false;
       const rect = renderer.domElement.getBoundingClientRect();
       _ndc.set(
         ((event.clientX - rect.left) / rect.width) * 2 - 1,
         -((event.clientY - rect.top) / rect.height) * 2 + 1,
       );
       _raycaster.setFromCamera(_ndc, camera);
-      // The bench and the ground only: a rise in the way hides it.
-      const nearest = _raycaster.intersectObjects([bench.object, terrain].filter(Boolean), true)[0];
+      // The seats and the ground only: a rise in the way hides them. Not the
+      // tree -- its leaves are cards whose empty corners a ray would still
+      // hit, so the crown would swallow clicks meant for the chair under it.
+      const nearest = _raycaster.intersectObjects(
+        [...seats.map((one) => one.object), terrain].filter(Boolean), true,
+      )[0];
       if (!nearest || nearest.distance > SIT_REACH) return false;
       for (let o = nearest.object; o; o = o.parent) {
-        if (o === bench.object) {
-          sit(bench.seat);
+        const hit = seats.find((one) => one.object === o);
+        if (hit) {
+          sit(hit.seat);
           return true;
         }
       }

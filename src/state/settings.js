@@ -12,7 +12,14 @@ import { reactive, watch } from 'vue';
 
 const STORAGE_KEY = 'athenaeum.settings';
 
+// Which shape of settings this is. Saved with them, so a copy written before a
+// change of DEFAULT can be told apart from one where the reader chose the same
+// value on purpose -- see migrate(). Bump it when a default changes and the
+// old default should not be kept by everyone who happened to have it saved.
+const SETTINGS_VERSION = 2;
+
 export const settings = reactive({
+  version: SETTINGS_VERSION,
   audio: {
     // 0..1. Master multiplies the other two; a channel at 0 is silent
     // whatever master says.
@@ -25,7 +32,7 @@ export const settings = reactive({
     lookSensitivity: 1, // multiplies the rig's own radians-per-pixel
     invertX: false, // flips which way a sideways drag turns the view
     invertY: false,
-    fov: 50, // degrees, and the widest the LOOK mode will zoom back out to
+    fov: 70, // degrees, and the widest the LOOK mode will zoom back out to
   },
   graphics: {
     shadows: true,
@@ -66,15 +73,44 @@ function restore(target, saved) {
 }
 
 /**
+ * Bring settings saved by an older version up to date before they are taken
+ * in. Returns a copy; the saved object is left alone.
+ *
+ * WHY. Settings are saved whole whenever anything changes, and saved values
+ * win over the defaults -- so a new default reaches nobody who has ever
+ * touched a slider: their copy carries the OLD default as though they had
+ * chosen it. Where a saved value is exactly an old default and the copy
+ * predates the change, it was not a choice, and it is dropped so the new
+ * default stands. From then on the copy carries this version, and the same
+ * value is taken as meant.
+ *
+ *   version 1 -> 2  the field of view went from 50 to 70 degrees.
+ */
+function migrate(saved) {
+  if (!saved || typeof saved !== 'object') return saved;
+  const from = typeof saved.version === 'number' ? saved.version : 1;
+  if (from >= SETTINGS_VERSION) return saved;
+  const copy = { ...saved, camera: { ...(saved.camera ?? {}) } };
+  if (from < 2 && copy.camera.fov === 50) delete copy.camera.fov;
+  return copy;
+}
+
+/** Merge a saved copy in, brought up to date first, and stamp it current. */
+function take(saved) {
+  restore(settings, migrate(saved));
+  settings.version = SETTINGS_VERSION;
+}
+
+/**
  * Take settings saved elsewhere -- the reader's account (auth/preferences.js)
  * -- in, field by field, exactly as this browser's own copy is taken in.
  */
 export function applySettings(saved) {
-  restore(settings, saved);
+  take(saved);
 }
 
 try {
-  restore(settings, JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null'));
+  take(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null'));
 } catch {
   // Unreadable settings are no settings: the defaults above stand.
 }

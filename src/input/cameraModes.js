@@ -422,15 +422,26 @@ export function createCameraModes({
      * camera's yaw), `standAt` the spot you step out to on getting up. You
      * glide onto it and round to face its way; looking around carries on,
      * and moving, jumping or X gets you up. In walk mode, switching to it.
+     *
+     * `instantly` puts you there already sat and facing its way, with no
+     * glide -- for arriving in a seat, where the glide would be you sliding
+     * across the meadow from wherever you happened to come in, just as the
+     * loading screen lifts.
      */
-    sitOn({ eye: seatEye, yaw: seatYaw, standAt }) {
+    sitOn({ eye: seatEye, yaw: seatYaw, standAt }, { instantly = false } = {}) {
       if (mode !== CAMERA_MODE.WALK) setMode(CAMERA_MODE.WALK);
       land();
       velocity.set(0, 0, 0);
       posture = 0;
       standRequested = false;
       seat = { eye: seatEye.clone(), yaw: seatYaw, standAt: { x: standAt.x, z: standAt.z } };
-      seatTurning = true;
+      seatTurning = !instantly;
+      if (instantly) {
+        camera.position.copy(seat.eye);
+        yaw = seatYaw;
+        pitch = SEAT_PITCH;
+        applyLook();
+      }
     },
 
     /**

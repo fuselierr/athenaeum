@@ -37,7 +37,7 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
   let el = null;
   let builtFor = null; // the post chain the current panel controls
 
-  function build(daylight, post, terrain, grass, range) {
+  function build(daylight, post, terrain, grass, range, tree, leaves) {
     el = document.createElement('div');
     Object.assign(el.style, {
       position: 'fixed',
@@ -159,6 +159,30 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
         show();
       });
       row.append(name, value, input);
+      into.append(row);
+    }
+
+    /** A colour picker for a THREE.Color -- the original's GUI has these. */
+    function colour(label, { get }) {
+      const row = document.createElement('label');
+      Object.assign(row.style, {
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 0',
+      });
+      const name = document.createElement('span');
+      name.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = `#${get().getHexString()}`;
+      Object.assign(input.style, {
+        width: '44px', height: '20px', padding: '0', border: '0', background: 'none', cursor: 'pointer',
+      });
+      input.addEventListener('input', () => get().set(input.value));
+      const initial = get().getHex();
+      sliderResets.push(() => {
+        get().setHex(initial);
+        input.value = `#${get().getHexString()}`;
+      });
+      row.append(name, input);
       into.append(row);
     }
 
@@ -573,6 +597,25 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     // Last, and only when there are any: the range is scenery the trip may
     // have gone without (scene/outside/distantRange.js).
     if (range) rangeControls({ section, slider, range });
+    if (tree) treeControls({ section, slider, colour, tree });
+    if (leaves) {
+      section('Falling leaves', {
+        get: () => leaves.object.visible,
+        set: (on) => { leaves.object.visible = on; },
+      });
+      slider('Fall speed (x)', {
+        min: 0.1, max: 3, step: 0.05,
+        get: () => leaves.settings.fall, set: (v) => { leaves.settings.fall = v; },
+      });
+      slider('Drift (x)', {
+        min: 0, max: 4, step: 0.05,
+        get: () => leaves.settings.drift, set: (v) => { leaves.settings.drift = v; },
+      });
+      slider('Swing (x)', {
+        min: 0, max: 3, step: 0.05,
+        get: () => leaves.settings.swing, set: (v) => { leaves.settings.swing = v; },
+      });
+    }
   }
 
   /**
@@ -685,6 +728,60 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     });
   }
 
+  /**
+   * The fluffy tree (scene/outside/tree.js), with the controls its original
+   * has: the gradient, its three colours, the shadow darkness and the wobble.
+   * All uniforms, so all live.
+   */
+  function treeControls({ section, slider, colour, tree }) {
+    const u = tree.uniforms;
+    section('Tree: leaves', {
+      get: () => tree.object.visible,
+      set: (on) => { tree.object.visible = on; },
+    });
+    slider('Gradient start', {
+      min: -1, max: 5, step: 0.01,
+      get: () => u.uGradientStart.value, set: (v) => { u.uGradientStart.value = v; },
+    });
+    slider('Gradient end', {
+      min: -1, max: 5, step: 0.01,
+      get: () => u.uGradientEnd.value, set: (v) => { u.uGradientEnd.value = v; },
+    });
+    colour('Shadow colour', { get: () => u.uShadowColor.value });
+    colour('Lit colour', { get: () => u.uLitColor.value });
+    slider('Highlight start', {
+      min: -1, max: 5, step: 0.01,
+      get: () => u.uHighlightStart.value, set: (v) => { u.uHighlightStart.value = v; },
+    });
+    slider('Highlight end', {
+      min: -1, max: 5, step: 0.01,
+      get: () => u.uHighlightEnd.value, set: (v) => { u.uHighlightEnd.value = v; },
+    });
+    colour('Highlight colour', { get: () => u.uHighlightColor.value });
+    slider('Leaf shadow darkness', {
+      min: 0, max: 1, step: 0.01,
+      get: () => u.uLeafShadowDarkness.value, set: (v) => { u.uLeafShadowDarkness.value = v; },
+    });
+    slider('Trunk shadow darkness', {
+      min: 0, max: 1, step: 0.01,
+      get: () => tree.trunkShadow.value, set: (v) => { tree.trunkShadow.value = v; },
+    });
+
+    section('Tree: wind');
+    slider('Strength', {
+      min: 0, max: 1, step: 0.01,
+      get: () => u.uWindStrength.value, set: (v) => { u.uWindStrength.value = v; },
+    });
+    slider('Frequency', {
+      min: 0, max: 5, step: 0.01,
+      get: () => u.uWindFrequency.value, set: (v) => { u.uWindFrequency.value = v; },
+    });
+    slider('Speed', {
+      min: 0, max: 5, step: 0.1,
+      get: () => u.uWindSpeed.value, set: (v) => { u.uWindSpeed.value = v; },
+    });
+  }
+
   return {
     /** Call every frame with whether the debug overlay is up. */
     update(debugVisible) {
@@ -697,7 +794,7 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
         builtFor = null;
       }
       if (show && !el) {
-        build(outside.daylight, outside.post, outside.terrain, outside.grass, outside.range);
+        build(outside.daylight, outside.post, outside.terrain, outside.grass, outside.range, outside.tree, outside.leaves);
         builtFor = outside.post;
       }
       if (el) el.style.display = show ? 'block' : 'none';

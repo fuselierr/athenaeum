@@ -87,6 +87,11 @@ import { WIND, WIND_GLSL } from './wind.js';
  * sun's map is far too coarse for a blade.
  */
 
+// How many patches of the field can be kept clear at once: the bench, the egg
+// chair, and room for a couple more. Fixed, because the shader loops over
+// them.
+const CLEARINGS = 4;
+
 const GRASS = {
   chunkSize: 10, // metres on a side
   // Tufts, not blades: each instance is a modelled clump of them, cut out of
@@ -109,12 +114,12 @@ const GRASS = {
   clumpLod: [14, 28],
   baseShade: 0.35, // brightness at the root; the tip is 1
   rootColour: 0x2e5a1c,
-  tipColour: 0x9cc24f,
+  tipColour: 0x8fc22b,
   // A second tip, and the noise field says which of the two a patch of the
   // meadow wears -- FluffyGrass's trick, and most of why its field does not
   // read as one flat green. Large and slow: this is the meadow having
   // lighter and darker ground, not a pattern.
-  tipColourShade: 0x5c8a35,
+  tipColourShade: 0x508a1d,
   colourPatch: 550, // metres across one patch of colour
   groundInfluence: 0.05, // how much of the ground texture shows in a blade, 0..1
   windStrength: 0.6, // how far a tip leans, as a fraction of its height
@@ -190,8 +195,10 @@ const MEADOW_GLSL = /* glsl */`
   uniform vec2 grassPartCentre;
   uniform float grassPartRadius;
   uniform float grassPartStrength;
-  uniform vec2 grassClearCentre;
-  uniform float grassClearRadius;
+  // Patches kept clear, for things standing in the field: x, z and radius,
+  // a radius of 0 marking a slot unused. A few, not one -- the bench and the
+  // egg chair each need their own. See setClearing.
+  uniform vec3 grassClearings[${CLEARINGS}];
   uniform sampler2D grassSurface;
   uniform vec2 grassTerrainOffset;
   uniform float grassTerrainY;
@@ -221,12 +228,15 @@ const MEADOW_GLSL = /* glsl */`
   }
 
   // How much of its size something growing at root keeps: all of it near,
-  // none past the fade -- and none in the clearing, when there is one, kept
-  // for something standing in the field (the bench).
+  // none past the fade -- and none in a clearing, kept for something standing
+  // in the field (the bench, the egg chair).
   float meadowFade(vec3 root) {
     float fade = 1.0 - smoothstep(grassFadeStart, grassFadeEnd, distance(root, cameraPosition));
-    if (grassClearRadius > 0.0) {
-      fade *= smoothstep(grassClearRadius * 0.6, grassClearRadius, distance(root.xz, grassClearCentre));
+    for (int i = 0; i < ${CLEARINGS}; i++) {
+      vec3 clearing = grassClearings[i];
+      if (clearing.z > 0.0) {
+        fade *= smoothstep(clearing.z * 0.6, clearing.z, distance(root.xz, clearing.xy));
+      }
     }
     return fade;
   }
@@ -421,8 +431,7 @@ export function createGrass({
     grassWindDirection: { value: new THREE.Vector2(...GRASS.windDirection).normalize() },
     grassFadeStart: { value: GRASS.fadeStart },
     grassFadeEnd: { value: GRASS.fadeEnd },
-    grassClearCentre: { value: new THREE.Vector2() },
-    grassClearRadius: { value: 0 }, // 0: no clearing
+    grassClearings: { value: Array.from({ length: CLEARINGS }, () => new THREE.Vector3()) },
     grassHeightScale: { value: 3 },
     grassNearHeight: { value: GRASS.nearHeight },
     grassFullHeightAt: { value: GRASS.fullHeightAt },
@@ -984,11 +993,14 @@ export function createGrass({
     /**
      * Keep the grass and flowers off a round patch of ground, centred on world
      * (x, z) -- under something standing in the field, like the bench. They
-     * thin to nothing over the outer part of `radius`; 0 for no clearing.
+     * thin to nothing over the outer part of `radius`; 0 clears the slot.
+     * `slot` is which of the few clearings this is (0 .. CLEARINGS - 1), so
+     * each thing in the field keeps its own.
      */
-    setClearing(x, z, radius) {
-      uniforms.grassClearCentre.value.set(x, z);
-      uniforms.grassClearRadius.value = Math.max(0, radius);
+    setClearing(x, z, radius, slot = 0) {
+      const clearing = uniforms.grassClearings.value[slot];
+      if (!clearing) return;
+      clearing.set(x, z, Math.max(0, radius));
     },
     get chunkCount() { return chunks.length; },
     /** Whether the flowers are drawn, for the debug panel. */

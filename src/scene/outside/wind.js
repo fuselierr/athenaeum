@@ -48,12 +48,12 @@ export const WIND = {
   // second sounds slow and is 22 m/s. FluffyGrass scrolls its field at about
   // a tenth of a metre a second; a walking gust is a few.
   /** Metres across one tile of the broad field. Big, or the wind looks like rain. */
-  gustScale: 140,
+  gustScale: 80,
   /** How fast the gust front travels downwind, in metres per second. */
-  gustSpeed: 1.8,
+  gustSpeed: 6.8,
   /** And the finer one, over the top of it. */
   rippleScale: 42,
-  rippleSpeed: 3.2,
+  rippleSpeed: 8.2,
   /** How much of the movement is the ripple rather than the gust, 0..1. */
   rippleShare: 0.3,
 };
