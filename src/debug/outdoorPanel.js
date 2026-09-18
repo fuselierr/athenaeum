@@ -412,13 +412,16 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       ['Shape scale (m)', 'shapeScale', 500, 20000, 50],
       ['Detail scale (m)', 'detailScale', 50, 5000, 10],
       ['Detail erosion', 'detailStrength', 0, 1, 0.01],
+      ['Weather scale (m)', 'weatherScale', 5000, 150000, 500],
+      ['Weather contrast', 'weatherContrast', 0, 2, 0.01],
+      ['Pattern warp', 'warp', 0, 1.5, 0.01],
       ['Sun light', 'sunLight', 0, 5, 0.01],
       ['Sky light', 'ambient', 0, 4, 0.01],
       ['Absorption', 'absorption', 0, 4, 0.01],
       ['Powder (dark edges)', 'powder', 0, 1, 0.01],
       ['Silver lining (g)', 'forwardScattering', 0, 0.99, 0.01],
       ['Steps', 'stepCount', 8, 64, 1],
-      ['Max distance (m)', 'maxDistance', 2000, 80000, 500],
+      ['Max distance (m)', 'maxDistance', 2000, 150000, 500],
     ]) {
       slider(label, {
         min, max, step,
@@ -435,6 +438,36 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       min: -60, max: 60, step: 0.5,
       get: () => cloud.wind.value.y,
       set: (v) => { cloud.wind.value.y = v; },
+    });
+
+    // --- high clouds: cirrus --------------------------------------------------------
+    section('High clouds', {
+      get: () => cloud.highOn.value > 0.5,
+      set: (on) => { cloud.highOn.value = on ? 1 : 0; },
+    });
+    for (const [label, name, min, max, step] of [
+      ['Cirrus height (m)', 'cirrusHeight', 6000, 14000, 50],
+      ['Cirrus coverage', 'cirrusCoverage', 0, 1, 0.01],
+      ['Cirrus opacity', 'cirrusOpacity', 0, 1, 0.01],
+      ['Cirrus scale (m)', 'cirrusScale', 2000, 80000, 500],
+      ['Brightness', 'highLight', 0, 3, 0.01],
+      ['Fade distance (m)', 'highFade', 20000, 400000, 1000],
+    ]) {
+      slider(label, {
+        min, max, step,
+        get: () => cloud[name].value,
+        set: (v) => { cloud[name].value = v; },
+      });
+    }
+    slider('Wind aloft x (m/s)', {
+      min: -80, max: 80, step: 0.5,
+      get: () => cloud.windAloft.value.x,
+      set: (v) => { cloud.windAloft.value.x = v; },
+    });
+    slider('Wind aloft z (m/s)', {
+      min: -80, max: 80, step: 0.5,
+      get: () => cloud.windAloft.value.y,
+      set: (v) => { cloud.windAloft.value.y = v; },
     });
 
     section('Exponential height fog', {

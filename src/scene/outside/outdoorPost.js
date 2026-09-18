@@ -170,6 +170,10 @@ class HeightFogPass extends Pass {
           vec3 direction = normalize(worldAt(0.0) - cameraPos);
           bool isSky = depth >= 0.99999;
           // The clouds, onto the sky only: they are always above the ground.
+          // "Sky" here includes the mountains, which the far pass drew
+          // outside this depth buffer -- the clouds already stop where each
+          // range is (FarDistancePass), so what is left over one is cloud
+          // in front of it.
           if (isSky && cloudsOn > 0.5) {
             vec4 clouds = texture2D(tClouds, vUv);
             scene.rgb = scene.rgb * clouds.a + clouds.rgb;
@@ -235,6 +239,93 @@ class HeightFogPass extends Pass {
   }
 
   dispose() {
+    this.material.dispose();
+    this.quad.dispose();
+  }
+}
+
+/**
+ * How far away the mountains are along each ray, in kilometres, for the
+ * clouds (VolumetricCloudsPass.setFarDistance).
+ *
+ * The far pass draws the range with a depth buffer of its own, and the scene
+ * pass straight after clears it -- so to the fog pass, a mountain is sky. For
+ * the fog that is fine: the range carries its own haze. For the clouds it is
+ * not: a cloud 60 km out would be laid over a peak 20 km out. So between the
+ * two passes this one reads that depth while it still exists and keeps it,
+ * at half size, as a distance.
+ *
+ * Kilometres, not metres, because it is kept as half floats, which run out
+ * at 65,504: in kilometres the sky can be "sixty thousand" -- nowhere -- and
+ * a peak 30 km out is still to within a few metres. Each texel keeps the
+ * NEAREST of the four pixels it covers, and is read unfiltered: an average of
+ * a peak and the sky behind it would be a distance where nothing is.
+ */
+class FarDistancePass extends Pass {
+  constructor({ camera, clouds }) {
+    super();
+    this.needsSwap = false;
+    this.camera = camera; // the far pass's own
+    this.clouds = clouds;
+    this.target = new THREE.WebGLRenderTarget(1, 1, {
+      type: THREE.HalfFloatType,
+      depthBuffer: false,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      generateMipmaps: false,
+    });
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        tDepth: { value: null },
+        texel: { value: new THREE.Vector2() },
+        projectionInverse: { value: new THREE.Matrix4() },
+      },
+      vertexShader: FULLSCREEN_VERTEX,
+      fragmentShader: /* glsl */`
+        uniform sampler2D tDepth;
+        uniform vec2 texel;
+        uniform mat4 projectionInverse;
+        varying vec2 vUv;
+        void main() {
+          float depth = min(
+            min(texture2D(tDepth, vUv + texel * vec2(-0.5, -0.5)).x, texture2D(tDepth, vUv + texel * vec2(0.5, -0.5)).x),
+            min(texture2D(tDepth, vUv + texel * vec2(-0.5, 0.5)).x, texture2D(tDepth, vUv + texel * vec2(0.5, 0.5)).x));
+          if (depth >= 0.99999) { gl_FragColor = vec4(60000.0); return; }
+          vec4 view = projectionInverse * vec4(vUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+          gl_FragColor = vec4(length(view.xyz / view.w) / 1000.0);
+        }`,
+      depthTest: false,
+      depthWrite: false,
+    });
+    this.quad = new FullScreenQuad(this.material);
+  }
+
+  get texture() {
+    return this.target.texture;
+  }
+
+  setSize(width, height) {
+    this.target.setSize(Math.max(1, Math.ceil(width / 2)), Math.max(1, Math.ceil(height / 2)));
+    this.material.uniforms.texel.value.set(1 / width, 1 / height);
+  }
+
+  render(renderer, writeBuffer, readBuffer) {
+    if (!this.clouds.enabled) return;
+    const u = this.material.uniforms;
+    u.tDepth.value = readBuffer.depthTexture;
+    u.projectionInverse.value.copy(this.camera.projectionMatrixInverse);
+    renderer.setRenderTarget(this.target);
+    this.quad.render(renderer);
+    // Put back the buffer the far pass drew into. The scene pass after this
+    // one clears depth BEFORE it sets its own target (three's RenderPass
+    // does it in that order), so it clears whatever is current -- and if
+    // that is this pass's target, the range's depth survives and the
+    // mountains draw in front of the whole scene.
+    renderer.setRenderTarget(readBuffer);
+  }
+
+  dispose() {
+    this.target.dispose();
     this.material.dispose();
     this.quad.dispose();
   }
@@ -656,6 +747,8 @@ export function createOutdoorPost({
   // scene with the dome in it. So the far pass takes it for the length of one
   // render, hands it straight back, and leaves it hidden for the scene pass,
   // which puts it back as it found it.
+  const clouds = new VolumetricCloudsPass({ camera, sun, sunDirection, skyTexture });
+  let farDistance = null;
   let distantScene = null;
   if (distant) {
     distantScene = new THREE.Scene();
@@ -678,6 +771,11 @@ export function createOutdoorPost({
       distant.sky.visible = false;
     };
     composer.addPass(farPass);
+
+    // The range's depth, kept for the clouds before the scene pass clears it.
+    farDistance = new FarDistancePass({ camera: distant.camera, clouds });
+    composer.addPass(farDistance);
+    clouds.setFarDistance(farDistance.texture);
   }
 
   const scenePass = new RenderPass(scene, camera);
@@ -693,7 +791,6 @@ export function createOutdoorPost({
     };
   }
   composer.addPass(scenePass);
-  const clouds = new VolumetricCloudsPass({ camera, sun, sunDirection, skyTexture });
   composer.addPass(clouds);
   const fog = new HeightFogPass({ camera, sunDirection, groundHeight, skyTexture, clouds });
   composer.addPass(fog);
@@ -970,6 +1067,7 @@ export function createOutdoorPost({
       xrCloudTarget.dispose();
       xrMeterTarget.dispose();
       clouds.dispose();
+      farDistance?.dispose();
       fog.dispose();
       exposure.dispose();
       grading.dispose();
