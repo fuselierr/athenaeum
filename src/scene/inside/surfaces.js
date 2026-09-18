@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLTF } from '../models.js';
 
 /**
  * What the room is made of: the floorboards, the plywood walls, and the coated
@@ -32,7 +32,7 @@ const SURFACES = {
 
 /** The material off a texture set's glTF, tiled `tile` metres to a copy. */
 async function loadSurface({ url, tile }) {
-  const gltf = await new GLTFLoader().loadAsync(url);
+  const gltf = await loadGLTF(url);
   let material = null;
   gltf.scene.traverse((object) => {
     if (material || !object.isMesh) return;

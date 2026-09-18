@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLTF } from '../models.js';
 import { WIND_NOISE_URL } from './wind.js';
 
 /**
@@ -58,7 +58,7 @@ const LEVELS = ['LOD00', 'LOD01', 'LOD02'];
  *   root at y = 0; `height` is what it measured before that.
  */
 export async function loadGrassClumps() {
-  const gltf = await new GLTFLoader().loadAsync(CLUMPS_URL);
+  const gltf = await loadGLTF(CLUMPS_URL);
 
   // Every mesh in the file, by name, so the levels can be picked out of it.
   const meshes = [];

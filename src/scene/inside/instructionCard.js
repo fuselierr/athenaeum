@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { watch } from 'vue';
+import { aimAtPointer, nearestShownHit } from '../picking.js';
 import { keys, label } from '../../state/keybindings.js';
 
 /**
@@ -432,7 +433,6 @@ export function addInstructionCard(scene, { deskBox, renderer, camera }) {
   const _handPosition = new THREE.Vector3();
   const _handQuaternion = new THREE.Quaternion();
   const _raycaster = new THREE.Raycaster();
-  const _ndc = new THREE.Vector2();
 
   /** Where the card is held: centred in front of the camera, facing it. */
   function readHandPose() {
@@ -452,12 +452,6 @@ export function addInstructionCard(scene, { deskBox, renderer, camera }) {
     if (on === onTop) return;
     onTop = on;
     for (const material of [frameMaterial, backingMaterial, paperMaterial]) material.depthTest = !on;
-  }
-
-  /** Is an object actually on screen -- itself and every parent visible? */
-  function shown(object) {
-    for (let o = object; o; o = o.parent) if (!o.visible) return false;
-    return true;
   }
 
   return {
@@ -481,15 +475,10 @@ export function addInstructionCard(scene, { deskBox, renderer, camera }) {
         held = false;
         return true;
       }
-      const rect = renderer.domElement.getBoundingClientRect();
-      _ndc.set(
-        ((event.clientX - rect.left) / rect.width) * 2 - 1,
-        -((event.clientY - rect.top) / rect.height) * 2 + 1,
-      );
-      _raycaster.setFromCamera(_ndc, camera);
-      // Raycasting ignores `visible`, so hidden things (the walls, when they
-      // are switched off) are skipped here rather than allowed to block.
-      const nearest = _raycaster.intersectObject(scene, true).find((hit) => shown(hit.object));
+      aimAtPointer(_raycaster, event.clientX, event.clientY, camera, renderer.domElement);
+      // Hidden things (the walls, when they are switched off) are skipped
+      // rather than allowed to block (scene/picking.js).
+      const nearest = nearestShownHit(_raycaster, scene);
       if (!nearest || !meshes.includes(nearest.object)) return false;
       held = true;
       return true;

@@ -1,13 +1,19 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLTF } from '../models.js';
+import { disposeObject } from '../disposal.js';
+import { flatDirection, sideways } from '../direction.js';
 
 /**
  * A fluffy tree, outside, standing over the bench (scene/outside/parkBench.js).
  *
  * Leonardo Soares Gonçalves's "Fluffy Tree" (MIT, 2025): his model and his
- * canopy shader, ported. The model is public/landscape-glb.glb, as he ships
- * it -- a hill of his own, grass, and the tree on top -- and only the tree is
- * taken out of it.
+ * canopy shader, ported. The model is public/fluffy-tree.glb: his tree, cut
+ * out of the scene he ships it in (public/landscape-glb.glb -- a hill of his
+ * own, grass, and the tree on top). The cutting was done once, ahead of time,
+ * and changed nothing of the tree -- every vertex and the leaf texture are
+ * byte for byte his. What it saved: the hill and its grass were ten of the
+ * file's twelve megabytes, downloaded and then parsed into geometry on every
+ * trip outside only to be thrown away.
  *
  * ---------------------------------------------------------------------------
  * THE MODEL. Four canopy objects ("NOVA COPA Esfera", new canopy sphere) and
@@ -63,7 +69,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
  *   replaces the texture's colour either way.
  */
 
-const TREE_URL = '/landscape-glb.glb';
+const TREE_URL = '/fluffy-tree.glb';
 
 // --- where it stands ----------------------------------------------------------------
 // How tall, in metres, foot to the top of the crown. The model's own tree is
@@ -151,20 +157,6 @@ const SHADOW_GLSL = /* glsl */`
     );
   #endif
 `;
-
-/** Free a mesh's geometry and material, and any textures the material holds. */
-function disposeMesh(mesh, freed = new Set()) {
-  mesh.geometry?.dispose();
-  for (const material of [].concat(mesh.material ?? [])) {
-    for (const value of Object.values(material)) {
-      if (value?.isTexture && !freed.has(value)) {
-        freed.add(value);
-        value.dispose();
-      }
-    }
-    material.dispose();
-  }
-}
 
 /**
  * Teach a material the original's shadow darkness: where the sun's shadow
@@ -268,7 +260,7 @@ function canopyMaterial(leaves, centre, shared) {
  *   update(dt: number): void, dispose(): void }>}
  */
 export async function loadTree() {
-  const gltf = await new GLTFLoader().loadAsync(TREE_URL);
+  const gltf = await loadGLTF(TREE_URL);
 
   // --- the tree out of its scene ------------------------------------------------
   const canopies = [];
@@ -282,11 +274,12 @@ export async function loadTree() {
     else unused.push(child);
   });
   if (!trunk || canopies.length === 0) {
-    throw new Error(`landscape-glb.glb: expected a trunk and canopies, found ${canopies.length} canopies${trunk ? '' : ' and no trunk'}`);
+    throw new Error(`${TREE_URL}: expected a trunk and canopies, found ${canopies.length} canopies${trunk ? '' : ' and no trunk'}`);
   }
-  // The original's hill and grass: we have our own. Never drawn, so never on
-  // the GPU -- this only lets them go.
-  for (const mesh of unused) disposeMesh(mesh);
+  // Anything else in the file. There is nothing else in fluffy-tree.glb -- the
+  // original's hill and grass were cut out of it -- but a model swapped in
+  // later might carry more, and it is never drawn, so it is let go.
+  for (const mesh of unused) disposeObject(mesh);
 
   // --- measured, and brought to its feet ------------------------------------------
   // The model stands on a hill of its own, its foot about four metres up.
@@ -335,7 +328,7 @@ export async function loadTree() {
   const trunkShadow = { value: LOOK.trunkShadowDarkness };
 
   const leafTexture = canopies[0].material.map;
-  if (!leafTexture) throw new Error('landscape-glb.glb: the canopy has no leaf texture');
+  if (!leafTexture) throw new Error(`${TREE_URL}: the canopy has no leaf texture`);
   for (const canopy of canopies) {
     // The canopy's middle, in its own space -- the vertex shader takes it
     // into the world with the rest of the mesh (see the note at the top).
@@ -385,10 +378,8 @@ export async function loadTree() {
      * behind it, on the ground there.
      */
     place({ x, z, facing, heightAt }) {
-      _facing.set(facing.x, 0, facing.z);
-      if (_facing.lengthSq() < 1e-8) _facing.set(0, 0, -1);
-      _facing.normalize();
-      _side.set(-_facing.z, 0, _facing.x);
+      flatDirection(facing, _facing);
+      sideways(_facing, _side);
 
       const tx = x - _facing.x * TRUNK_BEHIND + _side.x * TRUNK_ASIDE;
       const tz = z - _facing.z * TRUNK_BEHIND + _side.z * TRUNK_ASIDE;
@@ -485,8 +476,8 @@ export async function loadTree() {
     },
 
     dispose() {
-      const freed = new Set();
-      for (const mesh of [trunk, ...canopies]) disposeMesh(mesh, freed);
+      // Once each: the four canopies share one leaf texture.
+      disposeObject(object);
     },
   };
 }

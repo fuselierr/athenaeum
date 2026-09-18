@@ -6,6 +6,7 @@ import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../../ui/loadingScreen.js';
 import { createGrass } from './grass.js';
+import { aimAtPointer, nearestShownHit, isWithin } from '../picking.js';
 import { loadGrassClumps } from './grassClumps.js';
 import { createWindField } from './wind.js';
 import { createDistantRange } from './distantRange.js';
@@ -68,6 +69,19 @@ const TERRAIN = {
 // How far in from the terrain's edge you can walk, in metres -- short of
 // where the ground ends and the void begins.
 const GROUND_EDGE_MARGIN = 10;
+// The most times a second the sun's shadow map is redrawn to follow a book
+// that is moving -- see followBook.
+const SHADOW_RATE = 20;
+
+/** Whether two matrices are the same pose, to within a hair of float noise. */
+function sameMatrix(a, b) {
+  if (!a) return false;
+  for (let i = 0; i < 16; i += 1) {
+    if (Math.abs(a.elements[i] - b.elements[i]) > 1e-5) return false;
+  }
+  return true;
+}
+
 // How near the bench you have to be for a right-click to sit you on it.
 const SIT_REACH = 8;
 
@@ -83,10 +97,10 @@ function nextFrame() {
  * @param {THREE.WebGLRenderer} opts.renderer
  * @param {{ group: THREE.Group, door: THREE.Object3D|null }} opts.room  addRoom's result
  * @param {THREE.Mesh} opts.floor
- * @param {THREE.Object3D[]} [opts.inside]  everything else of the room's that
- *   is drawn, to hide while outside
- * @param {{ objects(): THREE.Object3D[], carried(): THREE.Object3D|null }|null} [opts.book]
- *   the books in the room; only the one carried() is shown outside
+ * @param {THREE.Object3D[]|(() => THREE.Object3D[])} [opts.inside]  everything
+ *   else of the room's that is drawn, to hide while outside -- or a function
+ *   giving it, read each time you go out, for a caller whose room is still
+ *   being built when this is made
  * @param {((ground: { heightAt(x: number, z: number): number, bounds: THREE.Box3 }|null) => void)|null} [opts.setGround]
  *   given the terrain to walk on when you arrive outside, and null when you
  *   leave -- input/cameraModes.js's setGround
@@ -95,9 +109,11 @@ function nextFrame() {
  * @param {((seat: { eye: THREE.Vector3, yaw: number, standAt: { x: number, z: number } },
  *   options?: { instantly?: boolean }) => void)|null} [opts.sit]
  *   sit the player on a seat -- input/cameraModes.js's sitOn
- * @param {{ objects: () => THREE.Object3D[], outdoors: () => THREE.Object3D[] }} [opts.book]
- *   every book in the room, and which of them are out here -- the one in
- *   your hand, and any you have set down on the grass
+ * @param {{ objects: () => THREE.Object3D[], isOutdoors: (object: THREE.Object3D) => boolean }} [opts.book]
+ *   every book in the room, and whether one is out here -- the one in your
+ *   hand, or one you have set down on the grass. A question rather than a
+ *   list, because it is asked every frame and a list would be a new array
+ *   every frame
  * @param {() => THREE.Object3D[]} [opts.vrHidden]  what VR holds in front of
  *   your face -- the controllers, the menu panel -- which the exposure outside
  *   is not metered off (scene/outside/outdoorPost.js's renderXR)
@@ -135,12 +151,14 @@ export function createOutside({
 
   // Everything of the room's that is drawn, and whether each was showing when
   // you went out -- so the walls switch (H), say, comes back as it was.
-  const indoors = [room.group, floor, ...inside];
+  const indoors = () => [room.group, floor, ...(typeof inside === 'function' ? inside() : inside)]
+    .filter(Boolean);
   let indoorVisibility = null; // null while the room is showing
 
   function hideInside() {
-    indoorVisibility = indoors.map((object) => [object, object.visible]);
-    for (const object of indoors) object.visible = false;
+    const objects = indoors();
+    indoorVisibility = objects.map((object) => [object, object.visible]);
+    for (const object of objects) object.visible = false;
     followBook();
   }
 
@@ -157,43 +175,55 @@ export function createOutside({
    * casts a moving shadow, so while one shows -- and on the frame it goes --
    * the sun's otherwise frozen shadow map is redrawn.
    */
-  function followBook() {
+  // When the sun's shadow map was last redrawn for the books, and where each
+  // book shown out here was then -- see followBook.
+  const shadowPoses = new Map();
+  let shadowStale = false;
+  let shadowWait = 0;
+
+  function followBook(dt = 0) {
     if (!book) return;
     // The room can hold several books at once (book/bookInstance.js), and
     // main.js says which of them belong out here; the rest stay indoors with
     // the room.
-    const here = book.outdoors();
-    let moved = false;
     for (const object of book.objects()) {
       const was = object.visible;
-      object.visible = here.includes(object);
-      if (object.visible || was) moved = true;
+      object.visible = book.isOutdoors(object);
+      if (object.visible !== was) shadowStale = true;
+      // A book shown out here that has moved since the map was last drawn.
+      if (object.visible && !sameMatrix(shadowPoses.get(object), object.matrixWorld)) shadowStale = true;
     }
-    if (moved) daylight?.requestShadowUpdate();
+
+    // THE SHADOW MAP IS THE EXPENSIVE PART. It covers the whole terrain and
+    // everything standing on it, and is otherwise drawn once and kept
+    // (outdoorLight.js). A book is the one thing out here that moves and
+    // casts, so it has to be redrawn for the book -- but only when a book has
+    // actually moved or come or gone, and then at most SHADOW_RATE times a
+    // second: a book held still, or lying on the grass, costs nothing, and
+    // one being turned about costs a fraction of redrawing every frame. The
+    // shadow trails the book by at most one interval, which at that rate the
+    // eye does not catch; and one redraw after it stops puts it exactly where
+    // the book came to rest.
+    shadowWait -= dt;
+    if (!shadowStale || shadowWait > 0) return;
+    daylight?.requestShadowUpdate();
+    shadowStale = false;
+    shadowWait = 1 / SHADOW_RATE;
+    shadowPoses.clear();
+    for (const object of book.objects()) {
+      if (object.visible) shadowPoses.set(object, object.matrixWorld.clone());
+    }
   }
 
   const _raycaster = new THREE.Raycaster();
-  const _ndc = new THREE.Vector2();
   const _facing = new THREE.Vector3();
   const _standing = new THREE.Vector3();
-
-  function shown(object) {
-    for (let o = object; o; o = o.parent) if (!o.visible) return false;
-    return true;
-  }
 
   /** Is the door the nearest visible thing under this click? */
   function doorUnder(event) {
     if (!room.door) return false;
-    const rect = renderer.domElement.getBoundingClientRect();
-    _ndc.set(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    _raycaster.setFromCamera(_ndc, camera);
-    const nearest = _raycaster.intersectObject(scene, true).find((hit) => shown(hit.object));
-    for (let o = nearest?.object; o; o = o.parent) if (o === room.door) return true;
-    return false;
+    aimAtPointer(_raycaster, event.clientX, event.clientY, camera, renderer.domElement);
+    return isWithin(nearestShownHit(_raycaster, scene)?.object, room.door);
   }
 
   function captureLook() {
@@ -265,6 +295,7 @@ export function createOutside({
     range = null;
     tree = null;
     bench = null;
+    shadowPoses.clear();
     post = null;
     daylight = null;
     grass = null;
@@ -343,6 +374,10 @@ export function createOutside({
       terrain.updateMatrixWorld();
       scene.add(terrain);
 
+      // The ground's height at a world x/z -- the one question the bench, the
+      // tree, the chair, the falling leaves and your own feet all ask of it.
+      const groundAt = (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN);
+
       // Planted once the ground is in place, around where you will be standing.
       loadingScreen.status('Growing the grass…', 0.65, 0.72);
       await nextFrame();
@@ -373,7 +408,7 @@ export function createOutside({
           x: _standing.x,
           z: _standing.z,
           facing: _facing,
-          heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+          heightAt: groundAt,
         });
         scene.add(bench.object);
         grass.setClearing(bench.object.position.x, bench.object.position.z, bench.clearingRadius);
@@ -392,7 +427,7 @@ export function createOutside({
           x: bench.object.position.x,
           z: bench.object.position.z,
           facing: new THREE.Vector3(-Math.sin(seatYaw), 0, -Math.cos(seatYaw)),
-          heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+          heightAt: groundAt,
         });
         scene.add(tree.object);
       } else if (tree) {
@@ -410,7 +445,7 @@ export function createOutside({
           tree,
           facing: new THREE.Vector3(-Math.sin(seatYaw), 0, -Math.cos(seatYaw)),
           bench: bench.object.position,
-          heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+          heightAt: groundAt,
         });
         if (!onLimb) console.info('No limb of the tree suited the egg chair; hung under the crown instead.');
         scene.add(chair.object);
@@ -427,7 +462,7 @@ export function createOutside({
       if (tree) {
         leaves = createFallingLeaves({
           tree,
-          heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+          heightAt: groundAt,
         });
         scene.add(leaves.object);
       }
@@ -492,7 +527,7 @@ export function createOutside({
       // On your feet on the terrain, wherever in it you came out.
       const walkable = TERRAIN.width / 2 - GROUND_EDGE_MARGIN;
       setGround?.({
-        heightAt: (x, z) => terrain.position.y + sampleTerrain(terrain, 'position', 1, x, z, TERRAIN),
+        heightAt: groundAt,
         bounds: new THREE.Box3(
           new THREE.Vector3(terrain.position.x - walkable, 0, terrain.position.z - walkable),
           new THREE.Vector3(terrain.position.x + walkable, 0, terrain.position.z + walkable),
@@ -538,7 +573,7 @@ export function createOutside({
      */
     render(dt) {
       if (state !== 'outside' || !post) return false;
-      followBook();
+      followBook(dt);
       grass?.update(dt);
       tree?.update(dt);
       leaves?.update(dt);
@@ -566,27 +601,16 @@ export function createOutside({
     handleRightClick(event) {
       const seats = [bench, chair].filter((one) => one?.seat);
       if (state !== 'outside' || seats.length === 0 || !sit) return false;
-      const rect = renderer.domElement.getBoundingClientRect();
-      _ndc.set(
-        ((event.clientX - rect.left) / rect.width) * 2 - 1,
-        -((event.clientY - rect.top) / rect.height) * 2 + 1,
-      );
-      _raycaster.setFromCamera(_ndc, camera);
+      aimAtPointer(_raycaster, event.clientX, event.clientY, camera, renderer.domElement);
       // The seats and the ground only: a rise in the way hides them. Not the
       // tree -- its leaves are cards whose empty corners a ray would still
       // hit, so the crown would swallow clicks meant for the chair under it.
-      const nearest = _raycaster.intersectObjects(
-        [...seats.map((one) => one.object), terrain].filter(Boolean), true,
-      )[0];
+      const nearest = nearestShownHit(_raycaster, [...seats.map((one) => one.object), terrain]);
       if (!nearest || nearest.distance > SIT_REACH) return false;
-      for (let o = nearest.object; o; o = o.parent) {
-        const hit = seats.find((one) => one.object === o);
-        if (hit) {
-          sit(hit.seat);
-          return true;
-        }
-      }
-      return false;
+      const hit = seats.find((one) => isWithin(nearest.object, one.object));
+      if (!hit) return false;
+      sit(hit.seat);
+      return true;
     },
 
     goOutside,

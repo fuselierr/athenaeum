@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLTF } from '../models.js';
 
 // Height (in the ORIGINAL lamp.glb's own raw units) that the position/scale
 // numbers below main.js/loadLamp's defaults were tuned against. That first
@@ -71,7 +71,7 @@ export async function loadLamp(scene, options = {}) {
         bulbHeightFraction = 0.78,
     } = options;
 
-    const gltf = await new GLTFLoader().loadAsync('/lamp.glb');
+    const gltf = await loadGLTF('/lamp.glb');
     const model = gltf.scene;
 
     // Measure the model in its own raw units, then recenter it (in X/Z) and

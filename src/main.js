@@ -45,6 +45,7 @@ import { mountMenu } from './ui/mountMenu.js';
 import { mountAccount } from './ui/mountAccount.js';
 import { mountLanding } from './ui/mountLanding.js';
 import { createBookAnchor } from './ui/bookAnchor.js';
+import { aimAtPointer, nearestShownHit, isWithin } from './scene/picking.js';
 import { sessionReady } from './auth/session.js';
 import { landing } from './state/landing.js';
 import { world } from './state/world.js';
@@ -165,13 +166,6 @@ const getPages = () => pages;
 const getContent = () => content;
 
 const _pickRay = new THREE.Raycaster();
-const _pickNdc = new THREE.Vector2();
-
-/** Is an object drawn -- itself and everything it hangs under? */
-function shownInScene(object) {
-  for (let o = object; o; o = o.parent) if (!o.visible) return false;
-  return true;
-}
 
 /**
  * The book under the pointer, or null.
@@ -182,18 +176,9 @@ function shownInScene(object) {
  * walls you have switched off would otherwise be in the way.
  */
 function bookUnderPointer(clientX, clientY) {
-  const rect = renderer.domElement.getBoundingClientRect();
-  _pickNdc.set(
-    ((clientX - rect.left) / rect.width) * 2 - 1,
-    -((clientY - rect.top) / rect.height) * 2 + 1,
-  );
-  _pickRay.setFromCamera(_pickNdc, camera);
-  const nearest = _pickRay.intersectObject(scene, true).find((hit) => shownInScene(hit.object));
-  for (let o = nearest?.object; o; o = o.parent) {
-    const book = books.find((one) => one.group === o);
-    if (book) return book;
-  }
-  return null;
+  aimAtPointer(_pickRay, clientX, clientY, camera, renderer.domElement);
+  const nearest = nearestShownHit(_pickRay, scene);
+  return books.find((one) => isWithin(nearest?.object, one.group)) ?? null;
 }
 
 /**
@@ -480,8 +465,10 @@ let deckShelf = null;
     room: shell,
     floor,
     // The rest of the room, not drawn while outside. The shelf's books ride
-    // on the shelf, and the lamp's lights on the lamp.
-    inside: [
+    // on the shelf, and the lamp's lights on the lamp. A function, read each
+    // time you go out, because the wall shelves' filed books (shelfRows) are
+    // made further down this file than this.
+    inside: () => [
       desk.object,
       lamp,
       bookshelf,
@@ -490,17 +477,18 @@ let deckShelf = null;
       wallShelf.object,
       deckShelf.object,
       instructionCard.group,
+      // The books filed on the wall shelves stand in a group of their own,
+      // not on the shelving -- without this they stayed standing in the
+      // meadow, where the wall used to be.
+      shelfRows?.object,
       scene.getObjectByName('roomFill'),
-    ].filter(Boolean),
+    ],
     // A book is outside if you are holding it, or if you put it down out
     // there (Q) and have not picked it up again.
     book: {
       objects: () => books.map((one) => one.group),
-      outdoors: () => {
-        const here = [...leftOutside].map((one) => one.group);
-        if (bookCarry?.carrying) here.push(bookGroup);
-        return here;
-      },
+      isOutdoors: (group) => (group === bookGroup && Boolean(bookCarry?.carrying))
+        || books.some((one) => one.group === group && leftOutside.has(one)),
     },
     // Outside, you walk on the terrain rather than the room's floor -- and
     // coming back in, on the room's own floor, stair and balcony again. The
@@ -1307,17 +1295,11 @@ function stowBook() {
  * as it does) and drops the last couple of centimetres under its own weight.
  */
 const _placeRay = new THREE.Raycaster();
-const _placeNdc = new THREE.Vector2();
 const _placePosition = new THREE.Vector3();
 
 function putBookDown(event) {
   if (!bookCarry?.held) return;
-  const rect = renderer.domElement.getBoundingClientRect();
-  _placeNdc.set(
-    ((event.clientX - rect.left) / rect.width) * 2 - 1,
-    -((event.clientY - rect.top) / rect.height) * 2 + 1,
-  );
-  _placeRay.setFromCamera(_placeNdc, camera);
+  aimAtPointer(_placeRay, event.clientX, event.clientY, camera, renderer.domElement);
   const hit = _placeRay.intersectObject(desk.object, true)[0];
   if (!hit) return; // only the desk will take a book
 
@@ -1568,7 +1550,14 @@ renderer.setAnimationLoop(() => {
     captureBookConfig(focused.config);
     // And the books nobody is holding: each settles, falls and lands on its
     // own, with its own dimensions in force for the step (bookInstance.js).
-    for (const book of books) if (book !== focused) book.stepParked(dt);
+    // Outside, only those out there too: the rest are lying in a room that is
+    // not being drawn, and each is a whole page simulation and a physics world
+    // stepped every frame for nobody. They pick up where they were when you
+    // come back in -- the steps clamp their own interval, so the time away is
+    // not delivered all at once.
+    for (const book of books) {
+      if (book !== focused && (indoors || leftOutside.has(book))) book.stepParked(dt);
+    }
   }
   // OrbitControls poses the camera on every update() -- enabled or not --
   // so the modes that steer it directly must not let it run.

@@ -1,6 +1,8 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLTF, enableShadows } from '../models.js';
 import { FURNITURE_SCALE } from '../worldScale.js';
+import { heading, flatDirection } from '../direction.js';
+import { aimAtPointer, nearestShownHit, isShown, isWithin } from '../picking.js';
 
 /**
  * The sofa in the middle of the room, to sit on anywhere: right-click any part
@@ -46,15 +48,6 @@ const COLLISION_STEP = 0.05 * SCALE; // collision heights rounded to this, so ne
 const EMPTY = 0;
 const SEAT_HEIGHT = 1;
 const RAISED = 2;
-
-/** Which way a direction faces, as a camera yaw: 0 along -Z. */
-const heading = (direction) => Math.atan2(-direction.x, -direction.z);
-
-/** Whether an object is drawn -- it and everything it hangs under. */
-function shown(object) {
-  for (let o = object; o; o = o.parent) if (!o.visible) return false;
-  return true;
-}
 
 /**
  * The highest point of `object` over each cell of `box`'s footprint, in the
@@ -162,13 +155,8 @@ function collisionBoxes({ nx, nz, tops }, box) {
  *     occluders?: THREE.Object3D[] }): object|null }>}
  */
 export async function loadSofa(scene) {
-  const gltf = await new GLTFLoader().loadAsync(SOFA_URL);
-  const model = gltf.scene;
-  model.traverse((child) => {
-    if (!child.isMesh) return;
-    child.castShadow = true;
-    child.receiveShadow = true;
-  });
+  const gltf = await loadGLTF(SOFA_URL);
+  const model = enableShadows(gltf.scene);
 
   // Scaled, then moved so the middle of its footprint is the group's origin
   // and its feet are at the group's floor.
@@ -301,7 +289,6 @@ export async function loadSofa(scene) {
   }
 
   const _raycaster = new THREE.Raycaster();
-  const _ndc = new THREE.Vector2();
   const _facing = new THREE.Vector3();
   let placed = false;
 
@@ -322,8 +309,7 @@ export async function loadSofa(scene) {
      * square to the walls.
      */
     place({ x, y, z, facing }) {
-      _facing.set(facing.x, 0, facing.z);
-      if (_facing.lengthSq() < 1e-8) _facing.copy(forward);
+      flatDirection(facing, _facing, forward);
       const quarter = Math.PI / 2;
       const turn = heading(_facing) - heading(forward);
       object.rotation.set(0, Math.round(turn / quarter) * quarter, 0);
@@ -352,20 +338,10 @@ export async function loadSofa(scene) {
      * what can stand in front of it: the desk, the shelf, the book in your hand.
      */
     seatUnder(event, { camera, dom, occluders = [] }) {
-      if (!placed || !shown(object)) return null;
-      const rect = dom.getBoundingClientRect();
-      _ndc.set(
-        ((event.clientX - rect.left) / rect.width) * 2 - 1,
-        -((event.clientY - rect.top) / rect.height) * 2 + 1,
-      );
-      _raycaster.setFromCamera(_ndc, camera);
-      const hit = _raycaster
-        .intersectObjects([object, ...occluders.filter(Boolean)], true)
-        .find((h) => shown(h.object));
-      if (!hit || hit.distance > SIT_REACH) return null;
-      let o = hit.object;
-      while (o && o !== object) o = o.parent;
-      if (!o) return null;
+      if (!placed || !isShown(object)) return null;
+      aimAtPointer(_raycaster, event.clientX, event.clientY, camera, dom);
+      const hit = nearestShownHit(_raycaster, [object, ...occluders]);
+      if (!hit || hit.distance > SIT_REACH || !isWithin(hit.object, object)) return null;
       return seatAt(object.worldToLocal(hit.point.clone()));
     },
   };

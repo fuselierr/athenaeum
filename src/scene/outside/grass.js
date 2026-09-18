@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { sampleTerrain } from './terrain.js';
 import { WIND, WIND_GLSL } from './wind.js';
+import { seeded } from '../seeded.js';
 
 /**
  * Grass: a field of tufts that goes where you go.
@@ -266,14 +267,6 @@ const MEADOW_GLSL = /* glsl */`
   }
 `;
 
-/** Deterministic 0..1, so the pattern is the same every visit. */
-function seeded(seed) {
-  let state = seed;
-  return () => {
-    state = (state * 1664525 + 1013904223) % 4294967296;
-    return state / 4294967296;
-  };
-}
 
 /** Which quarter-turn a world cell's chunk takes: 0..3, always the same for a cell. */
 function cellTurn(cx, cz) {

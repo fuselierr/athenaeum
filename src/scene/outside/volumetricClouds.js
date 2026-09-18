@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { seeded } from '../seeded.js';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 
 /**
@@ -62,14 +63,6 @@ export const CLOUDS = {
 };
 
 // --- noise ------------------------------------------------------------------------
-
-function seeded(seed) {
-  let state = seed;
-  return () => {
-    state = (state * 1664525 + 1013904223) % 4294967296;
-    return state / 4294967296;
-  };
-}
 
 const fade = (t) => t * t * (3 - 2 * t);
 

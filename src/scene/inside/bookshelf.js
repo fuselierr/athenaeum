@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLTF } from '../models.js';
 import { FURNITURE_SCALE } from '../worldScale.js';
 
 // Metres. A real bookshelf is about 1.9 m; this was 4.2 back when the
@@ -25,7 +25,7 @@ export async function loadBookshelf(scene, options = {}) {
 		targetHeight = TARGET_HEIGHT,
 	} = options;
 
-	const gltf = await new GLTFLoader().loadAsync('/bookshelf.glb');
+	const gltf = await loadGLTF('/bookshelf.glb');
 	const bookshelf = gltf.scene;
 	const rawBox = new THREE.Box3().setFromObject(bookshelf);
 	const rawSize = rawBox.getSize(new THREE.Vector3());

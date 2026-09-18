@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { aimAtPointer, nearestShownHit, isWithin } from '../scene/picking.js';
 
 /**
  * Taking the book up off the desk to read it.
@@ -145,7 +146,6 @@ export function createBookCarry({
   const _handScale = new THREE.Vector3();
 
   const _raycaster = new THREE.Raycaster();
-  const _ndc = new THREE.Vector2();
   const _targetCentre = new THREE.Vector3();
   const _handPosition = new THREE.Vector3();
   const _handQuaternion = new THREE.Quaternion();
@@ -154,16 +154,6 @@ export function createBookCarry({
   const _identity = new THREE.Quaternion();
   const _slide = new THREE.Vector3();
 
-  /** Is an object actually on screen -- itself and every parent visible? */
-  function shown(object) {
-    for (let o = object; o; o = o.parent) if (!o.visible) return false;
-    return true;
-  }
-
-  function partOfBook(object) {
-    for (let o = object; o; o = o.parent) if (o === group()) return true;
-    return false;
-  }
 
   /**
    * Is the book the nearest visible thing under this click? Nearest, so a
@@ -172,14 +162,8 @@ export function createBookCarry({
    * be in the way.
    */
   function bookUnder(event) {
-    const rect = renderer.domElement.getBoundingClientRect();
-    _ndc.set(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    _raycaster.setFromCamera(_ndc, camera);
-    const nearest = _raycaster.intersectObject(scene, true).find((hit) => shown(hit.object));
-    return Boolean(nearest) && partOfBook(nearest.object);
+    aimAtPointer(_raycaster, event.clientX, event.clientY, camera, renderer.domElement);
+    return isWithin(nearestShownHit(_raycaster, scene)?.object, group());
   }
 
   /**

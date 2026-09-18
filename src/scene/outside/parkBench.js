@@ -1,6 +1,8 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLTF, enableShadows } from '../models.js';
+import { disposeObject } from '../disposal.js';
 import { FURNITURE_SCALE } from '../worldScale.js';
+import { heading, flatDirection, sideways } from '../direction.js';
 
 /**
  * A park bench, outside, to sit on: right-click it (scene/outside/outside.js,
@@ -37,8 +39,6 @@ const PLACE_AHEAD = [4, 5, 6, 7, 8];
 const PLACE_ACROSS = [-2.5, -1.25, 0, 1.25, 2.5];
 const PREFERRED_AHEAD = 5;
 
-/** Which way a direction faces, as a camera yaw: 0 along -Z. */
-const heading = (direction) => Math.atan2(-direction.x, -direction.z);
 
 /**
  * @returns {Promise<{ object: THREE.Group, seat: object|null, clearingRadius: number,
@@ -47,13 +47,8 @@ const heading = (direction) => Math.atan2(-direction.x, -direction.z);
  *   dispose(): void }>}
  */
 export async function loadParkBench() {
-  const gltf = await new GLTFLoader().loadAsync(BENCH_URL);
-  const model = gltf.scene;
-  model.traverse((child) => {
-    if (!child.isMesh) return;
-    child.castShadow = true;
-    child.receiveShadow = true;
-  });
+  const gltf = await loadGLTF(BENCH_URL);
+  const model = enableShadows(gltf.scene);
 
   // Scaled, then moved so the middle of its footprint is the group's origin
   // and its feet are at the group's floor.
@@ -121,11 +116,9 @@ export async function loadParkBench() {
     clearingRadius: (halfLength + 0.15 * SCALE) / 0.6,
 
     place({ x, z, facing, heightAt }) {
-      _facing.set(facing.x, 0, facing.z);
-      if (_facing.lengthSq() < 1e-8) _facing.set(0, 0, -1);
-      _facing.normalize();
+      flatDirection(facing, _facing);
       // The bench's length runs across the way it faces.
-      _side.set(-_facing.z, 0, _facing.x);
+      sideways(_facing, _side);
 
       // The flattest of the spots tried, nearer ones winning a close call.
       let best = null;
@@ -162,14 +155,7 @@ export async function loadParkBench() {
     },
 
     dispose() {
-      object.traverse((child) => {
-        if (!child.isMesh) return;
-        child.geometry.dispose();
-        for (const material of [].concat(child.material)) {
-          for (const value of Object.values(material)) if (value?.isTexture) value.dispose();
-          material.dispose();
-        }
-      });
+      disposeObject(object);
     },
   };
   return bench;

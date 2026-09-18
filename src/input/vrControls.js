@@ -4,6 +4,7 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 import { HTMLMesh } from 'three/addons/interactive/HTMLMesh.js';
 import { InteractiveGroup } from 'three/addons/interactive/InteractiveGroup.js';
 import { FURNITURE_SCALE } from '../scene/worldScale.js';
+import { isShown } from '../scene/picking.js';
 import { settings } from '../state/settings.js';
 import { ui } from '../state/ui.js';
 
@@ -245,10 +246,6 @@ export function createVRControls({
     }
   }
 
-  function shown(object) {
-    for (let o = object; o; o = o.parent) if (!o.visible) return false;
-    return true;
-  }
 
   // --- walking and turning -------------------------------------------------------
   function readHead() {
@@ -311,7 +308,7 @@ export function createVRControls({
   // --- taking hold ---------------------------------------------------------------
   /** Is the book near enough this point to take? */
   function bookWithinReach(pages, point) {
-    if (!pages || !shown(bookGroup)) return false;
+    if (!pages || !isShown(bookGroup)) return false;
     const frame = pages.readingFrame(_centre);
     bookGroup.updateWorldMatrix(true, false);
     bookGroup.localToWorld(_centre);

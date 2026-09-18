@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { dressModel, thicknessForPages, SHELF_LAYOUT } from './shelfBooks.js';
 import { inOrder as orderBooks } from './shelfOrder.js';
+import { trackPointer, pointerToNdc, aimAtPointer } from '../picking.js';
 
 /**
  * Books filed on the wall's shelves.
@@ -88,23 +89,9 @@ export function createShelfRows({ scene, camera, renderer, runs = [] }) {
   // on the +Z wall, so the room -- and the reader -- is at -Z.
   const OUT = new THREE.Vector3(0, 0, -1);
 
-  // Where the cursor is, and whether it is over the 3D view at all. On window
-  // rather than the canvas: a pointer that leaves over one of the overlaid
-  // panels never fires the canvas's own leave event, and the book it was over
-  // would stay drawn out.
-  const pointer = new THREE.Vector2();
-  let pointerInside = false;
-  const onPointerMove = (event) => {
-    const rect = renderer.domElement.getBoundingClientRect();
-    pointer.set(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    pointerInside = true;
-  };
-  const onPointerLeave = () => { pointerInside = false; };
-  window.addEventListener('pointermove', onPointerMove);
-  renderer.domElement.addEventListener('pointerleave', onPointerLeave);
+  // Where the cursor is, and whether it is over the 3D view at all, for the
+  // hover test each frame (scene/picking.js).
+  const pointer = trackPointer(renderer.domElement);
 
   /**
    * The row under the pointer, or null. The shelving is one merged mesh, so the
@@ -114,12 +101,7 @@ export function createShelfRows({ scene, camera, renderer, runs = [] }) {
   function rowUnder(clientX, clientY) {
     const meshes = [...new Set(rows.map((row) => row.mesh))].filter((mesh) => mesh?.visible);
     if (!meshes.length) return null;
-    const rect = renderer.domElement.getBoundingClientRect();
-    _ndc.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    _ray.setFromCamera(_ndc, camera);
+    aimAtPointer(_ray, clientX, clientY, camera, renderer.domElement);
     const hit = _ray.intersectObjects(meshes, true)[0];
     if (!hit) return null;
 
@@ -148,8 +130,8 @@ export function createShelfRows({ scene, camera, renderer, runs = [] }) {
    * not occlude them -- but each model is a handful of meshes, hence the walk
    * back up to the group a hit belongs to.
    */
-  function bookUnder() {
-    _ray.setFromCamera(pointer, camera);
+  function bookUnder(ndc) {
+    _ray.setFromCamera(ndc, camera);
     const hits = _ray.intersectObjects(group.children, true);
     for (const hit of hits) {
       let node = hit.object;
@@ -181,6 +163,8 @@ export function createShelfRows({ scene, camera, renderer, runs = [] }) {
   }
 
   return {
+    /** The filed books, all of them -- for hiding with the room (outside.js). */
+    object: group,
     rowUnder,
 
     /** How a book stands on these shelves, for posing the real book at a slot. */
@@ -188,12 +172,8 @@ export function createShelfRows({ scene, camera, renderer, runs = [] }) {
 
     /** The filed book under the pointer, without touching it. */
     filedUnder(clientX, clientY) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.set(
-        ((clientX - rect.left) / rect.width) * 2 - 1,
-        -((clientY - rect.top) / rect.height) * 2 + 1,
-      );
-      return bookUnder();
+      // Its own coordinates, not the hover's: a click is not a move.
+      return bookUnder(pointerToNdc(clientX, clientY, renderer.domElement, _ndc));
     },
 
     /**
@@ -308,7 +288,9 @@ export function createShelfRows({ scene, camera, renderer, runs = [] }) {
      * still knows it was ever out.
      */
     update(dt) {
-      const under = pointerInside ? bookUnder() : null;
+      // Nothing to hover while the room is not being drawn -- outside -- and
+      // the test is a raycast through every filed book, every frame.
+      const under = pointer.inside && group.visible ? bookUnder(pointer.ndc) : null;
       for (const row of rows) {
         for (const book of row.books) {
           book.target = book === under ? book.travel : 0;
@@ -327,8 +309,7 @@ export function createShelfRows({ scene, camera, renderer, runs = [] }) {
     },
 
     dispose() {
-      window.removeEventListener('pointermove', onPointerMove);
-      renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      pointer.dispose();
       for (const row of rows) {
         for (const book of row.books) book.model.dispose();
         row.books.length = 0;

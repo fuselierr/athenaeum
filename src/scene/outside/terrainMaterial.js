@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { seeded } from '../seeded.js';
+import { loadGLTF } from '../models.js';
 
 /**
  * The terrain's material: textures laid on by the shape of the ground.
@@ -90,11 +91,7 @@ const MACRO_VARIATION = {
  * sampled with repeat wrapping.
  */
 function macroVariation(size = 256) {
-  let seed = 1337;
-  const random = () => {
-    seed = (seed * 1664525 + 1013904223) % 4294967296;
-    return seed / 4294967296;
-  };
+  const random = seeded(1337);
   const fade = (t) => t * t * (3 - 2 * t);
 
   const values = new Float32Array(size * size);
@@ -147,7 +144,7 @@ function blankTexture() {
 /** The texture in a layer's file, or null if it has none. */
 async function loadLayerTexture(url) {
   if (/\.(glb|gltf)$/i.test(url)) {
-    const gltf = await new GLTFLoader().loadAsync(url);
+    const gltf = await loadGLTF(url);
     let found = null;
     gltf.scene.traverse((object) => {
       if (found || !object.isMesh) return;

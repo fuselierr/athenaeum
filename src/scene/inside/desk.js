@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLTF, enableShadows } from '../models.js';
 import { FURNITURE_SCALE } from '../worldScale.js';
 
 /**
@@ -46,15 +46,8 @@ export async function loadDesk(scene, options = {}) {
     scale = DEFAULT_DESK_SCALE,
   } = options;
 
-  const gltf = await new GLTFLoader().loadAsync('/desk.glb');
-  const desk = gltf.scene;
-
-  desk.traverse((obj) => {
-    if (obj.isMesh) {
-      obj.castShadow = true;
-      obj.receiveShadow = true;
-    }
-  });
+  const gltf = await loadGLTF('/desk.glb');
+  const desk = enableShadows(gltf.scene);
 
   // Measure once at the model's authored scale, before touching its
   // transform -- Box3.setFromObject reads world matrices, so this has to

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { api } from '../../loader/api.js';
 import { inOrder as orderBooks } from './shelfOrder.js';
+import { trackPointer, pointerToNdc, isShown } from '../picking.js';
 import { createBookModel } from '../../book/cover/bookModel.js';
 
 /**
@@ -491,31 +492,12 @@ export async function populateShelf(bookshelf, {
   }
 
   // --- hover pull-out ----------------------------------------------------
-  const pointer = new THREE.Vector2();
   const raycaster = new THREE.Raycaster();
   const _slide = new THREE.Vector3();
-  let pointerInside = false;
-  let onPointerMove = null;
-  let onPointerLeave = null;
 
   const interactive = Boolean(camera && renderer);
-  if (interactive) {
-    const dom = renderer.domElement;
-    onPointerMove = (event) => {
-      const rect = dom.getBoundingClientRect();
-      pointer.set(
-        ((event.clientX - rect.left) / rect.width) * 2 - 1,
-        -((event.clientY - rect.top) / rect.height) * 2 + 1,
-      );
-      pointerInside = true;
-    };
-    onPointerLeave = () => { pointerInside = false; };
-    // On window, not the canvas: a pointer that leaves over one of the
-    // overlaid UI panels never fires the canvas's own leave event, and the
-    // book it was over would stay stuck out.
-    window.addEventListener('pointermove', onPointerMove);
-    dom.addEventListener('pointerleave', onPointerLeave);
-  }
+  // Where the pointer is, for the hover test each frame (scene/picking.js).
+  const pointer = interactive ? trackPointer(renderer.domElement) : null;
 
   /**
    * The book under a normalised device coordinate, or null.
@@ -541,8 +523,11 @@ export async function populateShelf(bookshelf, {
 
   function hovered() {
     if (probes) return nearestTo(probes, probeRadius);
-    if (!interactive || !pointerInside) return null;
-    return bookUnder(pointer);
+    // Nor while the shelf is not being drawn -- outside, where its whole room
+    // is hidden -- for the test is a raycast through every book on it, every
+    // frame.
+    if (!interactive || !pointer.inside || !isShown(anchor)) return null;
+    return bookUnder(pointer.ndc);
   }
 
   // --- in hand -------------------------------------------------------------
@@ -751,12 +736,9 @@ export async function populateShelf(bookshelf, {
      */
     handleClick(event) {
       if (!interactive) return false;
-      const rect = renderer.domElement.getBoundingClientRect();
-      _pickPointer.set(
-        ((event.clientX - rect.left) / rect.width) * 2 - 1,
-        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      const picked = bookUnder(
+        pointerToNdc(event.clientX, event.clientY, renderer.domElement, _pickPointer),
       );
-      const picked = bookUnder(_pickPointer);
       if (!picked) return false; // a click on the room leaves the hand alone
       freezeHand();
       setHeld(picked === held ? null : picked);
@@ -905,8 +887,7 @@ export async function populateShelf(bookshelf, {
 
     dispose() {
       disposed = true;
-      if (onPointerMove) window.removeEventListener('pointermove', onPointerMove);
-      if (onPointerLeave) renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      pointer?.dispose();
       for (const model of models) model.dispose();
       bookshelf.remove(anchor);
     },

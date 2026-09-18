@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLTF } from '../models.js';
+import { disposeObject } from '../disposal.js';
+import { heading, flatDirection, sideways } from '../direction.js';
 
 /**
  * A hanging egg chair, outside, on a rope from a limb of the tree
@@ -55,8 +57,6 @@ const STAND_OFF = 0.8; // how far in front of the egg's middle you get up to
 // that, so without this it grows up through the shell.
 const CLEARING_RADIUS = 0.95;
 
-/** Which way a direction faces, as a camera yaw: 0 along -Z. */
-const heading = (direction) => Math.atan2(-direction.x, -direction.z);
 
 /**
  * @returns {Promise<{ object: THREE.Group, seat: object|null,
@@ -65,7 +65,7 @@ const heading = (direction) => Math.atan2(-direction.x, -direction.z);
  *   dispose(): void }>}
  */
 export async function loadEggChair() {
-  const gltf = await new GLTFLoader().loadAsync(CHAIR_URL);
+  const gltf = await loadGLTF(CHAIR_URL);
 
   // --- into one space: y up, metres, hook at the origin ---------------------------
   // The export is a Sketchfab FBX, its z-up turned y-up by matrices on the
@@ -207,10 +207,8 @@ export async function loadEggChair() {
      * @returns {boolean} whether it hung from a limb (false: from the fallback)
      */
     place({ tree, facing, bench, heightAt }) {
-      _facing.set(facing.x, 0, facing.z);
-      if (_facing.lengthSq() < 1e-8) _facing.set(0, 0, -1);
-      _facing.normalize();
-      _side.set(-_facing.z, 0, _facing.x);
+      flatDirection(facing, _facing);
+      sideways(_facing, _side);
 
       // The tree stands behind the bench and a little to its side
       // (tree.js's TRUNK_ASIDE); the chair goes out the OTHER side, and a
@@ -265,19 +263,7 @@ export async function loadEggChair() {
     },
 
     dispose() {
-      const freed = new Set();
-      for (const mesh of meshes) {
-        mesh.geometry.dispose();
-        for (const material of [].concat(mesh.material)) {
-          for (const value of Object.values(material)) {
-            if (value?.isTexture && !freed.has(value)) {
-              freed.add(value);
-              value.dispose();
-            }
-          }
-          material.dispose();
-        }
-      }
+      disposeObject(object);
     },
   };
   return chair;
