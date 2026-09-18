@@ -3,13 +3,14 @@ import { sampleTerrain } from './terrain.js';
 import { WIND, WIND_GLSL } from './wind.js';
 
 /**
- * Grass: a field of blades, each one a single triangle, that goes where you go.
+ * Grass: a field of tufts that goes where you go.
  *
- * The technique from "Making Grass with Triangles in GLSL using Three.js"
- * (Antaeus AR). A blade starts life as three vertices at the same point on
- * the ground; the vertex shader pulls two of them apart for its base and
- * lifts the third into its tip. It is shaded dark at the root and full at the
- * tip -- ambient occlusion, cheaply.
+ * Each instance is a modelled clump of blades cut out of an alpha mask
+ * (scene/outside/grassClumps.js), stood on the ground, turned its own way and
+ * leaned by the wind. It used to be one triangle a blade, built from nothing
+ * in the vertex shader -- cheaper still, and fine at a distance, but a
+ * triangle up close is unmistakably a triangle. It is shaded dark at the root
+ * and full at the tip -- ambient occlusion, cheaply.
  *
  * ITS COLOUR is its own green, root to tip, with only a little of the ground
  * texture at the spot it grows from mixed in for variety. The article colours
@@ -37,13 +38,12 @@ import { WIND, WIND_GLSL } from './wind.js';
  *     the same cell always gets the same turn, so a chunk arriving there shows
  *     the same grass the last one did.
  *
- * DENSEST AROUND YOU. A tile holds more blades than distant grass needs, in
- * random order, and at any spot only the first so many of them stand: all of
- * them within a few metres of you, thinning smoothly to a fraction by the
- * fade. The shader decides that blade by blade, so there is no step in
- * density at a chunk's edge; update() hands each chunk only as many blades
- * as the densest spot in it needs, by the same curve, so the ones cut on the
- * CPU are always ones the shader would have dropped anyway.
+ * EVERY TUFT STANDS. There was a density scheme here once -- a share of the
+ * tufts dropped with distance and another share dropped by the graphics
+ * quality, decided both in the shader and again on the CPU. It is gone: what
+ * a chunk holds, it draws. What thins the field now is the ground itself
+ * (grassiness), the fade, and the level of detail a chunk's distance earns
+ * it, which costs triangles rather than tufts and leaves no holes.
  *
  * Three.js skips chunks out of view by their bounds, and update() hides the
  * ones past the fade.
@@ -89,13 +89,34 @@ import { WIND, WIND_GLSL } from './wind.js';
 
 const GRASS = {
   chunkSize: 10, // metres on a side
-  bladesPerChunk: 6000, // at full density, before the ground decides which of them grow
-  height: [0.3, 0.75], // metres, shortest .. tallest
-  width: [0.06, 0.12], // metres at the base
+  // Tufts, not blades: each instance is a modelled clump of them, cut out of
+  // an alpha mask (scene/outside/grassClumps.js). One covers about a third of
+  // a metre, so a 10 m chunk wants nine hundred of them -- against the six
+  // thousand single triangles this used to draw, for far more grass.
+  bladesPerChunk: 900, // before the ground decides which of them grow
+  height: [0.28, 0.62], // metres, shortest .. tallest
+
+  // Below this share of the mask a pixel is a gap between blades rather than
+  // a blade. Cut out, never blended: the outdoors is fogged by depth after
+  // the frame is drawn (outdoorPost.js) and a blended surface writes none.
+  bladeCutoff: 0.32,
+  // How much of a tuft's own shape shows in its shading: 0 lit flat like the
+  // ground under it, 1 fully its own. A little keeps the clumps from reading
+  // as one green mass without carving dark holes in the field.
+  clumpRelief: 0.15,
+  // Where the chunks step down a level of detail, in metres from the camera.
+  // The far one is past the fade, so the coarsest level is what thins away.
+  clumpLod: [14, 28],
   baseShade: 0.35, // brightness at the root; the tip is 1
   rootColour: 0x2e5a1c,
   tipColour: 0x9cc24f,
-  groundInfluence: 0.25, // how much of the ground texture shows in a blade, 0..1
+  // A second tip, and the noise field says which of the two a patch of the
+  // meadow wears -- FluffyGrass's trick, and most of why its field does not
+  // read as one flat green. Large and slow: this is the meadow having
+  // lighter and darker ground, not a pattern.
+  tipColourShade: 0x5c8a35,
+  colourPatch: 550, // metres across one patch of colour
+  groundInfluence: 0.05, // how much of the ground texture shows in a blade, 0..1
   windStrength: 0.6, // how far a tip leans, as a fraction of its height
   // The wind itself is the meadow's, not the grass's: the tree standing in
   // the field leans in the same gust (scene/outside/wind.js).
@@ -107,8 +128,6 @@ const GRASS = {
   partBehind: 0.6, // how far behind your head the parted patch is centred -- your body
   fadeStart: 30, // metres from the camera where blades start to shrink
   fadeEnd: 45, // and where they are gone -- the grid is sized to reach this
-  denseRadius: 6, // metres along the ground where full density starts to thin
-  farDensity: 0.12, // the fraction of blades still standing by fadeEnd
   textureLod: 4, // mip of the ground texture a blade reads: one averaged colour
   // Flowers.
   bunchesPerChunk: 128, // before the patches and the ground decide which grow
@@ -173,7 +192,6 @@ const MEADOW_GLSL = /* glsl */`
   uniform float grassPartStrength;
   uniform vec2 grassClearCentre;
   uniform float grassClearRadius;
-  uniform float grassDensityScale;
   uniform sampler2D grassSurface;
   uniform vec2 grassTerrainOffset;
   uniform float grassTerrainY;
@@ -219,13 +237,19 @@ const MEADOW_GLSL = /* glsl */`
     return mix(grassNearHeight, 1.0, smoothstep(0.0, grassFullHeightAt, along));
   }
 
-  // Where the top of something that tall is pushed, in the world: a gust
-  // rolling across the field and its own flutter, and -- when you sit or lie
-  // down -- away from you and flat, the nearest the most.
-  vec2 meadowLean(vec3 root, float height, float phase) {
+  // Where the top of something that tall is pushed, in the world: the wind
+  // where it stands and a stir of its own, and -- when you sit or lie down --
+  // away from you and flat, the nearest the most.
+  vec2 meadowLean(vec3 root, float height) {
+    // The wind where it stands, and nothing else. There was a per-tuft stir
+    // here -- a second, much smaller and much faster lookup, meant to keep
+    // neighbours from moving as one piece -- and it was the jitter: a
+    // six-metre pattern crossing at six metres a second is not weather, it is
+    // static. The field's own two scales do that job across the meadow, which
+    // is how FluffyGrass does it too: the grass moves with the wind, full
+    // stop.
     float gust = windGust(root.xz, grassTime, grassWindDirection, grassWindSpeed);
-    float flutter = sin(grassTime * 2.7 * grassWindSpeed + phase) * 0.25;
-    vec2 lean = grassWindDirection * (gust + flutter) * grassWindStrength * height;
+    vec2 lean = grassWindDirection * gust * grassWindStrength * height;
     vec2 fromYou = root.xz - grassPartCentre;
     float parted = grassPartStrength * (1.0 - smoothstep(0.0, grassPartRadius, length(fromYou)));
     return lean + normalize(fromYou + vec2(1e-4)) * parted * height * 1.4;
@@ -260,10 +284,12 @@ function cellTurn(cx, cz) {
  *   chunkCount: number, drawnChunks: number, maxFadeEnd: number, showFlowers: boolean,
  *   update(dt: number): void, dispose(): void }}
  */
-export function createGrass({ terrain, terrainWidth, segments, camera, parting = () => 0 }) {
+export function createGrass({
+  terrain, terrainWidth, segments, camera, parting = () => 0, clumps, wind,
+}) {
   const ground = terrain.material.userData.uniforms;
   const size = GRASS.chunkSize;
-  const { lerp, smoothstep } = THREE.MathUtils;
+  const { lerp } = THREE.MathUtils;
 
   // --- the ground, as a texture --------------------------------------------------
   // The terrain grid's heights (its own, before its placement) and how much
@@ -286,27 +312,22 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
   // --- one tile of blades, shared -------------------------------------------------
   const random = seeded(2024);
   const local = new Float32Array(GRASS.bladesPerChunk * 3); // x, its own random, z
-  const data = new Float32Array(GRASS.bladesPerChunk * 4); // height, width, facing, phase
+  const data = new Float32Array(GRASS.bladesPerChunk * 3); // height, facing, phase
   for (let i = 0; i < GRASS.bladesPerChunk; i++) {
     local.set([(random() - 0.5) * size, random(), (random() - 0.5) * size], i * 3);
     data.set([
       lerp(GRASS.height[0], GRASS.height[1], random()),
-      lerp(GRASS.width[0], GRASS.width[1], random()),
       random() * Math.PI * 2,
       random() * Math.PI * 2,
-    ], i * 4);
+    ], i * 3);
   }
   // One of each, referenced by every chunk's geometry: one upload in all.
   const bladeLocal = new THREE.InstancedBufferAttribute(local, 3);
-  const bladeData = new THREE.InstancedBufferAttribute(data, 4);
-  // The blade triangle. Its corners are built in the shader; these only have
-  // to exist.
-  const corners = new THREE.BufferAttribute(new Float32Array(9), 3);
-  // Straight up. Needed as an attribute, not just in the shader: with no
-  // normals on the geometry three.js silently switches a standard material to
-  // flat shading, which has no vNormal for the shader to use.
-  const upNormals = new THREE.BufferAttribute(new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]), 3);
-  const cornerIndex = new THREE.BufferAttribute(new Float32Array([0, 1, 2]), 1);
+  const bladeData = new THREE.InstancedBufferAttribute(data, 3);
+  // The tuft itself, at each level of detail, standing 1 unit tall with its
+  // root at the origin (scene/outside/grassClumps.js). Every chunk's geometry
+  // borrows these attributes rather than owning a copy.
+  const levels = clumps.levels;
 
   // --- one tile of flowers, shared ---------------------------------------------------
   // In bunches: each a centre, a reach and a number of flowers, crowding
@@ -408,12 +429,17 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
     grassPartCentre: { value: new THREE.Vector2() },
     grassPartRadius: { value: GRASS.partRadius },
     grassPartStrength: { value: 0 },
-    grassDenseRadius: { value: GRASS.denseRadius },
-    grassFarDensity: { value: GRASS.farDensity },
-    grassBladesPerChunk: { value: GRASS.bladesPerChunk },
-    grassDensityScale: { value: 1 }, // the graphics quality's share of the blades
-    grassWidthScale: { value: 1 },
     grassBaseShade: { value: GRASS.baseShade },
+    grassClumpRelief: { value: GRASS.clumpRelief },
+    grassBlades: { value: clumps.blades },
+    grassTipShade: { value: new THREE.Color(GRASS.tipColourShade) },
+    grassColourPatch: { value: GRASS.colourPatch },
+    // The wind, shared with the tree (scene/outside/wind.js). Merged in
+    // rather than kept apart so both this module's materials and the debug
+    // panel reach it the same way as everything else here.
+    ...wind,
+
+    grassBladeCutoff: { value: GRASS.bladeCutoff },
     grassTextureLod: { value: GRASS.textureLod },
     grassRootColour: { value: new THREE.Color(GRASS.rootColour) },
     grassTipColour: { value: new THREE.Color(GRASS.tipColour) },
@@ -445,77 +471,106 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
 
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
-        attribute float bladeCorner; // 0 base left, 1 base right, 2 tip
-        attribute vec3 bladeLocal; // x and z in the chunk; y, the blade's own random 0..1
-        attribute vec4 bladeData; // height, width, facing, wind phase
-        uniform float grassDenseRadius;
-        uniform float grassFarDensity;
-        uniform float grassBladesPerChunk;
-        uniform float grassWidthScale;
+        attribute vec3 bladeLocal; // x and z in the chunk; y, the tuft's own random 0..1
+        attribute vec3 bladeData; // height, facing, wind phase
         uniform float grassBaseShade;
+        uniform float grassClumpRelief;
+        uniform float grassColourPatch;
         ${MEADOW_GLSL}
         varying vec2 vBladeUv;
+        varying vec2 vClumpUv;
         varying float vBladeShade;
-        varying float vBladeTip;`)
-      // Up, like the ground under it.
-      .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
+        varying float vBladeTip;
+        varying float vGrassPatch;`)
+      // Mostly up, like the ground under it, with a little of the tuft's own
+      // shape mixed in -- turned the way the tuft is turned.
+      .replace('#include <beginnormal_vertex>', `
+        float clumpTurn = bladeData.y;
+        float clumpCos = cos(clumpTurn);
+        float clumpSin = sin(clumpTurn);
+        vec3 clumpNormal = vec3(
+          normal.x * clumpCos - normal.z * clumpSin,
+          normal.y,
+          normal.x * clumpSin + normal.z * clumpCos);
+        vec3 objectNormal = normalize(mix(vec3(0.0, 1.0, 0.0), clumpNormal, grassClumpRelief));`)
       .replace('#include <begin_vertex>', `
-        // Where the chunk has put this blade, on the ground -- and whether it
+        // Where the chunk has put this tuft, on the ground -- and whether it
         // grows there: only where the ground is grassy, and then only if its
         // own number comes up.
         float grassiness;
         vec3 root = meadowGround(bladeLocal.xz, grassiness);
         float grows = step(bladeLocal.y, grassiness);
 
-        // Densest around you. The tile's blades are in random order, so
-        // keeping only the first so many of them is an even thinning; how
-        // many falls with distance along the ground.
+        // How far out it is, for how tall it grows and how much of it is
+        // left by the fade.
         float along = distance(root.xz, cameraPosition.xz);
-        float density = mix(1.0, grassFarDensity, smoothstep(grassDenseRadius, grassFadeEnd, along));
-        grows *= step(float(gl_InstanceID) + 0.5, density * grassDensityScale * grassBladesPerChunk);
-
-        float left = 1.0 - step(0.5, bladeCorner);
-        float right = step(0.5, bladeCorner) - step(1.5, bladeCorner);
-        float tip = step(1.5, bladeCorner);
 
         float fade = meadowFade(root) * grows;
-        float bladeHeight = bladeData.x * grassHeightScale * meadowGrowth(along) * fade;
-        float halfWidth = 0.5 * bladeData.y * grassWidthScale * fade;
-        vec3 side = vec3(cos(bladeData.z), 0.0, sin(bladeData.z));
+        float clumpHeight = bladeData.x * grassHeightScale * meadowGrowth(along) * fade;
+
+        // The tuft stands 1 unit tall in its own model, so its height IS its
+        // scale. How far up it a vertex sits is its own y, for the same
+        // reason -- which is what the wind leans and what the colour runs
+        // along, root to tip.
+        float up = clamp(position.y, 0.0, 1.0);
+        vec3 spun = vec3(
+          position.x * clumpCos - position.z * clumpSin,
+          position.y,
+          position.x * clumpSin + position.z * clumpCos) * clumpHeight;
 
         // Wind and parting in the world, then turned into the chunk's own frame.
-        vec2 leanWorld = meadowLean(root, bladeHeight, bladeData.w);
+        vec2 leanWorld = meadowLean(root, clumpHeight);
         vec3 lean = transpose(mat3(modelMatrix)) * vec3(leanWorld.x, 0.0, leanWorld.y);
-        // Leaning, the tip also drops, so the blade keeps roughly its length.
-        float rise = max(bladeHeight - 0.5 * dot(leanWorld, leanWorld) / max(bladeHeight, 1e-3), 0.0);
 
-        // In the chunk's own space: the ground height, less where the chunk sits.
+        // In the chunk's own space: the ground height, less where the chunk
+        // sits. The lean is weighted by how far up the tuft the vertex is, so
+        // the roots stay planted and the tips travel.
         vec3 transformed = vec3(bladeLocal.x, root.y - modelMatrix[3].y, bladeLocal.z)
-          + side * halfWidth * (right - left)
-          + tip * vec3(lean.x, rise, lean.z);
+          + spun
+          + vec3(lean.x, 0.0, lean.z) * up * up;
 
-        // Where on the ground texture this blade grows: the terrain's own UVs.
+        // Where on the ground texture this tuft grows: the terrain's own UVs.
         vBladeUv = (root.xz - grassTerrainOffset) / terrainTile;
-        vBladeShade = mix(grassBaseShade, 1.0, tip);
-        vBladeTip = tip;`);
+        // V flipped: the mask is authored the other way up from the card's
+        // own UVs, so read straight through it plants the tufts on their
+        // tips. FluffyGrass flips it in its vertex shader for the same
+        // reason.
+        vClumpUv = vec2(uv.x, 1.0 - uv.y);
+        vBladeShade = mix(grassBaseShade, 1.0, up);
+        vBladeTip = up;
+        // Which way this patch of the meadow is coloured. Read here rather
+        // than per pixel: it is one value over a whole tuft, and it changes
+        // over tens of metres.
+        vGrassPatch = textureLod(windNoise, root.xz / grassColourPatch, 0.0).r;`);
 
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform sampler2D grassMap;
+        uniform sampler2D grassBlades;
+        uniform float grassBladeCutoff;
         uniform float grassTextureLod;
         uniform vec3 grassRootColour;
         uniform vec3 grassTipColour;
+        uniform vec3 grassTipShade;
         uniform float grassGroundInfluence;
         varying vec2 vBladeUv;
+        varying vec2 vClumpUv;
         varying float vBladeShade;
-        varying float vBladeTip;`)
+        varying float vBladeTip;
+        varying float vGrassPatch;`)
+      // The blades themselves, cut out of the card's mask before anything
+      // else is worked out for a pixel that is a gap between them.
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        if (texture2D(grassBlades, vClumpUv).r < grassBladeCutoff) discard;`)
       // One UV for the whole blade, so a fixed, blurred mip: the automatic
       // choice would see no change across the blade and pick the sharpest.
       // The ground's colour is doubled so a mid-grey texture leaves the green
       // as it is, and only its lighter and darker patches show.
       .replace('#include <map_fragment>', `
         vec3 groundColour = textureLod(grassMap, vBladeUv, grassTextureLod).rgb * 2.0;
-        vec3 bladeColour = mix(grassRootColour, grassTipColour, vBladeTip)
+        // The tip is one of two greens by where in the meadow it stands.
+        vec3 tip = mix(grassTipColour, grassTipShade, vGrassPatch);
+        vec3 bladeColour = mix(grassRootColour, tip, vBladeTip)
           * mix(vec3(1.0), groundColour, grassGroundInfluence);
         diffuseColor.rgb *= bladeColour * vBladeShade;`)
       // Lit from either side as the ground is: undo DoubleSide's normal flip.
@@ -641,12 +696,10 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
         // Every bunch grows inside a drift -- a slow wave across the land, a
         // hundred metres or so from one to the next -- and only some outside.
         // Then only on grassy ground, only as full as the bunch is, and only
-        // as many bunches as the graphics quality allows.
         float patchField = sin(root.x * 0.043 + 1.7) * sin(root.z * 0.051 - 0.4) * 0.5 + 0.5;
         float inPatch = smoothstep(0.4, 0.75, patchField);
         float grows = step(bunchChance, mix(flowerScatter, 1.0, inPatch))
-          * step(flowerLocal.y, min(grassiness, bunchFull))
-          * step(float(gl_InstanceID) + 0.5, grassDensityScale * flowersPerChunk);
+          * step(flowerLocal.y, min(grassiness, bunchFull));
 
         float along = distance(root.xz, cameraPosition.xz);
         float scale = meadowFade(root) * grows;
@@ -657,7 +710,7 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
 
         // In the world, from the root: the top of the stem, pushed by the
         // wind and by you, and which ways are towards you and to your right.
-        vec2 leanWorld = meadowLean(root, stemHeight, flowerData.z);
+        vec2 leanWorld = meadowLean(root, stemHeight);
         float rise = max(stemHeight - 0.5 * dot(leanWorld, leanWorld) / max(stemHeight, 1e-3), 0.0);
         vec3 top = vec3(leanWorld.x, rise, leanWorld.y);
         vec3 stemUp = normalize(top + vec3(0.0, 1e-4, 0.0));
@@ -797,17 +850,33 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
   const reach = GRASS.height[1] * 3 * 1.5;
   const grid = { width: terrainWidth, segments };
 
-  const chunks = [];
-  for (let i = 0; i < span * span; i++) {
+  /**
+   * A chunk's geometry at one level of detail: that level's tuft, and the one
+   * shared set of instances every chunk draws.
+   *
+   * A geometry apiece rather than one shared per level, because the
+   * instanceCount is the chunk's own -- it is how the grass thins with
+   * distance -- and that lives on the geometry. The ATTRIBUTES are shared, so
+   * this costs an object, not an upload.
+   */
+  function levelGeometry(level) {
     const geometry = new THREE.InstancedBufferGeometry();
-    geometry.setAttribute('position', corners);
-    geometry.setAttribute('normal', upNormals);
-    geometry.setAttribute('bladeCorner', cornerIndex);
+    geometry.setIndex(level.getIndex());
+    geometry.setAttribute('position', level.getAttribute('position'));
+    geometry.setAttribute('normal', level.getAttribute('normal'));
+    geometry.setAttribute('uv', level.getAttribute('uv'));
     geometry.setAttribute('bladeLocal', bladeLocal);
     geometry.setAttribute('bladeData', bladeData);
     geometry.instanceCount = GRASS.bladesPerChunk;
-    // Set by hand in place(): computed, it would be the base triangle's.
+    // Set by hand in place(): computed, it would be one tuft's.
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 0);
+    return geometry;
+  }
+
+  const chunks = [];
+  for (let i = 0; i < span * span; i++) {
+    const detail = levels.map(levelGeometry);
+    const geometry = detail[0];
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = true;
@@ -836,7 +905,7 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
     flowers.raycast = () => {};
     mesh.add(flowers);
 
-    chunks.push({ mesh, flowers, cx: 0, cz: 0, radius: 0 });
+    chunks.push({ mesh, flowers, detail, level: 0, cx: 0, cz: 0, radius: 0 });
   }
 
   const _probes = [[-0.5, -0.5], [0, -0.5], [0.5, -0.5], [-0.5, 0], [0, 0], [0.5, 0], [-0.5, 0.5], [0, 0.5], [0.5, 0.5]];
@@ -866,7 +935,10 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
     mesh.updateMatrix();
     const across = size / 2 + reach;
     chunk.radius = Math.sqrt(2 * across * across + (halfRise + reach) ** 2);
-    mesh.geometry.boundingSphere.radius = chunk.radius;
+    // Every level, not just the one being drawn: the chunk changes level as
+    // you walk toward it, and a geometry still holding the radius it was born
+    // with (nothing) would be culled the moment it was swapped in.
+    for (const geometry of chunk.detail) geometry.boundingSphere.radius = chunk.radius;
     chunk.flowers.geometry.boundingSphere.radius = chunk.radius;
   }
 
@@ -909,10 +981,6 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
     uniforms,
     bladesPerChunk: GRASS.bladesPerChunk,
 
-    /** How many of the blades stand, 0..1 -- the graphics quality's grass density. */
-    setDensity(scale) {
-      uniforms.grassDensityScale.value = THREE.MathUtils.clamp(scale, 0, 1);
-    },
     /**
      * Keep the grass and flowers off a round patch of ground, centred on world
      * (x, z) -- under something standing in the field, like the bench. They
@@ -955,36 +1023,37 @@ export function createGrass({ terrain, terrainWidth, segments, camera, parting =
       }
 
       // A chunk whose nearest point is past the fade has nothing left to
-      // show. The rest are handed only as many of their blades as the densest
-      // spot in them needs; the shader thins those further, blade by blade,
-      // by the same curve.
+      // show; the rest draw every tuft they hold, at whatever level of detail
+      // their distance earns.
       const fadeEnd = uniforms.grassFadeEnd.value;
-      const denseRadius = uniforms.grassDenseRadius.value;
-      const farDensity = uniforms.grassFarDensity.value;
       const half = size / 2;
       drawnChunks = 0;
-      for (const { mesh } of chunks) {
+      for (const chunk of chunks) {
+        const { mesh } = chunk;
         // Along the ground to the nearest point of the chunk's square -- the
-        // shader's own measure, so never further than any blade in it.
+        // shader's own measure, so never further than any tuft in it.
         const dx = Math.max(0, Math.abs(_camera.x - mesh.position.x) - half);
         const dz = Math.max(0, Math.abs(_camera.z - mesh.position.z) - half);
         const nearest = Math.hypot(dx, dz);
         mesh.visible = nearest < fadeEnd;
         if (!mesh.visible) continue;
         drawnChunks += 1;
-        const density = lerp(1, farDensity, smoothstep(nearest, denseRadius, fadeEnd));
-        mesh.geometry.instanceCount = Math.max(
-          1, Math.ceil(GRASS.bladesPerChunk * density * uniforms.grassDensityScale.value),
-        );
+
+        // Which tuft this chunk draws: the finest one it is near enough for.
+        // Per chunk, not per tuft -- nine hundred of them change level on one
+        // assignment, which is the whole reason the LOD lives here.
+        let level = 0;
+        while (level < chunk.detail.length - 1 && nearest > GRASS.clumpLod[level]) level += 1;
+        if (level !== chunk.level) {
+          chunk.level = level;
+          mesh.geometry = chunk.detail[level];
+        }
       }
-      // The flowers are few enough not to thin with distance, only with quality.
-      const flowerCount = Math.max(1, Math.ceil(flowersPerChunk * uniforms.grassDensityScale.value));
-      for (const { flowers } of chunks) flowers.geometry.instanceCount = flowerCount;
     },
 
     dispose() {
-      for (const { mesh, flowers } of chunks) {
-        mesh.geometry.dispose();
+      for (const { detail, flowers } of chunks) {
+        for (const geometry of detail) geometry.dispose();
         flowers.geometry.dispose();
       }
       material.dispose();

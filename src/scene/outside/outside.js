@@ -6,6 +6,8 @@ import { addOutdoorLight } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../../ui/loadingScreen.js';
 import { createGrass } from './grass.js';
+import { loadGrassClumps } from './grassClumps.js';
+import { createWindField } from './wind.js';
 import { createDistantRange } from './distantRange.js';
 import { loadParkBench } from './parkBench.js';
 import { loadTree } from './tree.js';
@@ -104,6 +106,8 @@ export function createOutside({
   let daylight = null;
   let post = null;
   let grass = null;
+  let clumps = null;
+  let wind = null;
   let bench = null;
   let tree = null;
   let range = null;
@@ -113,7 +117,6 @@ export function createOutside({
   function applyQuality() {
     const preset = qualityPreset();
     post?.applyQuality(preset);
-    grass?.setDensity(preset.grassDensity);
   }
   watch(() => settings.graphics.quality, applyQuality);
 
@@ -221,6 +224,12 @@ export function createOutside({
       scene.remove(grass.group);
       grass.dispose();
     }
+    // The tuft the grass is made of, and its mask: shared by every chunk, so
+    // freed once, here, rather than by any of them.
+    clumps?.dispose();
+    clumps = null;
+    // Uniforms only -- the texture in them is the clumps', freed just above.
+    wind = null;
     if (terrain) {
       scene.remove(terrain);
       disposeTerrain(terrain);
@@ -277,10 +286,23 @@ export function createOutside({
       console.warn('The park bench did not load; going out without it.', err);
       return null;
     });
-    const treeLoading = loadTree().catch((err) => {
-      console.warn('The tree did not load; going out without it.', err);
-      return null;
-    });
+    // The grass's tuft, and with it the wind's noise field. Unlike the
+    // scenery this one is not optional -- without it there is no grass to
+    // plant -- and the tree waits on it for the field, so that the canopy and
+    // the meadow lean in one gust (scene/outside/wind.js).
+    const clumpsLoading = loadGrassClumps();
+    // ONE field, made once and given to both. Made here rather than inside
+    // either of them because it is neither's: two calls to createWindField
+    // would hand the grass and the tree their own uniform objects, and a
+    // slider that widened the gusts would widen them over the meadow while
+    // the tree carried on in the old wind.
+    const fieldLoading = clumpsLoading.then(({ windNoise }) => createWindField(windNoise));
+    const treeLoading = fieldLoading
+      .then((windField) => loadTree({ windField }))
+      .catch((err) => {
+        console.warn('The tree did not load; going out without it.', err);
+        return null;
+      });
     try {
       const heightmap = await loadHeightmap(HEIGHTMAP_URL, (fraction) => {
         loadingScreen.status('Surveying the land…', 0.3 * fraction);
@@ -311,14 +333,17 @@ export function createOutside({
       // Planted once the ground is in place, around where you will be standing.
       loadingScreen.status('Growing the grass…', 0.65, 0.72);
       await nextFrame();
+      clumps = await clumpsLoading;
+      wind = await fieldLoading;
       grass = createGrass({
         terrain,
         terrainWidth: TERRAIN.width,
         segments: TERRAIN.segments,
         camera,
         parting: lying,
+        clumps,
+        wind,
       });
-      grass.setDensity(qualityPreset().grassDensity);
       scene.add(grass.group);
 
       // A few steps ahead of where you are standing, facing the way you are

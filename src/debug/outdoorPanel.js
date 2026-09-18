@@ -168,54 +168,54 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       get: () => grass.group.visible,
       set: (on) => { grass.group.visible = on; },
     });
-    slider('Wind strength', {
+    // --- the wind -----------------------------------------------------------------
+    // The noise field the meadow AND the tree lean in (scene/outside/wind.js):
+    // one set of uniforms between them, so every slider here moves both.
+    section('Wind (grass and tree)');
+    slider('Strength', {
       min: 0, max: 1.5, step: 0.01,
       get: () => blades.grassWindStrength.value,
       set: (v) => { blades.grassWindStrength.value = v; },
     });
-    slider('Wind speed', {
+    slider('Speed', {
       min: 0, max: 5, step: 0.05,
       get: () => blades.grassWindSpeed.value,
       set: (v) => { blades.grassWindSpeed.value = v; },
     });
-    slider('Height scale', {
-      min: 0, max: 3, step: 0.01,
-      get: () => blades.grassHeightScale.value,
-      set: (v) => { blades.grassHeightScale.value = v; },
+    slider('Gust size (m)', {
+      min: 10, max: 500, step: 5,
+      get: () => blades.windGustScale.value,
+      set: (v) => { blades.windGustScale.value = v; },
     });
-    slider('Height underfoot (x full)', {
+    slider('Gust speed (m/s)', {
+      min: 0, max: 12, step: 0.05,
+      get: () => blades.windGustSpeed.value,
+      set: (v) => { blades.windGustSpeed.value = v; },
+    });
+    slider('Ripple size (m)', {
+      min: 5, max: 200, step: 1,
+      get: () => blades.windRippleScale.value,
+      set: (v) => { blades.windRippleScale.value = v; },
+    });
+    slider('Ripple speed (m/s)', {
+      min: 0, max: 20, step: 0.1,
+      get: () => blades.windRippleSpeed.value,
+      set: (v) => { blades.windRippleSpeed.value = v; },
+    });
+    slider('Ripple share', {
       min: 0, max: 1, step: 0.01,
-      get: () => blades.grassNearHeight.value,
-      set: (v) => { blades.grassNearHeight.value = v; },
+      get: () => blades.windRippleShare.value,
+      set: (v) => { blades.windRippleShare.value = v; },
     });
-    slider('Full height at (m)', {
-      min: 0.5, max: 40, step: 0.5,
-      get: () => blades.grassFullHeightAt.value,
-      set: (v) => { blades.grassFullHeightAt.value = v; },
+    slider('Colour patch (m)', {
+      min: 5, max: 300, step: 1,
+      get: () => blades.grassColourPatch.value,
+      set: (v) => { blades.grassColourPatch.value = v; },
     });
-    slider('Full density out to (m)', {
-      min: 0, max: 40, step: 0.5,
-      get: () => blades.grassDenseRadius.value,
-      set: (v) => { blades.grassDenseRadius.value = v; },
-    });
-    slider('Parting radius, sat or lying (m)', {
-      min: 0, max: 4, step: 0.05,
-      get: () => blades.grassPartRadius.value,
-      set: (v) => { blades.grassPartRadius.value = v; },
-    });
-    slider('Far density (x full)', {
-      min: 0, max: 1, step: 0.01,
-      get: () => blades.grassFarDensity.value,
-      set: (v) => { blades.grassFarDensity.value = v; },
-    });
+
     section('Flowers', {
       get: () => grass.showFlowers,
       set: (on) => { grass.showFlowers = on; },
-    });
-    slider('Width scale', {
-      min: 0, max: 4, step: 0.01,
-      get: () => blades.grassWidthScale.value,
-      set: (v) => { blades.grassWidthScale.value = v; },
     });
     slider('Ground texture influence', {
       min: 0, max: 1, step: 0.01,

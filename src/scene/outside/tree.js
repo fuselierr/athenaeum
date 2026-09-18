@@ -216,7 +216,7 @@ function leanInWind(material, uniforms, { leaf }) {
  *     heightAt(x: number, z: number): number }): void,
  *   update(dt: number): void, dispose(): void }>}
  */
-export async function loadTree() {
+export async function loadTree({ windField = null } = {}) {
   const gltf = await new GLTFLoader().loadAsync(TREE_URL);
   const model = gltf.scene;
 
@@ -234,6 +234,10 @@ export async function loadTree() {
     treeWindWorld: { value: wind.clone() },
     treeWindLocal: { value: wind.clone() }, // until place() turns it
     treeWindSpeed: { value: WIND.speed },
+    // The same field the grass leans in, object for object (wind.js's
+    // createWindField), so a gust that flattens the meadow is the one that
+    // stirs the canopy -- and a slider that changes one changes both.
+    ...windField,
     treeSway: { value: SWAY },
     treeFlutter: { value: FLUTTER },
     treeLocalHeight: { value: rawSize.y },

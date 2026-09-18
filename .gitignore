@@ -59,3 +59,5 @@ books/*
 # Full-length audio recordings. public/audio holds the short cuts the app
 # plays, made from these (see src/audio/audioManager.js).
 audio-source/
+
+/FluffyGrass/

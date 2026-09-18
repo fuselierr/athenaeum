@@ -16,7 +16,6 @@ import { settings } from './settings.js';
  *                     its own, which cannot change once made)
  *   cloudResolution   the clouds' render size, as a fraction of the screen
  *   cloudSteps        how finely each cloud ray is marched
- *   grassDensity      the fraction of grass blades that stand
  *
  * 'high' is what everything was before the presets existed.
  */
@@ -34,7 +33,6 @@ export const QUALITY = {
     msaa: 0,
     cloudResolution: 0.25,
     cloudSteps: 16,
-    grassDensity: 0.1,
   },
   low: {
     label: 'Low',
@@ -46,7 +44,6 @@ export const QUALITY = {
     msaa: 0,
     cloudResolution: 0.35,
     cloudSteps: 24,
-    grassDensity: 0.3,
   },
   medium: {
     label: 'Medium',
@@ -58,7 +55,6 @@ export const QUALITY = {
     msaa: 2,
     cloudResolution: 0.5,
     cloudSteps: 32,
-    grassDensity: 0.6,
   },
   high: {
     label: 'High',
@@ -70,7 +66,6 @@ export const QUALITY = {
     msaa: 4,
     cloudResolution: 0.5,
     cloudSteps: 48,
-    grassDensity: 1,
   },
   highest: {
     label: 'Highest',
@@ -82,7 +77,6 @@ export const QUALITY = {
     msaa: 8,
     cloudResolution: 0.75,
     cloudSteps: 64,
-    grassDensity: 1,
   },
 };
 
