@@ -226,6 +226,23 @@ function focusOn(book) {
 // placement physics through the getter passed to createBookInstance.
 let outdoorGround = null;
 
+/**
+ * The ground a book's physics should stand on: the hillside if that BOOK is
+ * out on it, and nothing -- its room, its desk, its furniture -- otherwise.
+ *
+ * Per book, not per trip. Going outside takes you out, not every book in the
+ * room: the ones lying on the desk stay lying on the desk, and if their
+ * physics were switched over to the hillside with yours they would drop
+ * straight through a desk that had stopped existing, and be on the floor
+ * when you came back in. A book is out there while it is in your hands
+ * outside, or has been set down out there (leftOutside).
+ */
+function groundFor(book) {
+  if (!outdoorGround) return null;
+  const inHand = book === focused && bookCarry?.carrying;
+  return inHand || leftOutside.has(book) ? outdoorGround : null;
+}
+
 // Books set down on the hillside and not picked up again. Outside they are
 // drawn where they lie rather than vanishing the moment they leave your hand
 // (createOutside's `book.outdoors`), and coming back in they are fetched home
@@ -660,8 +677,8 @@ async function addBook({ at = null } = {}) {
   const book = await createBookInstance({
     scene, desk, room: roomInterior, obstacles: FURNITURE, at,
     // Asked every frame, not captured: a copy made in the room is the same
-    // copy you carry outside.
-    getGround: () => outdoorGround,
+    // copy you carry outside. See groundFor.
+    getGround: () => groundFor(book),
   });
   books.push(book);
   while (books.length > MAX_BOOKS) {
@@ -1384,7 +1401,7 @@ resetBtn?.addEventListener('click', resetBook);
 refreshFlipLabel();
 
 window.addEventListener('keydown', (e) => {
-  if (matches('debug.pause', e) && anglePanel.visible) {
+  if (matches('debug.pause', e) && anglePanel.visible && world.place === 'room') {
     simulationPaused = !simulationPaused;
     e.preventDefault();
     return;
@@ -1499,12 +1516,21 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min((now - lastFrameTime) / 1000, 1 / 30);
   lastFrameTime = now;
 
-  if (spineRotationPanel) spineRotationPanel.style.display = anglePanel.visible ? 'block' : 'none';
+  // The debug overlay (the ` key) is the ROOM's: the call numbers on its
+  // shelves, the book-on-the-desk's hinge readouts, where you are facing in
+  // it. Outside, none of it shows, whatever the key was left at -- only the
+  // outdoor panel, which is the outdoors' own, and the frame rate, which
+  // belongs to wherever you are.
+  const indoors = world.place === 'room';
+  const roomDebug = anglePanel.visible && indoors;
+  if (spineRotationPanel) spineRotationPanel.style.display = roomDebug ? 'block' : 'none';
   // The pages drive the tilt, so the readout has to follow it rather than
   // only updating when the slider is dragged -- while it can be seen, that is;
   // hidden, writing it every frame is DOM work for nothing.
-  if (anglePanel.visible && pages.spineRotationDriven) refreshSpineRotationLabel();
-  if (!anglePanel.visible) simulationPaused = false;
+  if (roomDebug && pages.spineRotationDriven) refreshSpineRotationLabel();
+  // Nor does a debug pause outlast leaving the room: out of doors there is
+  // nothing to unpause it with.
+  if (!roomDebug) simulationPaused = false;
 
   // In VR the headset and the controllers move you (input/vrControls.js); the
   // desktop rig would only fight them for the camera. First, so everything
@@ -1558,11 +1584,11 @@ renderer.setAnimationLoop(() => {
   // After the render, with every matrix for this frame settled: the card over
   // the book is placed from the same pose that was just drawn.
   bookAnchor.update();
-  debugLabels.update();
-  anglePanel.update();
+  debugLabels.update(indoors);
+  anglePanel.update(indoors);
   outdoorPanel.update(anglePanel.visible);
   fpsCounter.update(anglePanel.visible);
-  facingPanel.update(anglePanel.visible);
+  facingPanel.update(roomDebug);
 });
 
 if (import.meta.env.DEV) {

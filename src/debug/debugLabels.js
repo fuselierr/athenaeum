@@ -76,7 +76,7 @@ export function createDebugLabels({ scene, camera, renderer, getPages }) {
   labelGroup.add(spineTop, spineBottom, labelA, labelB, labelC, labelD);
 
   window.addEventListener('keydown', (e) => {
-    if (matches('debug.labels', e)) labelGroup.visible = !labelGroup.visible;
+    if (matches('debug.labels', e)) wanted = !wanted;
   });
 
   const _local = new THREE.Vector3();
@@ -119,7 +119,16 @@ export function createDebugLabels({ scene, camera, renderer, getPages }) {
   // object's matrices, which every frame would be all cost and nothing shown.
   let hiddenDrawn = false;
 
-  function update() {
+  // Whether the key has them up. Separate from whether they SHOW, which is
+  // also only ever in the room: the call numbers are the room's shelves and
+  // the rest are the book on its desk, and outside they would hang in the air
+  // over the meadow where the room used to be. The choice is kept, so walking
+  // back in puts them back up.
+  let wanted = false;
+
+  /** Call every frame. `indoors`: whether the room is what is loaded. */
+  function update(indoors = true) {
+    labelGroup.visible = wanted && indoors;
     if (!labelGroup.visible) {
       if (!hiddenDrawn) {
         cssRenderer.render(scene, camera);

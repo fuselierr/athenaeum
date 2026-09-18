@@ -43,7 +43,6 @@ export function createAnglePanel({ getPages, getPageTurn }) {
     // Ignore auto-repeat and anything with a modifier -- a bare ` press.
     if (e.key !== '`' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     visible = !visible;
-    el.style.display = visible ? 'block' : 'none';
   });
 
   // Radians to a fixed-width "+1.234 rad ( +70.7 deg)" so columns line up
@@ -59,8 +58,16 @@ export function createAnglePanel({ getPages, getPageTurn }) {
     return radius.toFixed(3).padStart(6);
   }
 
-  function update() {
-    if (!visible) return;
+  /**
+   * Call every frame. `indoors`: whether the room is what is loaded -- this
+   * is the book-on-the-desk's readout, and it sits over the corner's buttons,
+   * so outside it stays down however the key was left. `visible` still says
+   * whether the key has the debug overlay up, for everything else that asks.
+   */
+  function update(indoors = true) {
+    const shown = visible && indoors;
+    el.style.display = shown ? 'block' : 'none';
+    if (!shown) return;
 
     const pages = getPages?.();
     if (!pages || typeof pages.panelAngles !== 'object') {

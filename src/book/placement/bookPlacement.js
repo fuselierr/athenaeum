@@ -128,19 +128,26 @@ export async function createBookPlacement({
 
   const world = new RAPIER.World({ x: 0, y: -GRAVITY_MAG, z: 0 });
 
+  // Everything of the room's in this world -- the desk, the furniture, the
+  // walls and floor -- switched off together when the book is outside
+  // (followGround below). A book carried out of the door and dropped lands on
+  // the hillside it is over; it must not fetch up on a desk or a sofa that is
+  // standing, undrawn, in the middle of the meadow where the room used to be.
+  const indoorColliders = [];
+
   // --- the desk ---------------------------------------------------------
   const deskBody = world.createRigidBody(
     RAPIER.RigidBodyDesc.fixed().setTranslation(
       desk.collision.center.x, desk.collision.center.y, desk.collision.center.z,
     ),
   );
-  world.createCollider(
+  indoorColliders.push(world.createCollider(
     RAPIER.ColliderDesc
       .cuboid(desk.collision.halfExtents.x, desk.collision.halfExtents.y, desk.collision.halfExtents.z)
       .setFriction(FRICTION)
       .setRestitution(RESTITUTION),
     deskBody,
-  );
+  ));
 
   // --- the room -----------------------------------------------------------
   // Kept, because the room is not always there: outside, its walls are
@@ -185,14 +192,14 @@ export async function createBookPlacement({
   if (obstacles.length) {
     const furnitureBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     for (const { center, halfExtents } of obstacles) {
-      world.createCollider(
+      indoorColliders.push(world.createCollider(
         RAPIER.ColliderDesc
           .cuboid(halfExtents.x, halfExtents.y, halfExtents.z)
           .setTranslation(center.x, center.y, center.z)
           .setFriction(FRICTION)
           .setRestitution(RESTITUTION),
         furnitureBody,
-      );
+      ));
     }
   }
 
@@ -225,7 +232,7 @@ export async function createBookPlacement({
   function followGround(ground) {
     if (Boolean(ground) !== onGround) {
       onGround = Boolean(ground);
-      for (const collider of roomColliders) collider.setEnabled(!onGround);
+      for (const collider of [...roomColliders, ...indoorColliders]) collider.setEnabled(!onGround);
       if (!onGround) groundBody.setTranslation({ x: 0, y: GROUND_PARKED, z: 0 }, false);
     }
     if (!ground) return;
