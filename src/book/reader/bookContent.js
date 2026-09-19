@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { qualityPreset } from '../../state/quality.js';
 
 // Which visible panel is the RIGHT-hand page of the spread. All spread
 // ordering -- which page number goes where, and which way a drag turns --
@@ -91,6 +92,18 @@ export function createBookContent(getPages) {
   const coverTextures = { A: null, D: null };
 
   const pageCount = () => source?.count ?? 0;
+
+  // A page's texture, filtered as sharply at a slant as the graphics quality
+  // affords (state/quality.js's pageAnisotropy): a book is nearly always seen
+  // tilted, in the hand or lying on the desk, and without it the lines of
+  // text furthest away blur together. Read as each texture is made, and
+  // checked again whenever a page is put on the book (textureForPage), so a
+  // change reaches pages as they are next shown.
+  function pageTexture(canvas) {
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.anisotropy = qualityPreset().pageAnisotropy;
+    return texture;
+  }
   const canvasFor = (index) => source?.canvasFor(index) ?? null;
 
   function paintCovers() {
@@ -101,7 +114,7 @@ export function createBookContent(getPages) {
       coverTextures[slot] = null;
       const canvas = covers[slot];
       if (!canvas) continue;
-      coverTextures[slot] = new THREE.CanvasTexture(canvas);
+      coverTextures[slot] = pageTexture(canvas);
       pages.setPageTexture(slot, coverTextures[slot]);
     }
   }
@@ -110,7 +123,11 @@ export function createBookContent(getPages) {
     const canvas = canvasFor(index);
     if (!canvas) return null;
     if (!pageTextures[index]) {
-      pageTextures[index] = new THREE.CanvasTexture(canvas);
+      pageTextures[index] = pageTexture(canvas);
+    } else if (pageTextures[index].anisotropy !== qualityPreset().pageAnisotropy) {
+      // Made under another graphics quality: filtered as this one says.
+      pageTextures[index].anisotropy = qualityPreset().pageAnisotropy;
+      pageTextures[index].needsUpdate = true;
     }
     liveTextures.add(index);
     return pageTextures[index];

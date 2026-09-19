@@ -4,6 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 // import it as a module. See https://vitejs.dev for the pattern.
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { api } from './api.js';
+import { qualityPreset } from '../state/quality.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
@@ -32,12 +33,14 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
  * Otherwise these fetches will 404 against the Vite dev server itself.
  */
 
-const DEFAULT_RENDER_SCALE = 1.5; // px-per-pdf-unit; raise for sharper page textures
+// Pixels per PDF unit the pages are drawn at is the graphics quality's
+// (state/quality.js's pageScale): sharper pages cost memory and drawing time
+// in proportion to its square. Read when a book is opened.
 
 // --- folios (the printed page numbers) --------------------------------------
 //
 // Sized and positioned as FRACTIONS OF THE PAGE, never in pixels. A canvas's
-// pixel size is page size x DEFAULT_RENDER_SCALE, so anything measured in
+// pixel size is page size x the render scale, so anything measured in
 // pixels would silently change size the moment either one moved; expressed as
 // a fraction, a folio is the same size relative to its page whatever the PDF's
 // dimensions or the texture resolution, which is what makes it look identical
@@ -168,7 +171,7 @@ const BLANK_PAPER = '#ffffff';
  *
  * @param {string} pdfUrl
  * @param {object} [opts]
- * @param {number} [opts.scale]  px per PDF unit
+ * @param {number} [opts.scale]  px per PDF unit -- the graphics quality's, unless given
  * @param {(widthPts: number, heightPts: number, pageCount: number) => void|Promise<void>} [opts.onDimensions]
  *   the first page's unrotated size in PDF points, and the page count --
  *   awaited before anything else happens, since the caller rebuilds the
@@ -188,7 +191,7 @@ const BLANK_PAPER = '#ffffff';
  *   an upload of the old size cannot take the new one
  * @property {() => void} cancel  stop rendering, for a book given up on
  */
-async function openPdfPages(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onDimensions, onProgress } = {}) {
+async function openPdfPages(pdfUrl, { scale = qualityPreset().pageScale, onDimensions, onProgress } = {}) {
   // Pass the config object explicitly rather than a bare string -- relying
   // on pdf.js to auto-wrap a string into { url } has proven flaky across
   // pdfjs-dist versions/bundlers, and throws exactly the

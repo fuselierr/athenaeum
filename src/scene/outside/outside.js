@@ -141,11 +141,14 @@ export function createOutside({
   let sinceShaded = 0;
   const SHADE_EVERY = 1;
 
-  // The graphics quality reaches whatever outdoors is built right now; a trip
-  // built later reads the preset as it builds.
+  // The graphics quality reaches whatever outdoors is built right now -- the
+  // effect chain (anti-aliasing, clouds, cloud shadows) and the grass's detail
+  // -- and is applied again to each trip as it is built. The sun's shadow map
+  // is ui/bindSettings.js's, with the room's.
   function applyQuality() {
     const preset = qualityPreset();
     post?.applyQuality(preset);
+    grass?.setLodDistances(preset.grassLod);
   }
   watch(() => settings.graphics.quality, applyQuality);
 
@@ -579,7 +582,7 @@ export function createOutside({
         // far pass, and the sky is only lent to it (see createOutdoorPost).
         distant: { ...range, sky: daylight.sky },
       });
-      post.applyQuality(qualityPreset());
+      applyQuality();
       // As overcast as the clouds say, before anything is compiled or drawn.
       overcastApplied = -1;
       applyOvercast({ recapture: false });

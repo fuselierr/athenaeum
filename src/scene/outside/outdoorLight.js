@@ -139,8 +139,11 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
     minFilter: THREE.LinearMipmapLinearFilter,
   });
   const skyCamera = new THREE.CubeCamera(0.1, 1000, skyTarget);
+  // One generator for every capture, kept: the time of day and the overcast
+  // recapture the sky several times a second while they move, and a new one
+  // each time would build its blur material and targets again from nothing.
+  const pmrem = new THREE.PMREMGenerator(renderer);
   function captureSkyLight() {
-    const pmrem = new THREE.PMREMGenerator(renderer);
     const captureScene = new THREE.Scene();
     const wasVisible = sky.visible;
     sky.visible = true;
@@ -156,7 +159,6 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
     skyCamera.update(renderer, captureScene);
     uniforms.mieDirectionalG.value = glow;
     uniforms.showSunDisc.value = 1;
-    pmrem.dispose();
     scene.add(sky); // back out of captureScene: an object has one parent
     sky.visible = wasVisible;
 
@@ -283,6 +285,7 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
       skyLight?.dispose();
       skyLight = null;
       skyTarget.dispose();
+      pmrem.dispose();
     },
   };
 }

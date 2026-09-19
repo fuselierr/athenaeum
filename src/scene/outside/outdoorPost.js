@@ -77,7 +77,7 @@ const FOG = {
 
 // --- exposure -----------------------------------------------------------------
 const EXPOSURE = {
-  key: 0.18, // the brightness the average is brought to: middle grey
+  key: 0.22, // the brightness the average is brought to: middle grey
   compensation: 1, // a multiplier on top, like Unreal's exposure compensation
   min: 0.05,
   max: 4,
@@ -969,16 +969,18 @@ export function createOutdoorPost({
 
     /**
      * Apply a graphics quality preset (state/quality.js): anti-aliasing on
-     * the HDR buffers, the clouds' resolution and steps, and the renderer's
-     * pixel ratio, which may have changed with it.
+     * the HDR buffers, the clouds' resolution and steps, the cloud shadow
+     * map's size and redraw rate, and the renderer's pixel ratio, which may
+     * have changed with it.
      */
-    applyQuality({ msaa, cloudResolution, cloudSteps }) {
+    applyQuality({ msaa, cloudResolution, cloudSteps, cloudShadowSize, cloudShadowRate }) {
       for (const buffer of [composer.renderTarget1, composer.renderTarget2]) {
         if (buffer.samples === msaa) continue;
         buffer.samples = msaa;
         buffer.dispose(); // made again at the new sample count when next drawn into
       }
       clouds.setQuality({ resolution: cloudResolution, steps: cloudSteps });
+      cloudShadows.setQuality({ size: cloudShadowSize, rate: cloudShadowRate });
       // Resizes the buffers and every pass -- the clouds' at their new fraction.
       composer.setPixelRatio(renderer.getPixelRatio());
     },

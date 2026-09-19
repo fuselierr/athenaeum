@@ -112,6 +112,7 @@ const GRASS = {
   clumpRelief: 0.15,
   // Where the chunks step down a level of detail, in metres from the camera.
   // The far one is past the fade, so the coarsest level is what thins away.
+  // The graphics quality's say (state/quality.js's grassLod, setLodDistances).
   clumpLod: [14, 28],
   baseShade: 0.35, // brightness at the root; the tip is 1
   rootColour: 0x2e5a1c,
@@ -998,11 +999,25 @@ export function createGrass({
     + `and ${flowersPerChunk} flowers in ${GRASS.bunchesPerChunk} bunches, following the camera.`,
   );
   let showFlowers = true;
+  // Live: the graphics quality moves them (setLodDistances).
+  const clumpLod = [...GRASS.clumpLod];
 
   return {
     group,
     uniforms,
     bladesPerChunk: GRASS.bladesPerChunk,
+
+    /**
+     * Where the chunks step down to their simpler tufts, in metres from the
+     * camera, nearest first -- the graphics quality's (state/quality.js).
+     * Takes effect on the next update, a chunk at a time as each is next
+     * looked at.
+     *
+     * @param {number[]} distances
+     */
+    setLodDistances(distances) {
+      for (let i = 0; i < clumpLod.length && i < distances.length; i++) clumpLod[i] = distances[i];
+    },
 
     /**
      * Keep the grass and flowers off a round patch of ground, centred on world
@@ -1069,7 +1084,7 @@ export function createGrass({
         // Per chunk, not per tuft -- nine hundred of them change level on one
         // assignment, which is the whole reason the LOD lives here.
         let level = 0;
-        while (level < chunk.detail.length - 1 && nearest > GRASS.clumpLod[level]) level += 1;
+        while (level < chunk.detail.length - 1 && nearest > clumpLod[level]) level += 1;
         if (level !== chunk.level) {
           chunk.level = level;
           mesh.geometry = chunk.detail[level];

@@ -34,6 +34,8 @@ import { CLOUD_FIELD_GLSL } from './volumetricClouds.js';
  * before it reads anything.
  */
 
+// size and rate are the graphics quality's (state/quality.js's cloudShadowSize
+// and cloudShadowRate, through setQuality); these are 'high'.
 export const CLOUD_SHADOWS = {
   size: 512, // texels a side
   span: 72000, // metres across: the whole mountain ring, and room to slide
@@ -283,6 +285,18 @@ export function createCloudShadows({ clouds, sunDirection, groundHeight }) {
       shared.cloudShadowSlide.value.set(
         sunDirection.x / up, sunDirection.z / up, cloud.bottom.value, cloud.top.value,
       );
+    },
+
+    /**
+     * The graphics quality's say: the map's size in texels a side, and how
+     * many times a second it is redrawn. A new size is drawn at once.
+     */
+    setQuality({ size, rate }) {
+      CLOUD_SHADOWS.rate = rate;
+      if (size === CLOUD_SHADOWS.size) return;
+      CLOUD_SHADOWS.size = size;
+      target.setSize(size, size);
+      sinceDrawn = Infinity;
     },
 
     dispose() {
