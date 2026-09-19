@@ -11,4 +11,6 @@ export const ui = reactive({
   tab: 'book',
   /** True while the Settings tab is waiting for a key to bind. */
   capturingKey: false,
+  /** True while the "headphones are recommended" card is up (ui/HeadphonesHint.vue). */
+  headphonesHint: false,
 });

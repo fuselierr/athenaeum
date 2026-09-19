@@ -44,7 +44,7 @@ import { loadingScreen } from './ui/loadingScreen.js';
 import { mountMenu } from './ui/mountMenu.js';
 import { mountAccount } from './ui/mountAccount.js';
 import { mountLanding } from './ui/mountLanding.js';
-import { createBookAnchor } from './ui/bookAnchor.js';
+import { bookControls } from './state/bookControls.js';
 import { aimAtPointer, nearestShownHit, isWithin } from './scene/picking.js';
 import { sessionReady } from './auth/session.js';
 import { landing } from './state/landing.js';
@@ -56,6 +56,7 @@ import { matches } from './state/keybindings.js';
 import { settings } from './state/settings.js';
 import { watch } from 'vue';
 import { account } from './state/account.js';
+import { ui } from './state/ui.js';
 import { community } from './state/community.js';
 import { loadAttachments, rememberBook } from './community/covers.js';
 import { startPreferencesSync } from './auth/preferences.js';
@@ -610,6 +611,20 @@ populateShelf(bookshelf, {
  * every visit in the room, and a watcher running any earlier would record
  * 'room' over the 'outside' it is about to be asked for.
  */
+/**
+ * Put up the "headphones are recommended" card (ui/HeadphonesHint.vue), as
+ * someone arrives in a scene: every time for a visitor who is not signed in,
+ * who has no account for it to be remembered against -- and once ever for a
+ * reader who is, remembered in their settings so it follows the account.
+ */
+function recommendHeadphones() {
+  if (account.user) {
+    if (settings.seen.headphones) return;
+    settings.seen.headphones = true;
+  }
+  ui.headphonesHint = true;
+}
+
 async function openTheDoors() {
   // Up before the cover comes off, whatever else is wrong: a shelf that
   // would not load is all the more reason to offer someone a book of their
@@ -627,6 +642,9 @@ async function openTheDoors() {
   } else {
     loadingScreen.fail('The library isn’t answering, so the shelf is empty for now.');
   }
+  // Signed in, they are in the scene now. Signed out, they are on the welcome
+  // page, and are told once they leave it (startOutsideWith).
+  if (account.user) recommendHeadphones();
   startRememberingPlace();
 }
 
@@ -1231,6 +1249,7 @@ async function startOutsideWith(open) {
   landing.showing = false;
   bookCarry?.takeUp();
   await outside?.goOutside();
+  recommendHeadphones();
 }
 
 /** An EPUB the visitor brought from their own computer. */
@@ -1467,6 +1486,11 @@ mountMenu({
   // Escape, innermost meaning first: a book in the hand goes back before
   // the menu will open. Returning true means the press was spent.
   escape: () => {
+    // The book controls, laid over the whole screen, go first of all.
+    if (bookControls.showing) {
+      bookControls.showing = false;
+      return true;
+    }
     // The card held up in front of you goes back before a book in your hand.
     if (instructionCard?.held) {
       instructionCard.release();
@@ -1498,15 +1522,6 @@ mountAccount({
 });
 // Settings and key bindings follow the account while someone is signed in.
 startPreferencesSync();
-
-// Where the book is on screen, for the card of controls held over it
-// (ui/BookControls.vue). Reads the book in focus, like everything else that
-// follows the one in your hands.
-const bookAnchor = createBookAnchor({
-  camera,
-  renderer,
-  getGroup: () => bookGroup,
-});
 
 // --- render loop ---
 let lastFrameTime = performance.now();
@@ -1599,9 +1614,6 @@ renderer.setAnimationLoop(() => {
   instructionCard?.update(dt); // also posed from the camera, so also after it has moved
   // Outside draws through its own fog and exposure chain (scene/outside/outdoorPost.js).
   if (!outside?.render(dt)) renderer.render(scene, camera);
-  // After the render, with every matrix for this frame settled: the card over
-  // the book is placed from the same pose that was just drawn.
-  bookAnchor.update();
   debugLabels.update(indoors && debugShown);
   anglePanel.update(indoors && debugShown);
   outdoorPanel.update(anglePanel.visible && debugShown);

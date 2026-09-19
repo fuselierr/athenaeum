@@ -10,6 +10,7 @@ import { landing } from '../state/landing.js';
 import LibraryButton from './LibraryButton.vue';
 import BookControls from './BookControls.vue';
 import RenderProgress from './RenderProgress.vue';
+import HeadphonesHint from './HeadphonesHint.vue';
 
 /**
  * The controls in the top right corner: the menu button, and the account --
@@ -29,11 +30,10 @@ import RenderProgress from './RenderProgress.vue';
  * Discord. Signed in, it shows who you are and the same panel offers a way
  * out.
  *
- * The book button puts up the card of what you can do to the book
+ * The book button lays what you can do to the book over the screen
  * (BookControls.vue). It is rendered from here rather than from its own app
- * because this one is always mounted, whatever else is on screen -- and the
- * card is `position: fixed` over the book, so nothing about where it hangs
- * depends on sitting in this corner.
+ * because this one is always mounted, whatever else is on screen -- and it
+ * covers the whole screen under this corner, so the same button closes it.
  */
 
 // What the corner may ask of the room -- see ui/mountAccount.js.
@@ -172,6 +172,8 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
   <BookControls v-if="!landing.showing" />
   <!-- How far the book in hand has got drawing its pages; see RenderProgress.vue. -->
   <RenderProgress v-if="!landing.showing" />
+  <!-- "Headphones are recommended", as a scene is arrived in; see HeadphonesHint.vue. -->
+  <HeadphonesHint v-if="!landing.showing" />
 </template>
 
 <style scoped>

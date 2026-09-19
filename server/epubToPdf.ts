@@ -67,6 +67,11 @@ const CONTENTS_MIN_ENTRIES = 2;
 // setting that in 1.4em small caps would be worse than leaving it alone.
 const HEADING_MAX_CHARS = 90;
 
+// Whether a chapter file was written by pdftohtml -- an epub made by turning
+// a PDF back into HTML, which is what most free public-domain epubs are. See
+// REJOIN_LINES.
+const FROM_PDF = /<meta[^>]+name=["']generator["'][^>]+content=["'][^"']*pdftohtml/i;
+
 const markerToken = (index: number) => `ATHMARK${String(index).padStart(4, '0')}ZZ`;
 
 const escapeHtml = (text: string) => String(text)
@@ -231,6 +236,65 @@ function extractBody(xhtml: string): string {
 }
 
 /**
+ * Runs IN THE PAGE, first. Joins back up the paragraphs pdftohtml broke.
+ *
+ * pdftohtml reads a PDF and guesses where its paragraphs are from how the
+ * lines sit on the page -- and it guesses wrong at every page break of the
+ * book it was made from, and in some books at every LINE: a paragraph
+ * arrives as several <p>s, each with its own margins, so the printed page
+ * shows a gap in the middle of a sentence:
+ *
+ *   <p>"...Of course a solid body may exist. All real things</p>
+ *   <p>--"</p>
+ *   <p>"...if Time is</p>
+ *   <p><a id="p7"></a>really only a fourth dimension of Space...</p>
+ *
+ * A paragraph is joined to the one before it only when that one stops
+ * mid-sentence AND this one starts the way no new paragraph does: with a
+ * lowercase letter, or a dash carrying the sentence on. Ending on a full
+ * stop, or starting with a capital or an opening quote, leaves them apart --
+ * so dialogue, headings and verse stand as they were. What this cannot mend
+ * is a split that happens to fall at the end of a sentence: nothing in the
+ * markup tells that from a real paragraph break.
+ *
+ * Only in sections from pdftohtml's files (.ath-from-pdf): a properly made
+ * epub means every paragraph it has.
+ */
+const REJOIN_LINES = () => {
+  // The end of a sentence: its stop, and any closing quotes or brackets.
+  const endsSentence = /[.!?\u2026:;]["'\u201d\u2019)\]]*$/;
+  // How a paragraph that is really a continuation begins.
+  const continues = /^[\p{Ll}\u2014\u2013]/u;
+  // After which the next part follows with no space: a word broken at the
+  // line's end, or a dash.
+  const joinsTight = /[-\u2014\u2013]$/;
+  const textOf = (element: Element) => (element.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+  for (const section of document.querySelectorAll('.ath-from-pdf')) {
+    let previous: Element | null = null;
+    for (const paragraph of Array.from(section.querySelectorAll('p'))) {
+      const before = textOf(previous ?? paragraph);
+      const after = textOf(paragraph);
+      const joins = previous
+        && previous.nextElementSibling === paragraph
+        && before && after
+        && !previous.querySelector('img') && !paragraph.querySelector('img')
+        && !endsSentence.test(before)
+        && continues.test(after);
+      if (!joins || !previous) {
+        previous = paragraph;
+        continue;
+      }
+      // Its contents moved across whole -- anchors included, since the table
+      // of contents points at them -- and the empty <p> taken away.
+      if (!joinsTight.test(before) && !/^[\u2014\u2013]/.test(after)) previous.append(' ');
+      while (paragraph.firstChild) previous.append(paragraph.firstChild);
+      paragraph.remove();
+    }
+  }
+};
+
+/**
  * Runs IN THE PAGE. Puts a position marker at every chapter opening, and
  * makes the ones that look like titles look like titles.
  *
@@ -389,7 +453,8 @@ async function buildCombinedHtml(zip: JSZip, opfPath: string, workDir: string): 
     // break properties.
     const key = zipKey(href);
     if (!sectionOf.has(key)) sectionOf.set(key, bodyChunks.length);
-    bodyChunks.push(`<section class="ath-chapter">${extractBody(xhtml)}</section>`);
+    const kind = FROM_PDF.test(xhtml) ? 'ath-chapter ath-from-pdf' : 'ath-chapter';
+    bodyChunks.push(`<section class="${kind}">${extractBody(xhtml)}</section>`);
   }
   if (bodyChunks.length === 0) throw new Error('No spine chapters produced any content');
 
@@ -483,6 +548,9 @@ export async function epubToPdf(
   try {
     const page = await browser.newPage();
     await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle' });
+    // Before the chapters are marked: joining paragraphs moves the anchors the
+    // table of contents points at, and the markers go in beside those.
+    await page.evaluate(REJOIN_LINES);
     await page.evaluate(MARK_CHAPTERS, [plan, HEADING_MAX_CHARS] as [ChapterPlan[], number]);
 
     const print = () => page.pdf({

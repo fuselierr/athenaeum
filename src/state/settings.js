@@ -42,6 +42,12 @@ export const settings = reactive({
   scene: {
     background: null, // a background id; null means the one built in
   },
+  // Things said once to a signed-in reader and not again. In the settings so
+  // that they follow the account (auth/preferences.js): once per reader, not
+  // once per browser they happen to sign in on.
+  seen: {
+    headphones: false, // the "headphones are recommended" card (main.js's recommendHeadphones)
+  },
   // Out of doors.
   outside: {
     // Hours, local solar time: where the sun is (scene/outside/sunPath.js).

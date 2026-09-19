@@ -31,7 +31,9 @@ const STORAGE_DIR = path.join(process.cwd(), 'books');
 // converted under an older number is converted again the next time it is
 // opened, so a cache that exists to make the second visit free does not
 // also freeze every book in the shape it had the first time.
-const CONVERSION_VERSION = 2;
+// 3: paragraphs split by pdftohtml at every line or page of the PDF it read
+// are joined up again (epubToPdf.ts's REJOIN_LINES).
+const CONVERSION_VERSION = 3;
 
 const LIBRARY_DIR = path.join(process.cwd(), 'src', 'books');
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100MB -- generous for an epub, adjust to taste
