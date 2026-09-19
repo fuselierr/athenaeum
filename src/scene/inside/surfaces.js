@@ -27,11 +27,13 @@ const SURFACES = {
   // The joinery. Finer than the floor and the walls: it is seen close to, on
   // pieces a few centimetres across (scene/inside/woodwork.js lays their UVs
   // out in metres so it tiles the same real size on all of them).
-  pine: { url: '/textures/coated_pine_2k.gltf/coated_pine_2k.gltf', tile: 1 },
+  // Its colour is the texture's own, untinted: whatever colour factor the
+  // file or anything else might put on it is set back to white.
+  pine: { url: '/textures/coated_pine_2k.gltf/coated_pine_2k.gltf', tile: 1, untinted: true },
 };
 
 /** The material off a texture set's glTF, tiled `tile` metres to a copy. */
-async function loadSurface({ url, tile }) {
+async function loadSurface({ url, tile, untinted = false }) {
   const gltf = await loadGLTF(url);
   let material = null;
   gltf.scene.traverse((object) => {
@@ -54,6 +56,7 @@ async function loadSurface({ url, tile }) {
   // the walls are simply not drawn (room.js). A texture set's glTF is often
   // double-sided, which would put the walls in front of the orbit camera.
   material.side = THREE.FrontSide;
+  if (untinted && material.color) material.color.set(0xffffff);
   material.needsUpdate = true;
   return material;
 }

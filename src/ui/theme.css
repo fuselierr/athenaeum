@@ -77,22 +77,3 @@
   border-radius: 10px;
   pointer-events: none;
 }
-
-/* The debug spine-rotation slider. Hidden until the debug code shows it. */
-#spine-rotation-panel {
-  position: fixed;
-  top: 12px;
-  left: 12px;
-  z-index: 2;
-  display: none;
-  padding: 8px 10px;
-  color: var(--ath-text-soft);
-  font: 12px/1.4 var(--ath-serif);
-  background: var(--ath-glass-strong);
-  backdrop-filter: var(--ath-glass-blur);
-  -webkit-backdrop-filter: var(--ath-glass-blur);
-  border: 1px solid var(--ath-line);
-  border-radius: 10px;
-}
-#spine-rotation-panel input { width: 150px; vertical-align: middle; accent-color: var(--ath-orange); }
-#spine-rotation-value { display: inline-block; min-width: 42px; text-align: right; }

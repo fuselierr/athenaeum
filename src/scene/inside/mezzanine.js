@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { box, slab } from './woodwork.js';
+import { LEG_TURNING } from './coffeeTable.js';
 
 /**
  * The mezzanine: a balcony that wraps two walls of the room, and the curved
@@ -44,39 +45,82 @@ import { box, slab } from './woodwork.js';
  * Where you may walk follows which storey you are on -- the lower room's
  * footprint down there, the wider upper one up here.
  *
+ * THE BALUSTERS are turned, to the coffee table's pattern (scene/inside/
+ * coffeeTable.js's LEG_TURNING): a plain block at each end and the leg's
+ * foot, bulb, neck and collar between. On the flight they do not stand on the
+ * treads -- whose tops step while the rail climbs smoothly -- but on a string
+ * down each side: a curved strip of wood as thick as the deck, climbing with
+ * the rail over the ends of the treads, whose top clears the highest tread
+ * under it everywhere.
+ *
  * WHAT IT COSTS TO DRAW: four things -- the boards you stand on, one merged
- * piece of woodwork (slabs, posts, handrails), the treads as one instanced
- * step, and every spindle as one instanced baluster.
+ * piece of woodwork (slabs, posts, handrails, strings), the treads as one
+ * instanced step, and every spindle as one instanced baluster.
  */
 
 // Heights and sizes in metres (scene/worldScale.js: the world is metric).
-const DECK_THICKNESS = 0.16;
-const DECK_HEAD_ROOM = 2.3; // kept clear between the deck and the ceiling
-const OVER_SHELF = 0.6; // the deck this far above the top of the bookshelf
-const OVER_DOOR = 0.1; // and this far above the head of the door it crosses
-const MIN_DECK_RISE = 2.3; // and never closer than this to the floor
-const DECK_DEPTH = [1.8, 3.4]; // how far the long arm may reach out from its wall
-const LONG_ARM_DEPTH = 2.6; // what it reaches out by, room allowing
-const WALL_GAP = 0.06; // the flight's outer edge, off the wall it lands against
-const DOOR_ARM_DEPTH = 1.6; // how deep the arm over the door is
-const STAIR_RADIUS = [1.9, 3.0]; // of the centre line of the flight
-const TREAD_RUN = 0.3; // how deep one tread is along that centre line
-const FOOT_CLEARANCE = 1.2; // clear floor between the bottom step and the window wall
-const BACK_GAP = 0.15; // the turn's outer edge, off the back wall it hugs
-const STEP_RISE = 0.19; // aimed for; the climb is then divided evenly
-const STAIR_WIDTH = 1.05;
-const TREAD_THICKNESS = 0.08;
-const RAIL_HEIGHT = 0.95;
-const RAIL_RADIUS = 0.032;
-const RAIL_INSET = 0.06; // the rail, in from the edge it guards
-const BALUSTER = 0.04;
-const BALUSTER_GAP = 0.15;
-const POST_SPACING = 1.8; // posts under an open edge, about this far apart
-const POST_SIZE = 0.14;
+const STRING_RUN_ON = 0.03; // metres the strings run on into the deck at the head
 // How far below your head a surface has to be to be the one you are standing
 // on. This is what lets you walk UNDER the deck instead of being lifted onto
 // it, and it is generous enough that jumping does not snatch you up there.
 const UNDERFOOT_CLEARANCE = 0.6;
+
+/**
+ * Every size the mezzanine is built to, in metres except where a share is
+ * said. Mutable, for the debug overlay (debug/mezzaninePanel.js); every build
+ * reads them afresh.
+ *
+ * Two kinds. Most change only the mezzanine and what hangs off it -- the
+ * panel builds it again on the spot. The first group does not: the deck's
+ * height and thickness and how far the upper storey steps out are what the
+ * room's walls, the shelves on and under the deck and the books filed on them
+ * are built to, so they take effect when the page is loaded again (the panel's
+ * BUILT_ON).
+ */
+export const MEZZANINE = {
+  // --- built on: the room is made to these --------------------------------------
+  deckThickness: 0.16,
+  headRoom: 2.3, // kept clear between the deck and the ceiling
+  overShelf: 0.6, // the deck this far above the top of the bookshelf
+  overDoor: 0.1, // and this far above the head of the door it crosses
+  minRise: 2.3, // and never closer than this to the floor
+  // How much further out the upper storey's +X and +Z walls stand than the
+  // lower storey's, and the deck with them (main.js, scene/inside/room.js's
+  // upper).
+  upperGrowX: 1.6,
+  upperGrowZ: 1.4,
+
+  // --- the deck's arms and where the flight stands ---------------------------------
+  longArmDepth: 2.6, // how far the long arm reaches out from the shelf wall
+  doorArmDepth: 1.6, // how deep the arm over the door is
+  wallGap: 0.06, // the flight's outer edge, off the wall it lands against
+  backGap: 0.15, // the turn's outer edge, off the back wall it hugs
+  footClearance: 1.2, // clear floor between the bottom step and the window wall
+  // The radius of the flight's centre line is whatever gives a comfortable
+  // tread, kept between these.
+  stairRadiusMin: 1.9,
+  stairRadiusMax: 3.0,
+
+  // --- the flight, the rails, the balusters, the strings, the posts ----------------
+  stairWidth: 1.05,
+  treadRun: 0.3, // how deep one tread is along the flight's centre line
+  stepRise: 0.19, // aimed for; the climb is then divided evenly
+  treadThickness: 0.08,
+  railHeight: 0.95,
+  railRadius: 0.032,
+  railInset: 0.06, // the rail, in from the edge it guards
+  balusterWidth: 0.06, // across its plain blocks
+  balusterGap: 0.2,
+  // The turned part of a baluster, between its plain blocks, as a share of
+  // its height.
+  turnedFrom: 0.14,
+  turnedTo: 0.82,
+  stringDepth: 0.16, // as thick as the deck
+  stringOverhang: 0.012, // the strings, this far past the ends of the treads
+  stringLip: 0.01, // and their tops this far over the highest tread under them
+  postSpacing: 1.8, // posts under an open edge, about this far apart
+  postSize: 0.14,
+};
 
 const WOOD_COLOR = 0x4a3222; // walnut, as the instruction card's frame
 const UP = new THREE.Vector3(0, 1, 0);
@@ -95,13 +139,14 @@ const QUARTER = Math.PI / 2;
  * @returns {number} metres above the floor
  */
 export function deckRise({ floorY, ceilingY, shelfTop, doorTop }) {
+  const { overShelf, overDoor, deckThickness, minRise, headRoom } = MEZZANINE;
   return THREE.MathUtils.clamp(
     Math.max(
-      (shelfTop - floorY) + OVER_SHELF,
-      (doorTop - floorY) + DECK_THICKNESS + OVER_DOOR,
+      (shelfTop - floorY) + overShelf,
+      (doorTop - floorY) + deckThickness + overDoor,
     ),
-    MIN_DECK_RISE,
-    (ceilingY - floorY) - DECK_HEAD_ROOM,
+    minRise,
+    (ceilingY - floorY) - headRoom,
   );
 }
 
@@ -119,6 +164,94 @@ function treadGeometry(inner, outer, sweep, thickness) {
   // the tread's top face is at the origin's height.
   geometry.rotateX(-Math.PI / 2);
   geometry.translate(0, -thickness, 0);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/**
+ * A baluster a metre tall, stood on its foot: turned like a coffee table leg
+ * (LEG_TURNING), with a plain block below and above for the string or deck it
+ * stands on and the rail it holds up. An instance is scaled to its height.
+ */
+function balusterGeometry(width, from, to) {
+  const [blockRadius, turnedTall] = LEG_TURNING[LEG_TURNING.length - 1];
+  const across = (width / 2) / blockRadius;
+  return new THREE.LatheGeometry([
+    new THREE.Vector2(0, 0),
+    new THREE.Vector2(width / 2, 0),
+    new THREE.Vector2(width / 2, from),
+    ...LEG_TURNING.map(([r, y]) => new THREE.Vector2(r * across, from + (y / turnedTall) * (to - from))),
+    new THREE.Vector2(width / 2, 1),
+    new THREE.Vector2(0, 1),
+  ], 10);
+}
+
+/**
+ * A string: a strip of wood curving round a centre at radius `r`, `halfWidth`
+ * either side of it, `depth` deep below a top that climbs as `topAt(theta)`
+ * says -- sampled at each of `thetas`, measured as the flight's are (see
+ * alongArc). Each face has its own vertices, so its edges stay crisp while
+ * its long faces are smooth round the curve.
+ */
+function stringGeometry({ centreX, centreZ, r, halfWidth, depth, thetas, topAt }) {
+  const positions = [];
+  const uvs = [];
+  const index = [];
+  const at = (theta, dr, y) => new THREE.Vector3(
+    centreX - (r + dr) * Math.sin(theta), y, centreZ - (r + dr) * Math.cos(theta),
+  );
+  const _ab = new THREE.Vector3();
+  const _ac = new THREE.Vector3();
+
+  /**
+   * One face: rows of two points each, stitched row to row, wound to face
+   * `want` (the way out of the wood).
+   */
+  function sheet(rows, want) {
+    const base = positions.length / 3;
+    let run = 0;
+    rows.forEach(([a, b], i) => {
+      if (i > 0) run += a.distanceTo(rows[i - 1][0]);
+      positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+      uvs.push(run, 0, run, a.distanceTo(b));
+    });
+    const [[a, b], [c]] = rows;
+    _ab.subVectors(b, a);
+    _ac.subVectors(c, a);
+    const flip = _ab.cross(_ac).dot(want) < 0;
+    for (let i = 0; i < rows.length - 1; i++) {
+      const p = base + i * 2;
+      if (flip) index.push(p, p + 2, p + 1, p + 1, p + 2, p + 3);
+      else index.push(p, p + 1, p + 2, p + 1, p + 3, p + 2);
+    }
+  }
+
+  const mid = thetas[Math.floor(thetas.length / 2)];
+  const outward = new THREE.Vector3(-Math.sin(mid), 0, -Math.cos(mid));
+  const edge = (theta, dr, top) => at(theta, dr, top ? topAt(theta) : topAt(theta) - depth);
+  const along = (dr, top) => thetas.map((theta) => edge(theta, dr, top));
+
+  const innerTop = along(-halfWidth, true);
+  const outerTop = along(halfWidth, true);
+  const innerFoot = along(-halfWidth, false);
+  const outerFoot = along(halfWidth, false);
+  const zip = (p, q) => p.map((point, i) => [point, q[i]]);
+
+  sheet(zip(innerTop, outerTop), UP);
+  sheet(zip(innerFoot, outerFoot), UP.clone().negate());
+  sheet(zip(outerFoot, outerTop), outward);
+  sheet(zip(innerFoot, innerTop), outward.clone().negate());
+  // The two ends, facing back down the flight and on up it.
+  const first = 0;
+  const last = thetas.length - 1;
+  const tangent = (theta) => new THREE.Vector3(-Math.cos(theta), 0, Math.sin(theta));
+  sheet([[innerFoot[first], outerFoot[first]], [innerTop[first], outerTop[first]]], tangent(thetas[first]).negate());
+  sheet([[innerFoot[last], outerFoot[last]], [innerTop[last], outerTop[last]]], tangent(thetas[last]));
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(index);
   geometry.computeVertexNormals();
   return geometry;
 }
@@ -151,6 +284,16 @@ export function addMezzanine(scene, {
   camera, floorBox, ceilingY, shelfBox, doorBox, rise: givenRise = null, grow = null,
   deckMaterial = null, woodMaterial = null,
 }) {
+  const {
+    deckThickness,
+    longArmDepth, doorArmDepth, wallGap, backGap, footClearance,
+    stairRadiusMin, stairRadiusMax,
+    stairWidth, treadRun, stepRise: stepAim, treadThickness,
+    railHeight, railRadius, railInset,
+    balusterWidth, balusterGap, turnedFrom, turnedTo,
+    stringDepth, stringOverhang, stringLip,
+    postSpacing, postSize,
+  } = MEZZANINE;
   const floorY = floorBox.min.y;
   const wallX = floorBox.min.x; // the wall the bookshelf stands against
   const maxX = floorBox.max.x; // the window wall
@@ -169,30 +312,30 @@ export function addMezzanine(scene, {
     floorY, ceilingY, shelfTop: shelfBox.max.y, doorTop: doorBox.max.y,
   });
   const deckY = floorY + rise;
-  const steps = Math.max(8, Math.round(rise / STEP_RISE));
+  const steps = Math.max(8, Math.round(rise / stepAim));
   const stepRise = rise / steps;
 
   // --- the flight -------------------------------------------------------------------
   // It lands against the shelf wall, at the far end of the balcony: the head of
   // the flight is half a stair's width off that wall, and the rest is measured
   // back from there.
-  const headX = wallX + STAIR_WIDTH / 2 + WALL_GAP;
+  const headX = wallX + stairWidth / 2 + wallGap;
   // A comfortable tread at the walk line asks for this much turn -- less, in a
   // room too narrow to leave floor in front of the bottom step to get on from.
   const radius = THREE.MathUtils.clamp(
-    Math.min((steps * TREAD_RUN) / QUARTER, (maxX - FOOT_CLEARANCE) - headX),
-    STAIR_RADIUS[0], STAIR_RADIUS[1],
+    Math.min((steps * treadRun) / QUARTER, (maxX - footClearance) - headX),
+    stairRadiusMin, Math.max(stairRadiusMin, stairRadiusMax),
   );
-  const inner = radius - STAIR_WIDTH / 2;
-  const outer = radius + STAIR_WIDTH / 2;
+  const inner = radius - stairWidth / 2;
+  const outer = radius + stairWidth / 2;
   // The turn's centre is where the foot stands: a radius out from the head, and
   // far enough off the back wall for the turn to hug it without going through.
   const centreX = headX + radius;
-  const centreZ = minZ + BACK_GAP + outer;
+  const centreZ = minZ + backGap + outer;
   const headZ = centreZ; // where it arrives on the deck, facing +Z
   // The balcony's depth is its own now, not wherever the flight happens to
   // arrive: enough to walk along past the head of the stair.
-  const edgeX = wallX + THREE.MathUtils.clamp(LONG_ARM_DEPTH, DECK_DEPTH[0], DECK_DEPTH[1]);
+  const edgeX = wallX + longArmDepth;
 
   /**
    * A point on the flight. The angle is 0 at the foot, where the walk heads -X,
@@ -213,7 +356,7 @@ export function addMezzanine(scene, {
   // window wall, where the upper storey stands further out, a strip of floor
   // runs over the top of the lower wall to meet it.
   const longArm = { minX: wallX, maxX: edgeX, minZ: headZ, maxZ: upperMaxZ };
-  const doorArm = { minX: edgeX, maxX: upperMaxX, minZ: maxZ - DOOR_ARM_DEPTH, maxZ: upperMaxZ };
+  const doorArm = { minX: edgeX, maxX: upperMaxX, minZ: maxZ - doorArmDepth, maxZ: upperMaxZ };
   // Set back a hair from the lower wall's plane: flush, the strip's edge and
   // the top of the wall would be the same surface twice, and flicker.
   const windowArm = growX > 0 ? { minX: maxX + 0.005, maxX: upperMaxX, minZ, maxZ: doorArm.minZ } : null;
@@ -245,8 +388,8 @@ export function addMezzanine(scene, {
 
   for (const arm of arms) {
     pieces.push(box(
-      arm.maxX - arm.minX, DECK_THICKNESS, arm.maxZ - arm.minZ,
-      (arm.minX + arm.maxX) / 2, deckY - DECK_THICKNESS / 2, (arm.minZ + arm.maxZ) / 2,
+      arm.maxX - arm.minX, deckThickness, arm.maxZ - arm.minZ,
+      (arm.minX + arm.maxX) / 2, deckY - deckThickness / 2, (arm.minZ + arm.maxZ) / 2,
     ));
   }
 
@@ -255,19 +398,19 @@ export function addMezzanine(scene, {
   // either side of that opening.
   const openEdges = [
     // The long arm's open edge, down to where the door arm takes over.
-    [edgeX - RAIL_INSET, headZ, edgeX - RAIL_INSET, doorArm.minZ],
+    [edgeX - railInset, headZ, edgeX - railInset, doorArm.minZ],
     // The door arm's open edge, out to the window wall -- or to the corner of
     // the strip along it, where its own rail takes over.
-    [edgeX - RAIL_INSET, doorArm.minZ + RAIL_INSET, maxX + (windowArm ? RAIL_INSET : 0), doorArm.minZ + RAIL_INSET],
+    [edgeX - railInset, doorArm.minZ + railInset, maxX + (windowArm ? railInset : 0), doorArm.minZ + railInset],
   ];
   // The strip along the window wall: its open edge, from that corner back to
   // the back wall. Railed like the rest, but not posted -- it stands on the
   // lower wall.
-  if (windowArm) openEdges.push([maxX + RAIL_INSET, doorArm.minZ + RAIL_INSET, maxX + RAIL_INSET, minZ]);
+  if (windowArm) openEdges.push([maxX + railInset, doorArm.minZ + railInset, maxX + railInset, minZ]);
   const postedEdges = openEdges.slice(0, 2);
   const backEnd = [
-    [wallX, headZ + RAIL_INSET, headX - STAIR_WIDTH / 2, headZ + RAIL_INSET],
-    [headX + STAIR_WIDTH / 2, headZ + RAIL_INSET, edgeX, headZ + RAIL_INSET],
+    [wallX, headZ + railInset, headX - stairWidth / 2, headZ + railInset],
+    [headX + stairWidth / 2, headZ + railInset, edgeX, headZ + railInset],
   ];
 
   for (const [ax, az, bx, bz] of [...openEdges, ...backEnd]) {
@@ -276,9 +419,9 @@ export function addMezzanine(scene, {
     const alongX = Math.abs(bx - ax) > Math.abs(bz - az);
     pieces.push(box(
       alongX ? length : 0.09, 0.07, alongX ? 0.09 : length,
-      (ax + bx) / 2, deckY + RAIL_HEIGHT, (az + bz) / 2,
+      (ax + bx) / 2, deckY + railHeight, (az + bz) / 2,
     ));
-    const count = Math.max(1, Math.round(length / BALUSTER_GAP));
+    const count = Math.max(1, Math.round(length / balusterGap));
     for (let i = 0; i <= count; i++) {
       const t = i / count;
       spindles.push({ x: ax + (bx - ax) * t, y: deckY, z: az + (bz - az) * t });
@@ -286,18 +429,18 @@ export function addMezzanine(scene, {
   }
 
   // Posts holding up the open edges.
-  const postHeight = (deckY - DECK_THICKNESS) - floorY;
+  const postHeight = (deckY - deckThickness) - floorY;
   const postSpots = [];
   for (const [ax, az, bx, bz] of postedEdges) {
     const length = Math.hypot(bx - ax, bz - az);
-    const count = Math.max(1, Math.round(length / POST_SPACING));
+    const count = Math.max(1, Math.round(length / postSpacing));
     for (let i = 0; i <= count; i++) {
       const t = i / count;
       const at = { x: ax + (bx - ax) * t, z: az + (bz - az) * t };
       // Where two runs meet there is one post, not two in the same place.
-      if (postSpots.some((p) => Math.hypot(p.x - at.x, p.z - at.z) < POST_SIZE)) continue;
+      if (postSpots.some((p) => Math.hypot(p.x - at.x, p.z - at.z) < postSize)) continue;
       postSpots.push(at);
-      pieces.push(box(POST_SIZE, postHeight, POST_SIZE, at.x, floorY + postHeight / 2, at.z));
+      pieces.push(box(postSize, postHeight, postSize, at.x, floorY + postHeight / 2, at.z));
     }
   }
 
@@ -305,18 +448,39 @@ export function addMezzanine(scene, {
   // out over each (off the inside of the turn, or toward the wall it hugs),
   // for anything that grows along them.
   const stairRails = [];
-  for (const r of [inner + RAIL_INSET, outer - RAIL_INSET]) {
+  for (const r of [inner + railInset, outer - railInset]) {
     const points = [];
     const outward = [];
     const away = r < radius ? -1 : 1; // the inner rail's outside is toward the turn's centre
     for (let i = 0; i <= 24; i++) {
       const theta = (i / 24) * QUARTER;
       const at = alongArc(theta, r);
-      points.push(new THREE.Vector3(at.x, climbAt(theta) + RAIL_HEIGHT, at.y));
+      points.push(new THREE.Vector3(at.x, climbAt(theta) + railHeight, at.y));
       outward.push(new THREE.Vector3(at.x - centreX, 0, at.y - centreZ).normalize().multiplyScalar(away));
     }
-    pieces.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 48, RAIL_RADIUS, 6, false));
+    pieces.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 48, railRadius, 6, false));
     stairRails.push({ points, outward, inner: r < radius });
+  }
+
+  // The strings under them, one down each side, over the ends of the treads.
+  // A tread's top is a whole step above the walk line where it starts and
+  // level with it where it ends, so a string's top rides a step above that
+  // line -- clear of every tread under it -- until it levels off at the deck.
+  const perStep = QUARTER / steps;
+  const stringTop = (theta) => Math.min(climbAt(theta) + stepRise, deckY) + stringLip;
+  const stringThetas = Array.from({ length: steps * 3 + 1 }, (_, i) => (i / (steps * 3)) * QUARTER);
+  for (const r of [inner + railInset, outer - railInset]) {
+    pieces.push(stringGeometry({
+      centreX, centreZ, r,
+      // Centred on the balusters' line, and out past the treads' ends.
+      halfWidth: railInset + stringOverhang,
+      depth: stringDepth,
+      // Back a little past the foot, so the first baluster stands wholly on
+      // it; and on a little into the deck, so the head of it is buried in the
+      // deck's edge rather than meeting it face to face.
+      thetas: [-balusterWidth / r, ...stringThetas, QUARTER + STRING_RUN_ON / r],
+      topAt: stringTop,
+    }));
   }
 
   const structure = new THREE.Mesh(mergeGeometries(pieces, false), wood);
@@ -327,9 +491,8 @@ export function addMezzanine(scene, {
   for (const piece of pieces) piece.dispose();
 
   // --- the steps, as one instanced tread ------------------------------------------
-  const perStep = QUARTER / steps;
   const treads = new THREE.InstancedMesh(
-    treadGeometry(inner, outer, perStep * 0.97, TREAD_THICKNESS), wood, steps,
+    treadGeometry(inner, outer, perStep * 0.97, treadThickness), wood, steps,
   );
   treads.name = 'mezzanineTreads';
   treads.castShadow = true;
@@ -349,23 +512,23 @@ export function addMezzanine(scene, {
   group.add(treads);
 
   // --- every spindle, as one instanced baluster -------------------------------------
-  for (const r of [inner + RAIL_INSET, outer - RAIL_INSET]) {
-    const count = Math.max(2, Math.round((r * QUARTER) / BALUSTER_GAP));
+  // On the flight they stand on the strings, and reach up to the rail.
+  for (const r of [inner + railInset, outer - railInset]) {
+    const count = Math.max(2, Math.round((r * QUARTER) / balusterGap));
     for (let i = 0; i <= count; i++) {
       const theta = (i / count) * QUARTER;
       const at = alongArc(theta, r);
-      spindles.push({ x: at.x, y: climbAt(theta), z: at.y });
+      const foot = stringTop(theta);
+      spindles.push({ x: at.x, y: foot, z: at.y, height: climbAt(theta) + railHeight - foot });
     }
   }
-  const spindleGeometry = new THREE.BoxGeometry(BALUSTER, 1, BALUSTER);
-  spindleGeometry.translate(0, 0.5, 0); // stood on its foot, a metre tall
-  const balusters = new THREE.InstancedMesh(spindleGeometry, wood, spindles.length);
+  const balusters = new THREE.InstancedMesh(balusterGeometry(balusterWidth, turnedFrom, turnedTo), wood, spindles.length);
   balusters.name = 'mezzanineBalusters';
   balusters.castShadow = true;
-  _scale.set(1, RAIL_HEIGHT, 1);
   _quaternion.identity();
   spindles.forEach((spindle, i) => {
     _position.set(spindle.x, spindle.y, spindle.z);
+    _scale.set(1, spindle.height ?? railHeight, 1);
     balusters.setMatrixAt(i, _matrix.compose(_position, _quaternion, _scale));
   });
   group.add(balusters);
@@ -402,7 +565,7 @@ export function addMezzanine(scene, {
     group,
     deckY,
     /** The underside of the deck: the head room anything beneath it has. */
-    underY: deckY - DECK_THICKNESS,
+    underY: deckY - deckThickness,
     edgeX,
 
     // --- its shape, for anything dressing it (scene/inside/foliage.js) --------------
@@ -421,11 +584,11 @@ export function addMezzanine(scene, {
       ax, az, bx, bz, outward: [[1, 0], [0, -1], [-1, 0]][i], overWall: i === 2,
     })),
     /** How far out past the rail line the deck's own edge is. */
-    railInset: RAIL_INSET,
-    railHeight: RAIL_HEIGHT,
+    railInset,
+    railHeight,
     /** Where the posts under those edges stand, and how thick they are. */
     posts: postSpots,
-    postSize: POST_SIZE,
+    postSize,
     /**
      * The stair's two handrails, foot to head: the rail's top at each point,
      * the way out over it there, and whether it is the rail on the inside of
@@ -461,12 +624,12 @@ export function addMezzanine(scene, {
     collision: arms.map((arm) => ({
       center: {
         x: (arm.minX + arm.maxX) / 2,
-        y: deckY - DECK_THICKNESS / 2,
+        y: deckY - deckThickness / 2,
         z: (arm.minZ + arm.maxZ) / 2,
       },
       halfExtents: {
         x: (arm.maxX - arm.minX) / 2,
-        y: DECK_THICKNESS / 2,
+        y: deckThickness / 2,
         z: (arm.maxZ - arm.minZ) / 2,
       },
     })),

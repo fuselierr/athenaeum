@@ -70,7 +70,12 @@ export function bindSettings({ audio, camera, renderer, scene, environment }) {
   // measured first), so it is handed over here once it exists rather than
   // being one of the parts passed in above.
   function bindRoom(room) {
-    watch(() => settings.graphics.walls, (on) => room.setWallsVisible(on), { immediate: true });
+    watch(() => settings.graphics.walls, (on) => {
+      room.setWallsVisible(on);
+      // Open to the sky or closed in, the room's light changes with it
+      // (scene/createScene.js's lightFromRoom).
+      environment.refreshRoom?.();
+    }, { immediate: true });
     // Here rather than above because the room's lights are only there now.
     watch(() => settings.graphics.quality, applyShadowQuality, { immediate: true });
   }

@@ -67,7 +67,26 @@ export async function createScene() {
  * The generator is kept alive between switches rather than disposed after
  * the first load: it is reusable, and rebuilding it per background would
  * throw away its compiled shader every time the user tried another sky.
+ *
+ * LIT BY THE ROOM, ONCE THERE IS ONE. Image-based lighting has no notion of
+ * what is in the way: every surface is lit by the whole sky, as if the room
+ * had no walls. So once the room is built (lightFromRoom), the light it is
+ * given is not the sky but a picture of the ROOM, taken from its middle -- a
+ * cube of the walls, the ceiling and the balcony, with the sky showing only
+ * through the windows. The light then comes in from where the windows are,
+ * the walls give back a dim bounce, and anything shiny reflects the room
+ * rather than open sky.
+ *
+ * TWICE, for the bounce. The first picture is of a room lit by the whole sky,
+ * which is too bright everywhere; the second is of the room lit by the first,
+ * which is near enough what it settles to. Taken again when the backdrop
+ * changes or the walls come down (refreshRoom) -- with the walls gone the room
+ * is open to the sky, and the sky is the light again. Never per frame: one
+ * room, one picture, nothing to pay while you are in it.
  */
+const ROOM_CAPTURE_SIZE = 256; // texels a side of the cube the room is pictured in
+const ROOM_BOUNCES = 2;
+
 function createEnvironment(scene, renderer) {
   const loader = new EXRLoader();
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -75,8 +94,72 @@ function createEnvironment(scene, renderer) {
 
   let current = null; // { url, raw, radiance }
 
+  // Lighting from the room: where it is pictured from, and whether it is
+  // closed in at the moment (the walls can be hidden). Null until there is one.
+  let room = null;
+  let roomLight = null; // the render target the room's light is in
+  // A picture asked for while you were not in the room -- outside, where the
+  // scene is a meadow -- and still owed to it.
+  let owed = false;
+  const cubeTarget = new THREE.WebGLCubeRenderTarget(ROOM_CAPTURE_SIZE, {
+    type: THREE.HalfFloatType,
+    generateMipmaps: false,
+  });
+  const cubeCamera = new THREE.CubeCamera(0.05, 500, cubeTarget);
+
+  function captureRoom() {
+    if (!room || !current) return;
+    if (!room.here()) {
+      owed = true;
+      return;
+    }
+    owed = false;
+    const previous = roomLight;
+    roomLight = null;
+    if (!room.enclosed()) {
+      // Open to the sky: the sky is the light.
+      scene.environment = current.radiance;
+    } else {
+      cubeCamera.position.copy(room.at);
+      let light = null;
+      for (let bounce = 0; bounce < ROOM_BOUNCES; bounce++) {
+        scene.environment = light?.texture ?? current.radiance;
+        cubeCamera.update(renderer, scene);
+        const next = pmrem.fromCubemap(cubeTarget.texture);
+        light?.dispose();
+        light = next;
+      }
+      roomLight = light;
+      scene.environment = roomLight.texture;
+    }
+    previous?.dispose();
+  }
+
   return {
     get url() { return current?.url ?? null; },
+
+    /**
+     * From now on, light the room with a picture of itself taken from `at`,
+     * rather than with the sky it stands in -- see LIT BY THE ROOM. Call once
+     * the room and everything in it is built. `enclosed` says whether its
+     * walls are up at the moment, `here` whether you are in it -- a picture
+     * asked for while you are not is taken when you are back (refreshRoom).
+     *
+     * @param {{ at: THREE.Vector3, enclosed: () => boolean, here: () => boolean }} opts
+     */
+    lightFromRoom({ at, enclosed, here }) {
+      room = { at: at.clone(), enclosed, here };
+      captureRoom();
+    },
+
+    /**
+     * Take the room's picture again: the walls have come down or gone back
+     * up. With `onlyIfOwed`, only if one was asked for while you were away.
+     */
+    refreshRoom({ onlyIfOwed = false } = {}) {
+      if (onlyIfOwed && !owed) return;
+      captureRoom();
+    },
 
     /** Load `url` and make it the room. Resolves once it is actually up. */
     async set(url) {
@@ -91,6 +174,8 @@ function createEnvironment(scene, renderer) {
       scene.environment = radiance;
       scene.background = raw;
       current = { url, raw, radiance };
+      // And the room pictured again, under its new sky.
+      captureRoom();
       previous?.raw.dispose();
       previous?.radiance.dispose();
     },

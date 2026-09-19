@@ -25,17 +25,30 @@ const SHELF_THICKNESS = 0.025;
 
 const WALNUT = 0x5b3a26;
 
+/**
+ * The turned part of a leg, bottom up, as [radius, height] in metres for a
+ * 0.415 m leg: foot, bulb, neck, collar -- ending where the plain square-ish
+ * block that meets the top begins. Shared with the balcony's balusters
+ * (scene/inside/mezzanine.js), which are turned to the same pattern.
+ */
+export const LEG_TURNING = [
+  [0.028, 0], [0.032, 0.03], [0.024, 0.06], [0.04, 0.13], [0.044, 0.17],
+  [0.036, 0.22], [0.02, 0.28], [0.024, 0.32], [0.034, 0.36], [0.03, 0.39],
+  [0.032, 0.4],
+];
+
 /** A turned leg, floor to the underside of the top: foot, bulb, neck, vase, block. */
 function legGeometry(tall) {
-  const profile = [
-    [0, 0], [0.028, 0], [0.032, 0.03], [0.024, 0.06], [0.04, 0.13], [0.044, 0.17],
-    [0.036, 0.22], [0.02, 0.28], [0.024, 0.32], [0.034, 0.36], [0.03, 0.39],
-    [0.032, 0.4], [0.032, 1], [0, 1],
-  ];
   // Heights as a share of a 0.415 m leg, stretched to this one; the block at
   // the top is the rest of it.
   const scale = tall / 0.415;
-  return new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y === 1 ? tall : y * scale)), 20);
+  const [blockRadius] = LEG_TURNING[LEG_TURNING.length - 1];
+  return new THREE.LatheGeometry([
+    new THREE.Vector2(0, 0),
+    ...LEG_TURNING.map(([r, y]) => new THREE.Vector2(r, y * scale)),
+    new THREE.Vector2(blockRadius, tall),
+    new THREE.Vector2(0, tall),
+  ], 20);
 }
 
 /**

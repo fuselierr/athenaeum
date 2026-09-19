@@ -9,7 +9,7 @@ import { loadRoomSurfaces } from './scene/inside/surfaces.js';
 import { loadSofa } from './scene/inside/sofa.js';
 import { loadRug } from './scene/inside/rug.js';
 import { addCoffeeTable } from './scene/inside/coffeeTable.js';
-import { addMezzanine, deckRise } from './scene/inside/mezzanine.js';
+import { addMezzanine, deckRise, MEZZANINE } from './scene/inside/mezzanine.js';
 import { addFoliage } from './scene/inside/foliage.js';
 import { addWallShelf } from './scene/inside/wallShelf.js';
 import { numberSections } from './scene/inside/callNumbers.js';
@@ -21,7 +21,7 @@ import { createBookInstance } from './book/bookInstance.js';
 import { install as focusBookConfig, capture as captureBookConfig }
   from './book/pageSim/bookContext.js';
 import {
-  setSpineRotation, SPINE_ROTATION, PANEL_REACH as INITIAL_PANEL_REACH,
+  PANEL_REACH as INITIAL_PANEL_REACH,
   HINGE_LEN,
 } from './book/pageSim/config.js';
 import { RIGHT_HAND_PANEL, LEFT_HAND_PANEL } from './book/reader/bookContent.js';
@@ -40,6 +40,7 @@ import { createAnglePanel } from './debug/anglePanel.js';
 import { createOutdoorPanel } from './debug/outdoorPanel.js';
 import { createFpsCounter } from './debug/fpsCounter.js';
 import { createFacingPanel } from './debug/facingPanel.js';
+import { createMezzaninePanel } from './debug/mezzaninePanel.js';
 import { initBookLoader, openLibraryBook, uploadBook } from './loader/bookLoader.js';
 import { createAudioManager } from './audio/audioManager.js';
 import './ui/theme.css'; // the interface's colours, for every panel
@@ -303,9 +304,11 @@ const SOFA_TO_TABLE = 0.42;
 const RUG_BACK_FROM_TABLE = 0.2;
 // The storey above the balcony is wider than the one below it: its +X and +Z
 // walls stand this much further out, and the balcony runs out to meet them
-// (scene/inside/room.js's upper, scene/inside/mezzanine.js).
-const UPPER_GROW_X = 1.6;
-const UPPER_GROW_Z = 1.4;
+// (scene/inside/room.js's upper). Kept with the mezzanine's other sizes
+// (scene/inside/mezzanine.js's MEZZANINE), where the debug overlay can change
+// them for the next load.
+const UPPER_GROW_X = MEZZANINE.upperGrowX;
+const UPPER_GROW_Z = MEZZANINE.upperGrowZ;
 // The upper storey's windows in the +X wall: this far above the balcony floor.
 const UPPER_WINDOW_SILL = 0.8;
 // The door is in the bookshelf wall (-X), up in its +Z corner: this is how far
@@ -340,6 +343,11 @@ let deckShelf = null;
 let foliage = null;
 // The coffee table in front of the sofa (scene/inside/coffeeTable.js).
 let coffeeTable = null;
+// Build the mezzanine again from its values, and regrow what grows on it --
+// for the debug overlay's sliders (debug/mezzaninePanel.js). Set in the block
+// below, which has everything they were first built from.
+let rebuildMezzanine = () => {};
+let regrowFoliage = () => {};
 {
   const deskBox = new THREE.Box3().setFromObject(desk.object);
 
@@ -481,7 +489,7 @@ let coffeeTable = null;
   // wall and then back along it over the door. Built here because it is
   // measured off the room's own floor, ceiling, shelf and doorway.
   const ceilingY = shell.ceiling.getWorldPosition(new THREE.Vector3()).y;
-  mezzanine = addMezzanine(scene, {
+  const mezzanineOptions = {
     camera,
     floorBox: walkable,
     ceilingY,
@@ -491,7 +499,8 @@ let coffeeTable = null;
     grow: { x: UPPER_GROW_X, z: UPPER_GROW_Z },
     deckMaterial: surfaces.floor,
     woodMaterial: surfaces.pine,
-  });
+  };
+  mezzanine = addMezzanine(scene, mezzanineOptions);
   // The room is uneven ground now, so walking asks how high it is underfoot --
   // the same way it does outside.
   indoorGround = mezzanine.ground;
@@ -523,14 +532,35 @@ let coffeeTable = null;
   // Green things: vines up the windows and over the balcony, and potted
   // plants where they look at home -- grown to fit the room as it was just
   // measured, so after everything they grow on or stand beside.
-  foliage = addFoliage(scene, {
+  const foliageOptions = {
     room: shell,
     floorBox: walkable,
     deskBox,
     sofaBox: new THREE.Box3().setFromObject(sofa.object),
     shelfBox: placedShelf,
-    mezzanine,
-  });
+  };
+  foliage = addFoliage(scene, { ...foliageOptions, mezzanine });
+
+  // The same again, for the debug sliders. The deck they cannot move, but the
+  // flight's shape can move the back end of it where the stair comes up, so
+  // the books' furniture is given the new deck -- books made from now on land
+  // on it; one already in the room keeps the deck it was made with.
+  rebuildMezzanine = () => {
+    const old = mezzanine;
+    old.dispose();
+    mezzanine = addMezzanine(scene, mezzanineOptions);
+    indoorGround = mezzanine.ground;
+    if (!outdoorGround) cameraModes.setGround(indoorGround);
+    for (let i = FURNITURE.length - 1; i >= 0; i--) {
+      if (old.collision.includes(FURNITURE[i])) FURNITURE.splice(i, 1);
+    }
+    FURNITURE.push(...mezzanine.collision);
+  };
+  regrowFoliage = () => {
+    foliage.dispose();
+    foliage = addFoliage(scene, { ...foliageOptions, mezzanine });
+    foliage.setDensity(qualityPreset().foliageDensity);
+  };
   // As many leaves as the graphics quality affords (state/quality.js).
   watch(() => settings.graphics.quality, () => {
     foliage.setDensity(qualityPreset().foliageDensity);
@@ -591,6 +621,20 @@ let coffeeTable = null;
   // The walls-and-ceiling setting (the key, or Settings -> View) reaches the
   // room from here on.
   scenery.bindRoom(shell);
+
+  // The room lit by a picture of itself rather than by the open sky -- walls,
+  // ceiling and balcony in the way, the light coming in at the windows
+  // (scene/createScene.js's lightFromRoom). Taken from the middle of the lower
+  // storey at about head height, now that everything in it is built.
+  environment.lightFromRoom({
+    at: new THREE.Vector3(roomMiddle.x, walkable.min.y + 1.7, roomMiddle.z),
+    enclosed: () => settings.graphics.walls,
+    here: () => world.place === 'room',
+  });
+  // Back in from outside, it is taken again if the walls changed while you were out.
+  watch(() => world.place, (place) => {
+    if (place === 'room') environment.refreshRoom({ onlyIfOwed: true });
+  });
 
   // Start on your feet between the coffee table and the desk, facing the
   // window. Walk is the default mode, and this is the first moment it can
@@ -1031,6 +1075,16 @@ const fpsCounter = createFpsCounter(); // also in the ` overlay
 // Which way you are looking and where you are standing -- for placing things
 // in the room by eye and then writing the numbers down.
 const facingPanel = createFacingPanel({ camera });
+// The balcony's stair, rails, balusters, strings and posts, live -- indoors.
+// Let go of a slider and the vines on it regrow to match, and the room's
+// light is taken again with the new woodwork in it.
+const mezzaninePanel = createMezzaninePanel({
+  rebuild: () => rebuildMezzanine(),
+  settle: () => {
+    regrowFoliage();
+    environment.refreshRoom?.();
+  },
+});
 
 // VR (WebXR): a rig carrying the camera and both controllers, and everything
 // they do -- walking, turning, holding books, turning pages, the menu. Idle
@@ -1436,27 +1490,7 @@ function putBookDown(event) {
 // --- UI ---
 const flipBtn = document.getElementById('flipBtn');
 const resetBtn = document.getElementById('resetBtn');
-const spineRotationInput = document.getElementById('spine-rotation');
-const spineRotationValue = document.getElementById('spine-rotation-value');
-const spineRotationPanel = document.getElementById('spine-rotation-panel');
 let simulationPaused = false;
-
-function refreshSpineRotationLabel() {
-  if (spineRotationInput) spineRotationInput.value = String(SPINE_ROTATION);
-  if (spineRotationValue) spineRotationValue.textContent = SPINE_ROTATION.toFixed(2);
-}
-
-// Touching the slider takes the spine off its own drive (the page block
-// asking for a tilt -- PageSimulation.spineRotationTarget) and hands it to
-// the pointer; otherwise the next step() would ease straight back to
-// whatever the pages want and the slider would look dead. No rebuild: the
-// tilt only moves hinge positions, which the next step() picks up.
-spineRotationInput?.addEventListener('input', () => {
-  pages.setSpineRotationDriven(false);
-  setSpineRotation(Number(spineRotationInput.value));
-  refreshSpineRotationLabel();
-});
-refreshSpineRotationLabel();
 
 function refreshFlipLabel() {
   if (flipBtn) flipBtn.textContent = pages.flipped ? 'Flip book back' : 'Flip book over';
@@ -1627,11 +1661,6 @@ renderer.setAnimationLoop(() => {
   const debugShown = !landing.showing;
   const indoors = world.place === 'room';
   const roomDebug = anglePanel.visible && indoors && debugShown;
-  if (spineRotationPanel) spineRotationPanel.style.display = roomDebug ? 'block' : 'none';
-  // The pages drive the tilt, so the readout has to follow it rather than
-  // only updating when the slider is dragged -- while it can be seen, that is;
-  // hidden, writing it every frame is DOM work for nothing.
-  if (roomDebug && pages.spineRotationDriven) refreshSpineRotationLabel();
   // Nor does a debug pause outlast leaving the room: out of doors there is
   // nothing to unpause it with.
   if (!roomDebug) simulationPaused = false;
@@ -1702,6 +1731,7 @@ renderer.setAnimationLoop(() => {
   outdoorPanel.update(anglePanel.visible && debugShown);
   fpsCounter.update(anglePanel.visible && debugShown);
   facingPanel.update(roomDebug);
+  mezzaninePanel.update(roomDebug);
 });
 
 if (import.meta.env.DEV) {
