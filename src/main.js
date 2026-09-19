@@ -4,12 +4,12 @@ import { loadDesk } from './scene/inside/desk.js';
 import { loadLamp } from './scene/inside/lamp.js';
 import { loadBookshelf } from './scene/inside/bookshelf.js';
 import { addFloor } from './scene/inside/floor.js';
-import { addRoom, WINDOW_SILL_PROJECTION } from './scene/inside/room.js';
+import { addRoom, WINDOW_SILL_PROJECTION, DOOR_TOP } from './scene/inside/room.js';
 import { loadRoomSurfaces } from './scene/inside/surfaces.js';
 import { loadSofa } from './scene/inside/sofa.js';
 import { loadRug } from './scene/inside/rug.js';
 import { addCoffeeTable } from './scene/inside/coffeeTable.js';
-import { addMezzanine } from './scene/inside/mezzanine.js';
+import { addMezzanine, deckRise } from './scene/inside/mezzanine.js';
 import { addFoliage } from './scene/inside/foliage.js';
 import { addWallShelf } from './scene/inside/wallShelf.js';
 import { numberSections } from './scene/inside/callNumbers.js';
@@ -301,6 +301,13 @@ const SOFA_TO_TABLE = 0.42;
 // Where the carpet's middle is, back from the table's toward the sofa -- so the
 // sofa's front legs stand on it and the table sits in its middle.
 const RUG_BACK_FROM_TABLE = 0.2;
+// The storey above the balcony is wider than the one below it: its +X and +Z
+// walls stand this much further out, and the balcony runs out to meet them
+// (scene/inside/room.js's upper, scene/inside/mezzanine.js).
+const UPPER_GROW_X = 1.6;
+const UPPER_GROW_Z = 1.4;
+// The upper storey's windows in the +X wall: this far above the balcony floor.
+const UPPER_WINDOW_SILL = 0.8;
 // The door is in the bookshelf wall (-X), up in its +Z corner: this is how far
 // the middle of it stands off that corner.
 const DOOR_FROM_CORNER = 0.9;
@@ -410,19 +417,43 @@ let coffeeTable = null;
   coffeeTable.place({ x: tableX, y: walkable.min.y, z: roomMiddle.z });
   rug.place({ x: tableX - RUG_BACK_FROM_TABLE, y: walkable.min.y, z: roomMiddle.z });
 
-  // Walls and ceiling on that same footprint. The window goes in the wall
-  // opposite the bookshelf -- the shelf stands at -X (see above), so the
-  // wall the desk is pushed up against is +X, and the window is then
-  // directly in front of anyone sitting at it.
+  // How high the balcony stands -- which is also where the room's upper,
+  // wider storey begins -- worked out before either exists, so the walls and
+  // the deck agree on it (scene/inside/mezzanine.js's deckRise).
+  const roomHeight = Math.max(MIN_CEILING_HEIGHT, room.max.y - room.min.y + CEILING_CLEARANCE);
+  const rise = deckRise({
+    floorY: walkable.min.y,
+    ceilingY: walkable.min.y + roomHeight,
+    shelfTop: placedShelf.max.y,
+    doorTop: walkable.min.y + DOOR_TOP,
+  });
+
+  // Walls and ceiling on that same footprint, stepping out on the +X and +Z
+  // sides above the balcony. The windows over the desk go in the wall opposite
+  // the bookshelf -- the shelf stands at -X (see above), so the wall the desk
+  // is pushed up against is +X, and they are then directly in front of anyone
+  // sitting at it.
   const shell = addRoom(scene, floor, {
-    height: Math.max(MIN_CEILING_HEIGHT, room.max.y - room.min.y + CEILING_CLEARANCE),
+    height: roomHeight,
+    upper: { from: rise, grow: { x: UPPER_GROW_X, z: UPPER_GROW_Z } },
     focus: deskBox.getCenter(new THREE.Vector3()),
     windows: [
-      // The one the desk is pushed up against. Its sill is measured from the
-      // floor, which is not y = 0: the desk's TOP is the origin here, and the
-      // furniture is scaled, so the drop to the floor is whatever the model
-      // says it is rather than a number written down.
-      { side: '+x', sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK },
+      // The row the desk is pushed up against, on the lower storey. Its sill is
+      // measured from the floor, which is not y = 0: the desk's TOP is the
+      // origin here, and the furniture is scaled, so the drop to the floor is
+      // whatever the model says it is rather than a number written down.
+      { side: '+x', storey: 'lower', sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK },
+      // And a second row in the same wall's upper storey, which stands further
+      // out: the light for the balcony. Its daylight does not cast -- one
+      // shadow map for the desk is enough.
+      {
+        side: '+x',
+        storey: 'upper',
+        sill: UPPER_WINDOW_SILL,
+        focus: new THREE.Vector3(roomMiddle.x, walkable.min.y + rise + 1, roomMiddle.z),
+        light: 0.6,
+        shadows: false,
+      },
       // And a tall row filling the back wall, which the stair climbs across
       // and the balcony looks along -- taller windows, so more panes up each
       // one. Its daylight does not cast: a second shadow map, for a light
@@ -456,6 +487,8 @@ let coffeeTable = null;
     ceilingY,
     shelfBox: placedShelf,
     doorBox: new THREE.Box3().setFromObject(shell.door),
+    rise,
+    grow: { x: UPPER_GROW_X, z: UPPER_GROW_Z },
     deckMaterial: surfaces.floor,
     woodMaterial: surfaces.pine,
   });
@@ -479,8 +512,9 @@ let coffeeTable = null;
   // draws rather than two of everything.
   deckShelf = addWallShelf(scene, {
     minX: shelvedFrom,
-    maxX: footprint.max.x - WALL_SHELF_END_GAP,
-    wallZ: footprint.max.z,
+    maxX: footprint.max.x + UPPER_GROW_X - WALL_SHELF_END_GAP,
+    // Against the upper storey's +Z wall, which stands further out.
+    wallZ: footprint.max.z + UPPER_GROW_Z,
     floorY: mezzanine.deckY,
     height: Math.min(WALL_SHELF_HEIGHT, ceilingY - mezzanine.deckY - 0.4),
     material: wallShelf.object.material,
@@ -574,12 +608,14 @@ let coffeeTable = null;
   // The floor's footprint, raised to the ceiling. The floor is a flat plane,
   // so its box is only as tall as the floor itself; the ceiling's own world
   // position supplies the height rather than restating addRoom's arithmetic.
+  // Out to the upper storey's walls, which stand further out than the lower
+  // storey's: a book put down up there has room to lie.
   roomInterior = new THREE.Box3(
     walkable.min.clone(),
     new THREE.Vector3(
-      walkable.max.x,
+      shell.upper?.box.max.x ?? walkable.max.x,
       shell.ceiling.getWorldPosition(new THREE.Vector3()).y,
-      walkable.max.z,
+      shell.upper?.box.max.z ?? walkable.max.z,
     ),
   );
 }

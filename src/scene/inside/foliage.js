@@ -429,6 +429,10 @@ export function addFoliage(scene, { room, floorBox, deskBox, sofaBox, shelfBox, 
           [reach, between(0.2, 0.34), between(0.15, 0.26)], { axes });
       }
 
+      // Over the lower wall's windows, only the hedge: nothing hanging down
+      // across the glass.
+      if (edge.overWall) continue;
+
       // Masses tucked under the deck's edge, where the hedge spills over.
       const lip = railInset + 0.08;
       for (let s = 0.2; s < length; s += RAIL_STEP * between(1, 1.6)) {

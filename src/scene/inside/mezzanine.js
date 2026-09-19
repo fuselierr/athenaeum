@@ -36,6 +36,14 @@ import { box, slab } from './woodwork.js';
  * flight between them is a smooth ramp rather than a dozen separate lips to
  * trip on. The treads are drawn as steps regardless.
  *
+ * THE UPPER STOREY IS WIDER. The room above the deck stands further out on
+ * its +X and +Z sides than the room below (scene/inside/room.js's upper), so
+ * the deck goes with it: both arms run on out to the upper +Z wall, and a
+ * strip of floor runs along the +X side over the top of the lower wall, with
+ * a rail along its open edge. It needs no posts: it stands on that wall.
+ * Where you may walk follows which storey you are on -- the lower room's
+ * footprint down there, the wider upper one up here.
+ *
  * WHAT IT COSTS TO DRAW: four things -- the boards you stand on, one merged
  * piece of woodwork (slabs, posts, handrails), the treads as one instanced
  * step, and every spindle as one instanced baluster.
@@ -75,6 +83,29 @@ const UP = new THREE.Vector3(0, 1, 0);
 const QUARTER = Math.PI / 2;
 
 /**
+ * How high the deck stands above the floor: clear of the shelf it covers and
+ * the door it crosses, and still leaving head room under the ceiling.
+ * Exported because the room needs it before the deck exists -- it is where
+ * the room's upper storey begins (scene/inside/room.js's upper) -- and both
+ * have to agree on it to the millimetre.
+ *
+ * @param {{ floorY: number, ceilingY: number, shelfTop: number, doorTop: number }} at
+ *   world heights: the floor, the ceiling, the top of the bookshelf and of the
+ *   door's casing
+ * @returns {number} metres above the floor
+ */
+export function deckRise({ floorY, ceilingY, shelfTop, doorTop }) {
+  return THREE.MathUtils.clamp(
+    Math.max(
+      (shelfTop - floorY) + OVER_SHELF,
+      (doorTop - floorY) + DECK_THICKNESS + OVER_DOOR,
+    ),
+    MIN_DECK_RISE,
+    (ceilingY - floorY) - DECK_HEAD_ROOM,
+  );
+}
+
+/**
  * One step of a curving stair: the piece of a ring between two radii, spanning
  * `sweep` radians about the middle of +X, with its top face at y = 0 -- so an
  * instance of it is simply turned to its angle and lifted to its height.
@@ -104,6 +135,10 @@ function treadGeometry(inner, outer, sweep, thickness) {
  *   deck has to clear
  * @param {THREE.Box3} opts.doorBox  the doorway in the +Z wall, which the deck
  *   passes over: its head is what the deck has to clear
+ * @param {number} [opts.rise]  the deck's height above the floor, if already
+ *   worked out (deckRise) -- otherwise worked out here, the same way
+ * @param {{ x?: number, z?: number }} [opts.grow]  how much further out the
+ *   upper storey's +X and +Z walls stand than the lower storey's
  * @param {THREE.Material|null} [opts.woodMaterial]  what its joinery is made of
  *   -- the pine (scene/inside/surfaces.js)
  * @param {THREE.Material|null} [opts.deckMaterial]  the floorboards
@@ -113,7 +148,7 @@ function treadGeometry(inner, outer, sweep, thickness) {
  *   collision: Array<{ center: object, halfExtents: object }>, dispose(): void }}
  */
 export function addMezzanine(scene, {
-  camera, floorBox, ceilingY, shelfBox, doorBox,
+  camera, floorBox, ceilingY, shelfBox, doorBox, rise: givenRise = null, grow = null,
   deckMaterial = null, woodMaterial = null,
 }) {
   const floorY = floorBox.min.y;
@@ -122,16 +157,17 @@ export function addMezzanine(scene, {
   const minZ = floorBox.min.z; // the back wall, which the flight hugs
   const maxZ = floorBox.max.z; // the wall the door is in
 
+  // How far the upper storey reaches past the lower one, and so the deck with it.
+  const growX = Math.max(0, grow?.x ?? 0);
+  const growZ = Math.max(0, grow?.z ?? 0);
+  const upperMaxX = maxX + growX;
+  const upperMaxZ = maxZ + growZ;
+
   // High enough to clear the shelf it covers AND the door it crosses, and still
   // leaving head room under the ceiling.
-  const rise = THREE.MathUtils.clamp(
-    Math.max(
-      (shelfBox.max.y - floorY) + OVER_SHELF,
-      (doorBox.max.y - floorY) + DECK_THICKNESS + OVER_DOOR,
-    ),
-    MIN_DECK_RISE,
-    (ceilingY - floorY) - DECK_HEAD_ROOM,
-  );
+  const rise = givenRise ?? deckRise({
+    floorY, ceilingY, shelfTop: shelfBox.max.y, doorTop: doorBox.max.y,
+  });
   const deckY = floorY + rise;
   const steps = Math.max(8, Math.round(rise / STEP_RISE));
   const stepRise = rise / steps;
@@ -172,9 +208,16 @@ export function addMezzanine(scene, {
 
   // --- the deck, an L round two walls -------------------------------------------------
   // The long arm carries on the way the flight was heading, to the door wall;
-  // the door arm turns left along that wall and crosses over the door.
-  const longArm = { minX: wallX, maxX: edgeX, minZ: headZ, maxZ };
-  const doorArm = { minX: edgeX, maxX, minZ: maxZ - DOOR_ARM_DEPTH, maxZ };
+  // the door arm turns left along that wall and crosses over the door. Both run
+  // out to the upper storey's walls, past the lower room's -- and along the
+  // window wall, where the upper storey stands further out, a strip of floor
+  // runs over the top of the lower wall to meet it.
+  const longArm = { minX: wallX, maxX: edgeX, minZ: headZ, maxZ: upperMaxZ };
+  const doorArm = { minX: edgeX, maxX: upperMaxX, minZ: maxZ - DOOR_ARM_DEPTH, maxZ: upperMaxZ };
+  // Set back a hair from the lower wall's plane: flush, the strip's edge and
+  // the top of the wall would be the same surface twice, and flicker.
+  const windowArm = growX > 0 ? { minX: maxX + 0.005, maxX: upperMaxX, minZ, maxZ: doorArm.minZ } : null;
+  const arms = [longArm, doorArm, windowArm].filter(Boolean);
 
   const group = new THREE.Group();
   group.name = 'mezzanine';
@@ -187,7 +230,7 @@ export function addMezzanine(scene, {
     ?? new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.9, metalness: 0 });
 
   const deck = new THREE.Mesh(
-    mergeGeometries([longArm, doorArm].map(
+    mergeGeometries(arms.map(
       (arm) => slab(arm.minX, arm.maxX, arm.minZ, arm.maxZ, deckY),
     ), false),
     boards,
@@ -200,7 +243,7 @@ export function addMezzanine(scene, {
   const pieces = [];
   const spindles = [];
 
-  for (const arm of [longArm, doorArm]) {
+  for (const arm of arms) {
     pieces.push(box(
       arm.maxX - arm.minX, DECK_THICKNESS, arm.maxZ - arm.minZ,
       (arm.minX + arm.maxX) / 2, deckY - DECK_THICKNESS / 2, (arm.minZ + arm.maxZ) / 2,
@@ -213,9 +256,15 @@ export function addMezzanine(scene, {
   const openEdges = [
     // The long arm's open edge, down to where the door arm takes over.
     [edgeX - RAIL_INSET, headZ, edgeX - RAIL_INSET, doorArm.minZ],
-    // The door arm's open edge, out to the window wall.
-    [edgeX - RAIL_INSET, doorArm.minZ + RAIL_INSET, maxX, doorArm.minZ + RAIL_INSET],
+    // The door arm's open edge, out to the window wall -- or to the corner of
+    // the strip along it, where its own rail takes over.
+    [edgeX - RAIL_INSET, doorArm.minZ + RAIL_INSET, maxX + (windowArm ? RAIL_INSET : 0), doorArm.minZ + RAIL_INSET],
   ];
+  // The strip along the window wall: its open edge, from that corner back to
+  // the back wall. Railed like the rest, but not posted -- it stands on the
+  // lower wall.
+  if (windowArm) openEdges.push([maxX + RAIL_INSET, doorArm.minZ + RAIL_INSET, maxX + RAIL_INSET, minZ]);
+  const postedEdges = openEdges.slice(0, 2);
   const backEnd = [
     [wallX, headZ + RAIL_INSET, headX - STAIR_WIDTH / 2, headZ + RAIL_INSET],
     [headX + STAIR_WIDTH / 2, headZ + RAIL_INSET, edgeX, headZ + RAIL_INSET],
@@ -239,7 +288,7 @@ export function addMezzanine(scene, {
   // Posts holding up the open edges.
   const postHeight = (deckY - DECK_THICKNESS) - floorY;
   const postSpots = [];
-  for (const [ax, az, bx, bz] of openEdges) {
+  for (const [ax, az, bx, bz] of postedEdges) {
     const length = Math.hypot(bx - ax, bz - az);
     const count = Math.max(1, Math.round(length / POST_SPACING));
     for (let i = 0; i <= count; i++) {
@@ -339,7 +388,15 @@ export function addMezzanine(scene, {
 
   const within = (arm, x, z) => x >= arm.minX - 0.05 && x <= arm.maxX + 0.05
     && z >= arm.minZ - 0.05 && z <= arm.maxZ + 0.05;
-  const onDeck = (x, z) => within(longArm, x, z) || within(doorArm, x, z);
+  const onDeck = (x, z) => arms.some((arm) => within(arm, x, z));
+
+  // Where you may walk: the lower room's footprint, or -- head above the deck
+  // -- the upper storey's, which stands further out.
+  const upperBounds = new THREE.Box3(
+    floorBox.min.clone(),
+    new THREE.Vector3(upperMaxX, floorBox.max.y, upperMaxZ),
+  );
+  const upstairs = () => camera.getWorldPosition(_head).y - UNDERFOOT_CLEARANCE >= deckY - 0.05;
 
   return {
     group,
@@ -349,14 +406,19 @@ export function addMezzanine(scene, {
     edgeX,
 
     // --- its shape, for anything dressing it (scene/inside/foliage.js) --------------
-    /** The two arms of the deck, as { minX, maxX, minZ, maxZ } in world space. */
-    arms: { long: longArm, door: doorArm },
+    /**
+     * The arms of the deck, as { minX, maxX, minZ, maxZ } in world space --
+     * and the strip along the window wall, if the upper storey is wider.
+     */
+    arms: { long: longArm, door: doorArm, window: windowArm },
     /**
      * The edges you could walk off, along the line of the rail, each with the
-     * way out over it: { ax, az, bx, bz, outward: [x, z] }.
+     * way out over it: { ax, az, bx, bz, outward: [x, z], overWall } --
+     * `overWall` for the strip's edge, which stands over the lower wall's
+     * windows rather than over open floor.
      */
     edges: openEdges.map(([ax, az, bx, bz], i) => ({
-      ax, az, bx, bz, outward: i === 0 ? [1, 0] : [0, -1],
+      ax, az, bx, bz, outward: [[1, 0], [0, -1], [-1, 0]][i], overWall: i === 2,
     })),
     /** How far out past the rail line the deck's own edge is. */
     railInset: RAIL_INSET,
@@ -375,10 +437,11 @@ export function addMezzanine(scene, {
     /**
      * The ground to walk on indoors, for input/cameraModes.js's setGround: the
      * floor, the flight or the deck -- whichever is the highest one under your
-     * head. The room's own footprint is still as far as you may walk.
+     * head. As far as you may walk is the storey you are on: the lower room's
+     * footprint, or the wider upper one's.
      */
     ground: {
-      bounds: floorBox,
+      get bounds() { return upstairs() ? upperBounds : floorBox; },
       heightAt(x, z) {
         const reach = camera.getWorldPosition(_head).y - UNDERFOOT_CLEARANCE;
         let under = floorY;
@@ -395,7 +458,7 @@ export function addMezzanine(scene, {
      * it. The flight is left out on purpose: a wedge is not a box, and a box drawn
      * round one would catch a book in mid-air beside the steps.
      */
-    collision: [longArm, doorArm].map((arm) => ({
+    collision: arms.map((arm) => ({
       center: {
         x: (arm.minX + arm.maxX) / 2,
         y: deckY - DECK_THICKNESS / 2,

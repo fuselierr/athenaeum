@@ -4,6 +4,14 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 /**
  * The room the desk is standing in: four walls, a ceiling, and its windows.
  *
+ * TWO STOREYS, THE UPPER ONE WIDER. When the room is given an upper storey
+ * (opts.upper), the walls change at that height: on the +X and +Z sides the
+ * upper storey stands further out than the lower -- the walls step out, and
+ * whatever floor there is up there (scene/inside/mezzanine.js) runs out over
+ * the top of the lower wall to meet it -- while the -X and -Z walls simply
+ * widen above it, on the same plane. The ceiling covers the wider of the two.
+ * A window says which storey it is on.
+ *
  * THE WINDOWS ARE ARCHED, AND COME IN ROWS. Where the room asks for a window,
  * it gets a row of round-arched ones -- tall, with a semicircle for a head --
  * spanning the width a single window would have had, with plain wall
@@ -81,6 +89,13 @@ const FAN_ANGLES = [Math.PI / 4, (3 * Math.PI) / 4];
 // Enough segments that an arch reads as a curve, not a polygon.
 const ARCH_SEGMENTS = 28;
 
+// A window on the lower storey of a room with two stops this far below where
+// the upper one begins -- clear of the floor that runs out over the wall.
+const BELOW_UPPER_FLOOR = 0.35;
+
+/** The top of the door's casing, above the floor -- what anything over it has to clear. */
+export const DOOR_TOP = DOOR_HEIGHT + FRAME_WIDTH;
+
 // A window with no light through it reads as a picture of a window. This
 // is a soft, warm key aimed in from outside; set it to 0 for geometry only.
 const WINDOW_LIGHT_INTENSITY = 1.1;
@@ -101,11 +116,17 @@ const WINDOW_LIGHT_COLOR = 0xfff1d8;
  * @param {string} [opts.windowSide]  which wall it is cut into: '+x', '-x',
  *   '+z' or '-z'. The scene puts it at '+x': the bookshelf stands at -X, so
  *   that is the wall opposite it, and the one the desk is pushed against.
- * @param {Array<{ side: string, sill?: number, focus?: THREE.Vector3,
- *   width?: number, maxWidth?: number, count?: number, columns?: number,
- *   rows?: number, light?: number, shadows?: boolean }>|null} [opts.windows]
+ * @param {{ from: number, grow?: { x?: number, z?: number } }|null} [opts.upper]
+ *   an upper storey: where it begins, in metres above the floor, and how much
+ *   further out than the lower one its +X and +Z walls stand.
+ * @param {Array<{ side: string, storey?: 'lower'|'upper', sill?: number,
+ *   focus?: THREE.Vector3, width?: number, maxWidth?: number, count?: number,
+ *   columns?: number, rows?: number, light?: number, shadows?: boolean }>|null} [opts.windows]
  *   more than one window: one entry a wall, the first being the one `window`
- *   in the result refers to. `width` is the fraction of its wall the row of
+ *   in the result refers to. `storey` puts it on the lower or upper storey of
+ *   a room that has two (without it, it may run the full height), and `sill`
+ *   is then measured from that storey's floor. `width` is the fraction of its
+ *   wall the row of
  *   arched windows takes, `count` how many there are in it, `columns` and
  *   `rows` the panes in each one's straight part, `light`
  *   the brightness of the daylight through it (0 for none), and `shadows`
@@ -132,13 +153,12 @@ export function addRoom(scene, floor, {
   sill = SILL_HEIGHT,
   windows = null,
   door = null,
+  upper = null,
   wallMaterial: suppliedWallMaterial = null,
   ceilingMaterial: suppliedCeilingMaterial = null,
 } = {}) {
   floor.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(floor);
-  const size = box.getSize(new THREE.Vector3());
-  const middle = box.getCenter(new THREE.Vector3());
   const floorY = box.min.y;
 
   const group = new THREE.Group();
@@ -152,42 +172,96 @@ export function addRoom(scene, floor, {
     color: CEILING_COLOR, roughness: 0.96, metalness: 0, side: THREE.FrontSide,
   });
 
-  // Each wall is authored in its own XY plane -- x along the wall, y up
-  // from the floor, front face +Z -- and then turned to face the middle.
-  // `axis` and `sign` record how that local x came out in world terms,
-  // which is what lets the window be centred on something in the room.
-  const plans = {
-    '+x': { at: [box.max.x, middle.z], inward: [-1, 0], span: size.z, axis: 'z', sign: 1 },
-    '-x': { at: [box.min.x, middle.z], inward: [1, 0], span: size.z, axis: 'z', sign: -1 },
-    '+z': { at: [middle.x, box.max.z], inward: [0, -1], span: size.x, axis: 'x', sign: -1 },
-    '-z': { at: [middle.x, box.min.z], inward: [0, 1], span: size.x, axis: 'x', sign: 1 },
-  };
+  // --- the storeys ------------------------------------------------------------
+  // Where the upper storey begins, above the floor, and how far its +X and +Z
+  // walls stand out beyond the lower storey's. Without one, one storey.
+  const split = upper ? THREE.MathUtils.clamp(upper.from, 0.5, height - 0.5) : null;
+  const growX = split !== null ? Math.max(0, upper.grow?.x ?? 0) : 0;
+  const growZ = split !== null ? Math.max(0, upper.grow?.z ?? 0) : 0;
+  const top = { x: box.max.x + growX, z: box.max.z + growZ }; // the upper storey's far corner
 
-  // --- the windows, each in its own wall's coordinates -------------------
+  // --- the wall faces --------------------------------------------------------
+  // Each face is authored in its own XY plane -- x along the wall, y up from
+  // the floor, front face +Z -- and then turned to face the middle. `axis` and
+  // `sign` record how that local x came out in world terms, which is what lets
+  // a window be centred on something in the room. `spans` is how far the face
+  // runs along its axis (world coordinates) over each height it covers: one
+  // span for a plain wall; two, the upper one wider, for a wall that widens
+  // above the upper floor.
+  const faces = {};
+  function face(id, [x, z], inward, axis, sign, spans) {
+    const first = spans[0];
+    const centre = (first.from + first.to) / 2;
+    faces[id] = {
+      id,
+      at: axis === 'x' ? [centre, z] : [x, centre],
+      inward,
+      axis,
+      sign,
+      centre,
+      spans,
+      // A world coordinate along the wall, in the face's own x.
+      local: (along) => sign * (along - centre),
+    };
+  }
+  const storeys = (lower, upperSpan) => (split === null
+    ? [{ ...lower, y0: 0, y1: height }]
+    : [{ ...lower, y0: 0, y1: split }, { ...upperSpan, y0: split, y1: height }]);
+  const alongZ = { from: box.min.z, to: box.max.z };
+  const alongX = { from: box.min.x, to: box.max.x };
+  const alongZUp = { from: box.min.z, to: top.z };
+  const alongXUp = { from: box.min.x, to: top.x };
+
+  // The two walls that stay where they are, widening above the upper floor.
+  face('-x', [box.min.x, 0], [1, 0], 'z', -1, storeys(alongZ, alongZUp));
+  face('-z', [0, box.min.z], [0, 1], 'x', 1, storeys(alongX, alongXUp));
+  // The two that step out. A wall that does not step is one widening face.
+  if (growX > 0) {
+    face('+x', [box.max.x, 0], [-1, 0], 'z', 1, [{ ...alongZ, y0: 0, y1: split }]);
+    face('+x^', [top.x, 0], [-1, 0], 'z', 1, [{ ...alongZUp, y0: split, y1: height }]);
+  } else {
+    face('+x', [box.max.x, 0], [-1, 0], 'z', 1, storeys(alongZ, alongZUp));
+  }
+  if (growZ > 0) {
+    face('+z', [0, box.max.z], [0, -1], 'x', -1, [{ ...alongX, y0: 0, y1: split }]);
+    face('+z^', [0, top.z], [0, -1], 'x', -1, [{ ...alongXUp, y0: split, y1: height }]);
+  } else {
+    face('+z', [0, box.max.z], [0, -1], 'x', -1, storeys(alongX, alongXUp));
+  }
+
+  // --- the windows, each in its own face's coordinates -------------------
   // One unless the caller asked for more; `windows` is the same thing spelled
-  // out, and a wall takes at most one of them.
+  // out, and a face takes at most one row of them.
   const asked = windows?.length ? windows : [{ side: windowSide, sill, focus }];
-  const openings = {}; // by wall, for cutting the hole in it
+  const openings = {}; // by face, for cutting the holes in it
   const built = [];
   for (const want of asked) {
-    const id = plans[want.side] ? want.side : '+z';
+    const side = faces[want.side] ? want.side : '+z';
+    const onUpper = split !== null && want.storey === 'upper';
+    const onLower = split !== null && want.storey === 'lower';
+    // The upper storey's row goes in the face that stands out, where there is one.
+    const id = onUpper && faces[`${side}^`] ? `${side}^` : side;
     if (openings[id]) continue;
-    const plan = plans[id];
+    const plan = faces[id];
+    const span = plan.spans.find((one) => (onUpper ? one.y1 > split : true)) ?? plan.spans[0];
+    const spanWidth = span.to - span.from;
     const width = Math.min(
       want.maxWidth ?? MAX_WINDOW_WIDTH,
-      plan.span * (want.width ?? WINDOW_WIDTH_FRACTION),
+      spanWidth * (want.width ?? WINDOW_WIDTH_FRACTION),
     );
-    const bottom = want.sill ?? sill;
-    const head = Math.max(bottom + 0.6, height - HEAD_CLEARANCE);
+    // Its floor, and how high it may reach: its own storey, or the full height.
+    const floorAt = onUpper ? split : 0;
+    const bottom = floorAt + (want.sill ?? sill);
+    const ceilingAt = onLower ? split - BELOW_UPPER_FLOOR : height - HEAD_CLEARANCE;
+    const head = Math.max(bottom + 0.6, ceilingAt);
     const towards = want.focus ?? focus;
 
     // Centred on what it is beside, but kept clear of the corners -- a window
     // that runs into the return of a wall looks like a mistake, not a window.
-    const wallCentre = plan.axis === 'x' ? middle.x : middle.z;
-    const limit = Math.max(0, plan.span / 2 - width / 2 - FRAME_WIDTH - 0.25);
-    const offset = THREE.MathUtils.clamp(
-      plan.sign * (towards[plan.axis] - wallCentre), -limit, limit,
-    );
+    const spanMiddle = (span.from + span.to) / 2;
+    const limit = Math.max(0, spanWidth / 2 - width / 2 - FRAME_WIDTH - 0.25);
+    const along = THREE.MathUtils.clamp(towards[plan.axis], spanMiddle - limit, spanMiddle + limit);
+    const offset = plan.local(along);
     const opening = { left: offset - width / 2, right: offset + width / 2, sill: bottom, head };
 
     // The row of arched windows filling that opening: equal widths, a pier
@@ -204,10 +278,7 @@ export function addRoom(scene, floor, {
     });
 
     // The middle of the glass, in WORLD space, for anything outside this file
-    // that wants to look out of it. `opening` is in the wall's own
-    // coordinates; undoing the offset's sign gives back the world position
-    // along the wall, and the plan's `at` supplies the wall's other one.
-    const along = wallCentre + plan.sign * offset;
+    // that wants to look out of it.
     const centre = new THREE.Vector3(
       plan.axis === 'x' ? along : plan.at[0],
       floorY + (bottom + head) / 2,
@@ -230,27 +301,28 @@ export function addRoom(scene, floor, {
   }
 
   // --- the door's opening, the same way ---------------------------------
-  const doorSide = door && plans[door.side] ? door.side : null;
+  // In the lowest part of its face -- a door opens onto the floor.
+  const doorSide = door && faces[door.side] ? door.side : null;
   let doorOpening = null;
   if (doorSide) {
-    const plan = plans[doorSide];
-    const centre = plan.axis === 'x' ? middle.x : middle.z;
-    const reach = Math.max(0, plan.span / 2 - DOOR_WIDTH / 2 - FRAME_WIDTH - 0.1);
-    const at = THREE.MathUtils.clamp(plan.sign * (door.along - centre), -reach, reach);
+    const plan = faces[doorSide];
+    const span = plan.spans[0];
+    const middleAlong = (span.from + span.to) / 2;
+    const reach = Math.max(0, (span.to - span.from) / 2 - DOOR_WIDTH / 2 - FRAME_WIDTH - 0.1);
+    const at = plan.local(THREE.MathUtils.clamp(door.along, middleAlong - reach, middleAlong + reach));
     doorOpening = {
       left: at - DOOR_WIDTH / 2,
       right: at + DOOR_WIDTH / 2,
-      head: Math.min(DOOR_HEIGHT, height - FRAME_WIDTH - 0.1),
+      head: Math.min(DOOR_HEIGHT, (span.y1 ?? height) - FRAME_WIDTH - 0.1),
     };
   }
 
   // --- the walls ---------------------------------------------------------
   const walls = {};
-  for (const [id, plan] of Object.entries(plans)) {
+  for (const [id, plan] of Object.entries(faces)) {
     const mesh = new THREE.Mesh(
       wallGeometry(
-        plan.span,
-        height,
+        faceOutline(plan),
         openings[id] ?? null,
         id === doorSide ? doorOpening : null,
       ),
@@ -269,19 +341,21 @@ export function addRoom(scene, floor, {
   }
 
   // --- the ceiling -------------------------------------------------------
-  // Its UVs in metres, like the floor's and the walls', so a tiling material
-  // covers it at the same real size rather than being stretched over the room.
-  const ceilingGeometry = new THREE.PlaneGeometry(size.x, size.z);
+  // Over the wider storey. Its UVs in metres, like the floor's and the walls',
+  // so a tiling material covers it at the same real size rather than being
+  // stretched over the room.
+  const ceilingSize = { x: top.x - box.min.x, z: top.z - box.min.z };
+  const ceilingGeometry = new THREE.PlaneGeometry(ceilingSize.x, ceilingSize.z);
   const ceilingUv = ceilingGeometry.attributes.uv;
   for (let i = 0; i < ceilingUv.count; i++) {
-    ceilingUv.setXY(i, ceilingUv.getX(i) * size.x, ceilingUv.getY(i) * size.z);
+    ceilingUv.setXY(i, ceilingUv.getX(i) * ceilingSize.x, ceilingUv.getY(i) * ceilingSize.z);
   }
   const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
   ceiling.name = 'ceiling';
   // PlaneGeometry faces +Z; +90 degrees about X turns that to face DOWN,
   // which is the only way a single-sided ceiling is visible from below.
   ceiling.rotation.x = Math.PI / 2;
-  ceiling.position.set(middle.x, floorY + height, middle.z);
+  ceiling.position.set((box.min.x + top.x) / 2, floorY + height, (box.min.z + top.z) / 2);
   ceiling.receiveShadow = true;
   ceiling.castShadow = false;
   group.add(ceiling);
@@ -323,6 +397,18 @@ export function addRoom(scene, floor, {
     lights,
     window: built[0].described,
     windows: built.map((pane) => pane.described),
+    /**
+     * The upper storey's footprint, if there is one: its floor's height above
+     * the lower floor, and the world box it covers -- wider than the floor's
+     * on the +X and +Z sides by what the walls stepped out.
+     */
+    upper: split === null ? null : {
+      from: split,
+      box: new THREE.Box3(
+        new THREE.Vector3(box.min.x, floorY + split, box.min.z),
+        new THREE.Vector3(top.x, floorY + height, top.z),
+      ),
+    },
     door: doorGroup,
 
     /**
@@ -362,26 +448,47 @@ function archPath(arch, path = new THREE.Path()) {
 }
 
 /**
+ * A face's outline in its own coordinates, anticlockwise from its bottom-left
+ * corner: along the bottom, up the right-hand side span by span, back along
+ * the top and down the left -- so a wall that widens above the upper floor is
+ * one stepped shape rather than two pieces with a seam between.
+ */
+function faceOutline(plan) {
+  const sides = plan.spans.map((span) => {
+    const a = plan.local(span.from);
+    const b = plan.local(span.to);
+    return { left: Math.min(a, b), right: Math.max(a, b), y0: span.y0, y1: span.y1 };
+  });
+  const points = [[sides[0].left, sides[0].y0], [sides[0].right, sides[0].y0]];
+  for (const side of sides) points.push([side.right, side.y0], [side.right, side.y1]);
+  for (const side of [...sides].reverse()) points.push([side.left, side.y1], [side.left, side.y0]);
+  // Where two spans share an edge, the corner between them is said twice.
+  return points.filter((p, i) => {
+    const next = points[(i + 1) % points.length];
+    return Math.abs(p[0] - next[0]) > 1e-6 || Math.abs(p[1] - next[1]) > 1e-6;
+  });
+}
+
+/**
  * A wall as a flat shape, with its windows cut out of it as holes rather
  * than assembled from pieces around the gaps -- one surface means one
  * plane, and no seam to catch the light along the head of an opening.
  *
  * A door is not a hole: it reaches the floor, and a hole touching the
- * outline does not triangulate. It is a notch in the outline instead.
+ * outline does not triangulate. It is a notch in the outline's bottom edge,
+ * which runs between its first two points.
  */
-function wallGeometry(span, height, arches, door = null) {
-  const half = span / 2;
+function wallGeometry(outline, arches, door = null) {
   const shape = new THREE.Shape();
-  shape.moveTo(-half, 0);
+  shape.moveTo(outline[0][0], outline[0][1]);
   if (door) {
-    shape.lineTo(door.left, 0);
+    const floor = outline[0][1];
+    shape.lineTo(door.left, floor);
     shape.lineTo(door.left, door.head);
     shape.lineTo(door.right, door.head);
-    shape.lineTo(door.right, 0);
+    shape.lineTo(door.right, floor);
   }
-  shape.lineTo(half, 0);
-  shape.lineTo(half, height);
-  shape.lineTo(-half, height);
+  for (const [x, y] of outline.slice(1)) shape.lineTo(x, y);
   shape.closePath();
 
   for (const arch of arches ?? []) shape.holes.push(archPath(arch));
