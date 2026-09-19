@@ -30,13 +30,12 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
  * and it vanishes rather than filling the screen, without anything having
  * to detect where the camera is.
  *
- * ABOUT THE LIGHT. The EXR environment map lights every surface regardless
- * of what is between it and the sky -- image-based lighting has no notion
- * of occlusion -- so closing the room in does NOT plunge it into darkness.
- * What the walls do change is the backdrop: the sky is now only visible
- * through the window, which is where a scene chosen in the menu shows up.
- * The window's own directional light is the one thing here that is a look
- * decision rather than geometry; see WINDOW_LIGHT_INTENSITY.
+ * ABOUT THE LIGHT. The daylight is not made here but in
+ * scene/inside/roomDaylight.js -- the sun where it is outside, and the sky
+ * through each row of windows -- from what this hands back about the windows.
+ * What this does for it is cast: the walls, the ceiling and the door keep the
+ * sun out everywhere but the glass, and the window frames lay their glazing
+ * bars across the patches it makes.
  */
 
 const WALL_COLOR = 0x5b5249;
@@ -96,10 +95,9 @@ const BELOW_UPPER_FLOOR = 0.35;
 /** The top of the door's casing, above the floor -- what anything over it has to clear. */
 export const DOOR_TOP = DOOR_HEIGHT + FRAME_WIDTH;
 
-// A window with no light through it reads as a picture of a window. This
-// is a soft, warm key aimed in from outside; set it to 0 for geometry only.
-const WINDOW_LIGHT_INTENSITY = 1.1;
-const WINDOW_LIGHT_COLOR = 0xfff1d8;
+// A window's share of the sky's light through it (scene/inside/roomDaylight.js):
+// all of it, unless a window asks for less -- 0 for geometry only.
+const WINDOW_LIGHT = 1;
 
 /**
  * @param {THREE.Object3D} scene
@@ -107,8 +105,8 @@ const WINDOW_LIGHT_COLOR = 0xfff1d8;
  *   room's footprint and its top face is where the walls start.
  * @param {object} [opts]
  * @param {number} [opts.height]  floor to ceiling, metres
- * @param {THREE.Vector3} [opts.focus]  what the window is beside, and what
- *   its light aims at. The desk.
+ * @param {THREE.Vector3} [opts.focus]  what the window is beside -- it is
+ *   centred on it, as far as its wall allows. The desk.
  * @param {number} [opts.sill]  height of the window's bottom edge above the
  *   floor. Worth setting whenever something stands in front of it: a desk
  *   pushed up against the wall will otherwise cover the bottom of the
@@ -129,9 +127,8 @@ const WINDOW_LIGHT_COLOR = 0xfff1d8;
  *   wall the row of
  *   arched windows takes, `count` how many there are in it, `columns` and
  *   `rows` the panes in each one's straight part, `light`
- *   the brightness of the daylight through it (0 for none), and `shadows`
- *   whether that daylight casts -- worth turning off on a second one, which
- *   would double the shadow map otherwise. Without this, the single window
+ *   its share of the sky's light through it (0 for none; the light itself is
+ *   scene/inside/roomDaylight.js's). Without this, the single window
  *   that `windowSide` and `sill` describe.
  * @param {THREE.Material|null} [opts.ceilingMaterial]  what the ceiling is made
  *   of -- the pine (scene/inside/surfaces.js). Its UVs are in metres too, so
@@ -288,15 +285,13 @@ export function addRoom(scene, floor, {
     openings[id] = arches;
     built.push({
       id,
-      plan,
-      opening,
       arches,
-      focus: towards,
       columns: want.columns ?? PANE_COLUMNS,
       rows: want.rows ?? PANE_ROWS,
-      intensity: want.light ?? WINDOW_LIGHT_INTENSITY,
-      shadows: want.shadows ?? true,
-      described: { side: id, ...opening, width, centre, arches },
+      described: {
+        side: id, ...opening, width, centre, arches,
+        inward: plan.inward, light: want.light ?? WINDOW_LIGHT,
+      },
     });
   }
 
@@ -330,7 +325,8 @@ export function addRoom(scene, floor, {
     );
     mesh.name = `wall${id}`;
     mesh.receiveShadow = true;
-    mesh.castShadow = false; // it IS the edge of the world; nothing is behind it
+    // The sun is outside it: this is what keeps its light to the windows.
+    mesh.castShadow = true;
     mesh.position.set(plan.at[0], floorY, plan.at[1]);
     // The geometry faces +Z, so aiming that at a point one metre inward
     // turns the wall to face the room -- and because the target is at the
@@ -357,7 +353,7 @@ export function addRoom(scene, floor, {
   ceiling.rotation.x = Math.PI / 2;
   ceiling.position.set((box.min.x + top.x) / 2, floorY + height, (box.min.z + top.z) / 2);
   ceiling.receiveShadow = true;
-  ceiling.castShadow = false;
+  ceiling.castShadow = true; // and this keeps the sun off the floor from above
   group.add(ceiling);
 
   // --- the window ---------------------------------------------------------
@@ -379,22 +375,10 @@ export function addRoom(scene, floor, {
   // light would be aimed from there.
   group.updateMatrixWorld(true);
 
-  // Daylight through each of them: the room is lit by what it can see out of.
-  const lights = built
-    .map((pane) => (pane.intensity > 0
-      ? addWindowLight(
-        scene, group, walls[pane.id], pane.opening, pane.plan,
-        pane.focus, pane.intensity, pane.shadows,
-      )
-      : null))
-    .filter(Boolean);
-
   return {
     group,
     walls,
     ceiling,
-    light: lights[0] ?? null,
-    lights,
     window: built[0].described,
     windows: built.map((pane) => pane.described),
     /**
@@ -626,7 +610,8 @@ function buildDoor(opening) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
     mesh.name = name;
     mesh.position.set(x, y, z);
-    mesh.castShadow = false;
+    // Casting, like the wall it stands in: the sun does not come in round it.
+    mesh.castShadow = true;
     mesh.receiveShadow = true;
     group.add(mesh);
     return mesh;
@@ -653,50 +638,4 @@ function buildDoor(opening) {
   group.add(knob);
 
   return group;
-}
-
-/**
- * Daylight coming in through the opening.
- *
- * A directional light standing outside the window and aimed at the desk --
- * the sun is far away, so its rays are parallel and one light does the whole
- * room. Its shadow camera is sized to the room rather than left at the
- * default, which would spend its whole depth range on empty air.
- */
-function addWindowLight(
-  scene, group, wall, opening, plan, focus,
-  intensity = WINDOW_LIGHT_INTENSITY, shadows = true,
-) {
-  const light = new THREE.DirectionalLight(WINDOW_LIGHT_COLOR, intensity);
-  light.name = 'daylight';
-
-  const centre = wall.localToWorld(new THREE.Vector3(
-    (opening.left + opening.right) / 2, (opening.sill + opening.head) / 2, 0,
-  ));
-  // Back out through the window, and up: light rakes in and across the room
-  // rather than glaring straight at the opposite wall.
-  light.position.set(
-    centre.x - plan.inward[0] * 3.5,
-    centre.y + 2.2,
-    centre.z - plan.inward[1] * 3.5,
-  );
-  light.target.position.copy(focus);
-  scene.add(light.target);
-
-  light.castShadow = shadows;
-  light.shadow.mapSize.set(2048, 2048);
-  const reach = 5;
-  light.shadow.camera.left = -reach;
-  light.shadow.camera.right = reach;
-  light.shadow.camera.top = reach;
-  light.shadow.camera.bottom = -reach;
-  light.shadow.camera.near = 0.5;
-  light.shadow.camera.far = 16;
-  // normalBias rather than a flat bias: it scales the offset by how
-  // glancing the surface is, which is what stops acne on the walls without
-  // lifting the book's shadow off the desk.
-  light.shadow.normalBias = 0.02;
-
-  group.add(light);
-  return light;
 }

@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { box, slab } from './woodwork.js';
-import { LEG_TURNING } from './coffeeTable.js';
 
 /**
  * The mezzanine: a balcony that wraps two walls of the room, and the curved
@@ -45,9 +44,10 @@ import { LEG_TURNING } from './coffeeTable.js';
  * Where you may walk follows which storey you are on -- the lower room's
  * footprint down there, the wider upper one up here.
  *
- * THE BALUSTERS are turned, to the coffee table's pattern (scene/inside/
- * coffeeTable.js's LEG_TURNING): a plain block at each end and the leg's
- * foot, bulb, neck and collar between. On the flight they do not stand on the
+ * THE BALUSTERS are a classic turned pattern (BALUSTER_TURNING): a square
+ * block at each end, and between them a torus and a bead, a long vase that
+ * swells low down and tapers to a slim neck, and a bead, a ring and a torus
+ * under the top block. On the flight they do not stand on the
  * treads -- whose tops step while the rail climbs smoothly -- but on a string
  * down each side: a curved strip of wood as thick as the deck, climbing with
  * the rail over the ends of the treads, whose top clears the highest tread
@@ -59,6 +59,8 @@ import { LEG_TURNING } from './coffeeTable.js';
  */
 
 // Heights and sizes in metres (scene/worldScale.js: the world is metric).
+// The deck's thickness, which the stair's strings match.
+const DECK_THICKNESS = 0.2;
 const STRING_RUN_ON = 0.03; // metres the strings run on into the deck at the head
 // How far below your head a surface has to be to be the one you are standing
 // on. This is what lets you walk UNDER the deck instead of being lifted onto
@@ -79,11 +81,11 @@ const UNDERFOOT_CLEARANCE = 0.6;
  */
 export const MEZZANINE = {
   // --- built on: the room is made to these --------------------------------------
-  deckThickness: 0.16,
+  deckThickness: DECK_THICKNESS,
   headRoom: 2.3, // kept clear between the deck and the ceiling
-  overShelf: 0.6, // the deck this far above the top of the bookshelf
-  overDoor: 0.1, // and this far above the head of the door it crosses
-  minRise: 2.3, // and never closer than this to the floor
+  overShelf: 0.9, // the deck this far above the top of the bookshelf
+  overDoor: 0.36, // and this far above the head of the door it crosses
+  minRise: 2.6, // and never closer than this to the floor
   // How much further out the upper storey's +X and +Z walls stand than the
   // lower storey's, and the deck with them (main.js, scene/inside/room.js's
   // upper).
@@ -109,18 +111,41 @@ export const MEZZANINE = {
   railHeight: 0.95,
   railRadius: 0.032,
   railInset: 0.06, // the rail, in from the edge it guards
-  balusterWidth: 0.06, // across its plain blocks
+  balusterWidth: 0.086, // across its plain blocks
   balusterGap: 0.2,
-  // The turned part of a baluster, between its plain blocks, as a share of
-  // its height.
-  turnedFrom: 0.14,
-  turnedTo: 0.82,
-  stringDepth: 0.16, // as thick as the deck
+  // Every baluster stands this much lower than the string or deck under it --
+  // its foot sunk into the wood, its top still inside the rail.
+  balusterDrop: 0,
+  // The turned part of a baluster, between its square blocks, as a share of
+  // its height: a foot about a sixth of it, a top block about a fifth.
+  turnedFrom: 0.16,
+  turnedTo: 0.81,
+  stringDepth: DECK_THICKNESS, // as thick as the deck
   stringOverhang: 0.012, // the strings, this far past the ends of the treads
   stringLip: 0.01, // and their tops this far over the highest tread under them
   postSpacing: 1.8, // posts under an open edge, about this far apart
   postSize: 0.14,
 };
+
+/**
+ * The turning between a baluster's square blocks, bottom up: [t, r] with t
+ * the share of the turned length and r the radius as a share of half the
+ * blocks' width -- so 1 would be flush with their faces. After a baluster
+ * 1 m long with a 10 cm foot and 70 cm of turning, the vase filled out to
+ * the full width of the blocks at its widest and necking to about half that.
+ */
+const BALUSTER_TURNING = [
+  // Off the foot: a fillet, a fat torus, a cove, a bead.
+  [0, 0.8], [0.02, 0.8], [0.03, 0.86], [0.06, 0.92], [0.09, 0.82],
+  [0.11, 0.66], [0.13, 0.64], [0.145, 0.74], [0.16, 0.74], [0.175, 0.64],
+  // The vase: in to a neck, out to its widest low down, and a long taper.
+  [0.19, 0.6], [0.23, 0.72], [0.3, 0.92], [0.38, 1], [0.46, 0.98],
+  [0.56, 0.84], [0.66, 0.7], [0.74, 0.59], [0.79, 0.53],
+  // Under the top block: a bead, a ring, a torus, a fillet.
+  [0.81, 0.57], [0.83, 0.65], [0.85, 0.65], [0.865, 0.59], [0.88, 0.7],
+  [0.9, 0.74], [0.915, 0.7], [0.93, 0.76], [0.95, 0.84], [0.97, 0.82],
+  [0.985, 0.76], [1, 0.76],
+];
 
 const WOOD_COLOR = 0x4a3222; // walnut, as the instruction card's frame
 const UP = new THREE.Vector3(0, 1, 0);
@@ -169,21 +194,23 @@ function treadGeometry(inner, outer, sweep, thickness) {
 }
 
 /**
- * A baluster a metre tall, stood on its foot: turned like a coffee table leg
- * (LEG_TURNING), with a plain block below and above for the string or deck it
- * stands on and the rail it holds up. An instance is scaled to its height.
+ * A baluster a metre tall, stood on its foot: a square block below, for the
+ * string or deck it stands on, and another above, for the rail it holds up --
+ * `width` on a side -- and BALUSTER_TURNING between them. An instance is
+ * scaled to its height.
  */
 function balusterGeometry(width, from, to) {
-  const [blockRadius, turnedTall] = LEG_TURNING[LEG_TURNING.length - 1];
-  const across = (width / 2) / blockRadius;
-  return new THREE.LatheGeometry([
-    new THREE.Vector2(0, 0),
-    new THREE.Vector2(width / 2, 0),
-    new THREE.Vector2(width / 2, from),
-    ...LEG_TURNING.map(([r, y]) => new THREE.Vector2(r * across, from + (y / turnedTall) * (to - from))),
-    new THREE.Vector2(width / 2, 1),
-    new THREE.Vector2(0, 1),
-  ], 10);
+  const parts = [
+    // Open-ended: its ends are against the blocks' faces.
+    new THREE.LatheGeometry(BALUSTER_TURNING.map(
+      ([t, r]) => new THREE.Vector2(r * (width / 2), from + t * (to - from)),
+    ), 10),
+  ];
+  if (from > 0) parts.push(new THREE.BoxGeometry(width, from, width).translate(0, from / 2, 0));
+  if (to < 1) parts.push(new THREE.BoxGeometry(width, 1 - to, width).translate(0, (to + 1) / 2, 0));
+  const geometry = mergeGeometries(parts, false);
+  for (const part of parts) part.dispose();
+  return geometry;
 }
 
 /**
@@ -290,7 +317,7 @@ export function addMezzanine(scene, {
     stairRadiusMin, stairRadiusMax,
     stairWidth, treadRun, stepRise: stepAim, treadThickness,
     railHeight, railRadius, railInset,
-    balusterWidth, balusterGap, turnedFrom, turnedTo,
+    balusterWidth, balusterGap, balusterDrop, turnedFrom, turnedTo,
     stringDepth, stringOverhang, stringLip,
     postSpacing, postSize,
   } = MEZZANINE;
@@ -335,7 +362,9 @@ export function addMezzanine(scene, {
   const headZ = centreZ; // where it arrives on the deck, facing +Z
   // The balcony's depth is its own now, not wherever the flight happens to
   // arrive: enough to walk along past the head of the stair.
-  const edgeX = wallX + longArmDepth;
+  // Never so deep it leaves no room for the door arm between it and the
+  // window wall.
+  const edgeX = wallX + Math.min(longArmDepth, (maxX - wallX) - 0.5);
 
   /**
    * A point on the flight. The angle is 0 at the foot, where the walk heads -X,
@@ -527,7 +556,7 @@ export function addMezzanine(scene, {
   balusters.castShadow = true;
   _quaternion.identity();
   spindles.forEach((spindle, i) => {
-    _position.set(spindle.x, spindle.y, spindle.z);
+    _position.set(spindle.x, spindle.y - balusterDrop, spindle.z);
     _scale.set(1, spindle.height ?? railHeight, 1);
     balusters.setMatrixAt(i, _matrix.compose(_position, _quaternion, _scale));
   });

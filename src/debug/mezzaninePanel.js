@@ -22,10 +22,6 @@ import { MEZZANINE } from '../scene/inside/mezzanine.js';
  *
  * Built the first time it is needed and kept: the mezzanine outlives trips
  * outside, and so do these values.
- *
- * @param {object} opts
- * @param {() => void} opts.rebuild  build the mezzanine again from MEZZANINE
- * @param {() => void} opts.settle  and whatever hangs off it, once a drag ends
  */
 
 const STORAGE_KEY = 'athenaeum:debug:mezzanine';
@@ -52,7 +48,16 @@ if (saved && typeof saved === 'object') {
   saved = null;
 }
 
-export function createMezzaninePanel({ rebuild, settle }) {
+/**
+ * @param {object} opts
+ * @param {() => void} opts.rebuild  build the mezzanine again from MEZZANINE
+ * @param {() => void} opts.settle  and whatever hangs off it, once a drag ends
+ * @param {{ values: object, apply: () => void, settle: () => void }} [opts.daylight]
+ *   the room's daylight (scene/inside/roomDaylight.js's ROOM_DAYLIGHT), tuned
+ *   live in a section of its own: `apply` on every step, `settle` once let go
+ */
+export function createMezzaninePanel({ rebuild, settle, daylight = null }) {
+  const daylightDefaults = daylight ? { ...daylight.values } : null;
   let el = null;
 
   function build() {
@@ -120,6 +125,10 @@ export function createMezzaninePanel({ rebuild, settle }) {
       }
       for (const key of Object.keys(pending)) delete pending[key];
       Object.assign(MEZZANINE, DEFAULTS);
+      if (daylight) {
+        Object.assign(daylight.values, daylightDefaults);
+        daylight.apply();
+      }
       for (const refresh of refreshers) refresh();
       showPending();
       rebuild();
@@ -232,6 +241,7 @@ export function createMezzaninePanel({ rebuild, settle }) {
     section('Balusters');
     slider('Width (m)', 'balusterWidth', { min: 0.02, max: 0.12, step: 0.002 });
     slider('Spacing (m)', 'balusterGap', { min: 0.08, max: 0.4, step: 0.005 });
+    slider('Lowered by (m)', 'balusterDrop', { min: 0, max: 0.1, step: 0.005 });
     slider('Turning starts (share)', 'turnedFrom', { min: 0, max: 0.45, step: 0.01 });
     slider('Turning ends (share)', 'turnedTo', { min: 0.55, max: 1, step: 0.01 });
 
@@ -243,6 +253,84 @@ export function createMezzaninePanel({ rebuild, settle }) {
     section('Posts');
     slider('Spacing (m)', 'postSpacing', { min: 0.8, max: 4, step: 0.05 });
     slider('Size (m)', 'postSize', { min: 0.06, max: 0.3, step: 0.005 });
+
+    if (daylight) {
+      section('Daylight');
+      const { values } = daylight;
+      liveSlider('Sun through the glass', values, 'sun', { min: 0, max: 8, step: 0.05 });
+      liveSlider('Sky light per window row', values, 'sky', { min: 0, max: 5, step: 0.05 });
+      colour('Sky, clear', values, 'skyColour');
+      colour('Sky, overcast', values, 'overcastColour');
+      // The beams and the dust are drawn over the room, not part of what
+      // lights it: nothing to take again when these are let go.
+      const drawnOver = { relight: false };
+      liveSlider('Sunbeam strength', values, 'beamStrength', { min: 0, max: 0.03, step: 0.0005 }, drawnOver);
+      liveSlider('Sunbeam glow toward sun', values, 'beamForward', { min: 0, max: 0.9, step: 0.01 }, drawnOver);
+      liveSlider('Dust brightness', values, 'dustBrightness', { min: 0, max: 1, step: 0.01 }, drawnOver);
+      liveSlider('Dust speck size (m)', values, 'dustSize', { min: 0.0005, max: 0.01, step: 0.0005 }, drawnOver);
+    }
+
+    /**
+     * A slider for a daylight value: applied as it moves, no rebuild -- and,
+     * unless `relight` is false, the room's light taken again once let go.
+     */
+    function liveSlider(label, target, key, { min, max, step }, { relight = true } = {}) {
+      const row = document.createElement('label');
+      Object.assign(row.style, {
+        display: 'grid', gridTemplateColumns: '1fr auto', rowGap: '2px', margin: '4px 0',
+      });
+      const name = document.createElement('span');
+      name.textContent = label;
+      const value = document.createElement('span');
+      value.style.color = '#9fd0ff';
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(min);
+      input.max = String(max);
+      input.step = String(step);
+      input.style.gridColumn = '1 / span 2';
+      input.style.width = '100%';
+      const decimals = Math.max(0, -Math.floor(Math.log10(step)));
+      const refresh = () => {
+        input.value = String(target[key]);
+        value.textContent = Number(target[key]).toFixed(decimals);
+      };
+      refresh();
+      refreshers.push(refresh);
+      input.addEventListener('input', () => {
+        target[key] = Number(input.value);
+        value.textContent = Number(input.value).toFixed(decimals);
+        daylight.apply();
+      });
+      if (relight) input.addEventListener('change', () => daylight.settle());
+      row.append(name, value, input);
+      into.append(row);
+    }
+
+    /** A colour picker for a daylight colour, kept as a hex number. */
+    function colour(label, target, key) {
+      const row = document.createElement('label');
+      Object.assign(row.style, {
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 0',
+      });
+      const name = document.createElement('span');
+      name.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'color';
+      Object.assign(input.style, {
+        width: '44px', height: '20px', padding: '0', border: '0', background: 'none', cursor: 'pointer',
+      });
+      const refresh = () => { input.value = `#${target[key].toString(16).padStart(6, '0')}`; };
+      refresh();
+      refreshers.push(refresh);
+      input.addEventListener('input', () => {
+        target[key] = parseInt(input.value.slice(1), 16);
+        daylight.apply();
+      });
+      input.addEventListener('change', () => daylight.settle());
+      row.append(name, input);
+      into.append(row);
+    }
   }
 
   return {

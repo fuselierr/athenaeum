@@ -5,6 +5,9 @@ import { loadLamp } from './scene/inside/lamp.js';
 import { loadBookshelf } from './scene/inside/bookshelf.js';
 import { addFloor } from './scene/inside/floor.js';
 import { addRoom, WINDOW_SILL_PROJECTION, DOOR_TOP } from './scene/inside/room.js';
+import { addRoomDaylight, ROOM_DAYLIGHT } from './scene/inside/roomDaylight.js';
+import { createRoomBeams, addRoomDust } from './scene/inside/roomBeams.js';
+import { CLOUDS } from './scene/outside/volumetricClouds.js';
 import { loadRoomSurfaces } from './scene/inside/surfaces.js';
 import { loadSofa } from './scene/inside/sofa.js';
 import { loadRug } from './scene/inside/rug.js';
@@ -292,7 +295,7 @@ const BACK_WINDOW_SILL = 0.5;
 // The +Z wall is shelved for most of its length (scene/inside/wallShelf.js).
 const WALL_SHELF_RUN = 0.76; // of that wall
 const WALL_SHELF_END_GAP = 0; // off the corner it starts from
-const WALL_SHELF_HEIGHT = 2.4; // unless the balcony above it is lower than that
+const WALL_SHELF_HEIGHT = 2.4; // upstairs, unless the ceiling is lower than that
 // The sofa stands this far back from the middle of the room, toward the
 // bookshelf (-X), leaving room in front of it for the coffee table.
 const SOFA_BACK = 0.9;
@@ -343,6 +346,11 @@ let deckShelf = null;
 let foliage = null;
 // The coffee table in front of the sofa (scene/inside/coffeeTable.js).
 let coffeeTable = null;
+// The sun and the sky through the windows (scene/inside/roomDaylight.js), and
+// the beams and the dust it makes in the room's air (scene/inside/roomBeams.js).
+let roomDaylight = null;
+let roomBeams = null;
+let roomDust = null;
 // Build the mezzanine again from its values, and regrow what grows on it --
 // for the debug overlay's sliders (debug/mezzaninePanel.js). Set in the block
 // below, which has everything they were first built from.
@@ -452,20 +460,16 @@ let regrowFoliage = () => {};
       // whatever the model says it is rather than a number written down.
       { side: '+x', storey: 'lower', sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK },
       // And a second row in the same wall's upper storey, which stands further
-      // out: the light for the balcony. Its daylight does not cast -- one
-      // shadow map for the desk is enough.
+      // out: the light for the balcony.
       {
         side: '+x',
         storey: 'upper',
         sill: UPPER_WINDOW_SILL,
         focus: new THREE.Vector3(roomMiddle.x, walkable.min.y + rise + 1, roomMiddle.z),
-        light: 0.6,
-        shadows: false,
       },
       // And a tall row filling the back wall, which the stair climbs across
       // and the balcony looks along -- taller windows, so more panes up each
-      // one. Its daylight does not cast: a second shadow map, for a light
-      // raking the back of the room, is not worth the frame it costs.
+      // one.
       {
         side: '-z',
         sill: BACK_WINDOW_SILL,
@@ -474,8 +478,6 @@ let regrowFoliage = () => {};
         columns: 2,
         rows: 4,
         focus: new THREE.Vector3(roomMiddle.x, walkable.min.y + 1.2, roomMiddle.z),
-        light: 0.8,
-        shadows: false,
       },
     ],
     // In the bookshelf wall, up in its +Z corner. `along` is a world
@@ -484,6 +486,40 @@ let regrowFoliage = () => {};
     wallMaterial: surfaces.walls,
     ceilingMaterial: surfaces.pine,
   });
+  // Daylight through those windows: the sun where it stands outside at the
+  // time of day set, shut out by the walls everywhere but the glass, and the
+  // sky's soft light off each row of them. Over the whole room, both storeys.
+  const roomBox = new THREE.Box3(
+    walkable.min.clone(),
+    new THREE.Vector3(
+      shell.upper?.box.max.x ?? walkable.max.x,
+      walkable.min.y + roomHeight,
+      shell.upper?.box.max.z ?? walkable.max.z,
+    ),
+  );
+  roomDaylight = addRoomDaylight({
+    group: shell.group,
+    box: roomBox,
+    windows: shell.windows,
+    hours: () => settings.outside.timeOfDay,
+    // The sky the windows look out on is the one outside: overcast when its
+    // clouds would make it so (scene/outside/outdoorLight.js's overcastFor).
+    coverage: () => CLOUDS.coverage,
+    enclosed: () => settings.graphics.walls,
+  });
+  watch(() => settings.graphics.walls, () => roomDaylight.refresh());
+  // The beams that sun makes in the air, and the dust that glints in them --
+  // the room's frame is drawn through these from now on.
+  roomBeams = createRoomBeams({
+    renderer, scene, camera, sun: roomDaylight.sun, box: roomBox, values: ROOM_DAYLIGHT,
+  });
+  roomDust = addRoomDust({ group: shell.group, sun: roomDaylight.sun, box: roomBox, values: ROOM_DAYLIGHT });
+  // How finely the beams are walked, and how much dust (state/quality.js).
+  watch(() => settings.graphics.quality, () => {
+    const preset = qualityPreset();
+    roomBeams.applyQuality(preset);
+    roomDust.setCount(preset.dust);
+  }, { immediate: true });
   // The balcony and the stair up to it: the flight climbs away from the back
   // wall toward the shelves, turning left onto a deck that runs to the door
   // wall and then back along it over the door. Built here because it is
@@ -506,14 +542,14 @@ let regrowFoliage = () => {};
   indoorGround = mezzanine.ground;
   cameraModes.setGround(indoorGround);
 
-  // The shelves built into the +Z wall, up to whatever head room the balcony
-  // over them leaves.
+  // The shelves built into the +Z wall, floor to balcony: the head of the run
+  // meets the underside of the deck over it, however high that stands.
   wallShelf = addWallShelf(scene, {
     minX: shelvedFrom,
     maxX: footprint.max.x - WALL_SHELF_END_GAP,
     wallZ: footprint.max.z,
     floorY: walkable.min.y,
-    height: Math.min(WALL_SHELF_HEIGHT, mezzanine.underY - walkable.min.y),
+    height: mezzanine.underY - walkable.min.y,
     material: surfaces.pine,
   });
   // And the same run again upstairs, standing on the balcony that crosses the
@@ -634,6 +670,17 @@ let regrowFoliage = () => {};
   // Back in from outside, it is taken again if the walls changed while you were out.
   watch(() => world.place, (place) => {
     if (place === 'room') environment.refreshRoom({ onlyIfOwed: true });
+  });
+
+  // The time of day moves the sun through the windows at once, and the
+  // picture the room is lit by follows once the slider has stopped -- taking
+  // it on every step of a drag would stall the frame each time.
+  const RELIGHT_AFTER = 400; // ms
+  let relight = null;
+  watch(() => settings.outside.timeOfDay, () => {
+    roomDaylight.refresh();
+    clearTimeout(relight);
+    relight = setTimeout(() => environment.refreshRoom(), RELIGHT_AFTER);
   });
 
   // Start on your feet between the coffee table and the desk, facing the
@@ -1083,6 +1130,12 @@ const mezzaninePanel = createMezzaninePanel({
   settle: () => {
     regrowFoliage();
     environment.refreshRoom?.();
+  },
+  // And the room's daylight, which the same overlay tunes.
+  daylight: {
+    values: ROOM_DAYLIGHT,
+    apply: () => roomDaylight?.refresh(),
+    settle: () => environment.refreshRoom?.(),
   },
 });
 
@@ -1724,8 +1777,13 @@ renderer.setAnimationLoop(() => {
   shelfRows.update(dt); // the books filed on the walls draw out under the cursor too
   bookCarry.update(dt); // posed from the camera too
   instructionCard?.update(dt); // also posed from the camera, so also after it has moved
-  // Outside draws through its own fog and exposure chain (scene/outside/outdoorPost.js).
-  if (!outside?.render(dt)) renderer.render(scene, camera);
+  // Outside draws through its own fog and exposure chain (scene/outside/outdoorPost.js);
+  // the room through its sunbeams, when the sun is in it (scene/inside/roomBeams.js).
+  roomDust?.update(dt, renderer, camera);
+  if (!outside?.render(dt)) {
+    if (roomBeams) roomBeams.render(dt);
+    else renderer.render(scene, camera);
+  }
   debugLabels.update(indoors && debugShown);
   anglePanel.update(indoors && debugShown);
   outdoorPanel.update(anglePanel.visible && debugShown);

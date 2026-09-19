@@ -73,6 +73,41 @@ const OVERCAST_SUN_CUT = 0.9;
 // How strongly the captured sky lights the scene.
 const SKY_LIGHT_INTENSITY = 0.5;
 
+// How overcast the sky is, from how much of it the clouds cover: none of it
+// below OVERCAST_FROM -- a sunny day with clouds in it -- and a full grey lid
+// by OVERCAST_FULL.
+const OVERCAST_FROM = 0.6;
+const OVERCAST_FULL = 0.95;
+
+/**
+ * How overcast (0..1) a cloud coverage (0..1) makes the sky. Outside reads
+ * the coverage off its clouds (outside.js); the room, whose windows look out
+ * on the same sky, reads it off their settings (scene/inside/roomDaylight.js).
+ */
+export function overcastFor(coverage) {
+  return THREE.MathUtils.smoothstep(coverage, OVERCAST_FROM, OVERCAST_FULL);
+}
+
+/**
+ * The sun's light at an elevation (degrees) under an overcast (0..1): the
+ * colour it has come through the air as, written into `colour`, and the share
+ * of its full strength left -- warmer and dimmer toward the horizon, gone
+ * below it, and cut by cloud. The one rule for every light that stands in for
+ * the sun, outside and through the room's windows.
+ *
+ * @param {number} elevation
+ * @param {number} overcast
+ * @param {THREE.Color} colour
+ * @returns {number}
+ */
+export function sunShade(elevation, overcast, colour) {
+  const warm = 1 - THREE.MathUtils.smoothstep(elevation, SUN_WARM_BELOW[0], SUN_WARM_BELOW[1]);
+  colour.set(SUN_COLOR).lerp(_lowColour, warm);
+  return THREE.MathUtils.smoothstep(elevation, SUN_FADE_BELOW[0], SUN_FADE_BELOW[1])
+    * (1 - OVERCAST_SUN_CUT * overcast);
+}
+const _lowColour = new THREE.Color(SUN_LOW_COLOR);
+
 /**
  * @param {object} opts
  * @param {THREE.Scene} opts.scene
@@ -202,14 +237,8 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   // The sun's brightness as set -- by default, or by the debug panel -- before
   // the horizon takes its share (setSunAngles).
   let sunIntensity = SUN_INTENSITY;
-  const fullColour = new THREE.Color(SUN_COLOR);
-  const lowColour = new THREE.Color(SUN_LOW_COLOR);
   function shadeSun() {
-    const { elevation } = sunAngles;
-    const warm = 1 - THREE.MathUtils.smoothstep(elevation, SUN_WARM_BELOW[0], SUN_WARM_BELOW[1]);
-    sun.color.copy(fullColour).lerp(lowColour, warm);
-    sun.intensity = sunIntensity * THREE.MathUtils.smoothstep(elevation, SUN_FADE_BELOW[0], SUN_FADE_BELOW[1])
-      * (1 - OVERCAST_SUN_CUT * overcast);
+    sun.intensity = sunIntensity * sunShade(sunAngles.elevation, overcast, sun.color);
   }
 
   /** Move the sun: the sky's disc, the light, and sunDirection all follow. */

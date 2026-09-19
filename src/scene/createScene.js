@@ -121,6 +121,12 @@ function createEnvironment(scene, renderer) {
       scene.environment = current.radiance;
     } else {
       cubeCamera.position.copy(room.at);
+      // Nothing moves between the twelve faces of the two bounces, so the
+      // shadow maps are drawn for the first and kept for the rest -- the
+      // lamp's alone is six passes each time.
+      const shadowsAuto = renderer.shadowMap.autoUpdate;
+      renderer.shadowMap.autoUpdate = false;
+      renderer.shadowMap.needsUpdate = true;
       let light = null;
       for (let bounce = 0; bounce < ROOM_BOUNCES; bounce++) {
         scene.environment = light?.texture ?? current.radiance;
@@ -129,6 +135,7 @@ function createEnvironment(scene, renderer) {
         light?.dispose();
         light = next;
       }
+      renderer.shadowMap.autoUpdate = shadowsAuto;
       roomLight = light;
       scene.environment = roomLight.texture;
     }

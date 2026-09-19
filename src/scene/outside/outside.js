@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {
   loadHeightmap, createTerrain, terrainHeightAt, disposeTerrain, sampleTerrain,
 } from './terrain.js';
-import { addOutdoorLight } from './outdoorLight.js';
+import { addOutdoorLight, overcastFor } from './outdoorLight.js';
 import { createOutdoorPost } from './outdoorPost.js';
 import { loadingScreen } from '../../ui/loadingScreen.js';
 import { createGrass } from './grass.js';
@@ -181,20 +181,18 @@ export function createOutside({
   watch(() => settings.outside.timeOfDay, () => applyTimeOfDay());
 
   // --- overcast ---------------------------------------------------------------
-  // The light under a sky that is mostly cloud: past OVERCAST_FROM coverage
+  // The light under a sky that is mostly cloud: past a coverage
   // the sky greys, the sun dims and the glow toward it goes, reaching a full
-  // grey lid by OVERCAST_FULL (outdoorLight.js's setOvercast). Below that,
+  // grey lid (outdoorLight.js's overcastFor, setOvercast). Below that,
   // however many clouds there are, it is a sunny day with clouds in it. Read
   // off the clouds' own coverage every frame and applied when it moves -- the
   // sky light recaptured as the time of day's is, a few times a second at most.
-  const OVERCAST_FROM = 0.6;
-  const OVERCAST_FULL = 0.95;
   let overcastApplied = -1;
   function applyOvercast({ recapture = true } = {}) {
     if (!daylight || !post) return;
     const clouds = post.clouds;
     const amount = clouds.enabled
-      ? THREE.MathUtils.smoothstep(clouds.material.uniforms.coverage.value, OVERCAST_FROM, OVERCAST_FULL)
+      ? overcastFor(clouds.material.uniforms.coverage.value)
       : 0;
     if (Math.abs(amount - overcastApplied) < 0.002) return;
     overcastApplied = amount;

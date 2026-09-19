@@ -31,6 +31,9 @@ import { settings } from './settings.js';
  *   pageAnisotropy    how sharp a page stays seen at a slant
  *                     (book/reader/bookContent.js) -- for pages as they are
  *                     next put on the book
+ *   beamSteps         how finely the room's sunbeams are walked -- 0 for
+ *                     none (scene/inside/roomBeams.js)
+ *   dust              how many specks of dust drift through them
  *
  * 'high' is what everything was before the presets existed.
  */
@@ -54,6 +57,8 @@ export const QUALITY = {
     pageScale: 1,
     pageAnisotropy: 1,
     foliageDensity: 0.4,
+    beamSteps: 0,
+    dust: 0,
   },
   low: {
     label: 'Low',
@@ -71,6 +76,8 @@ export const QUALITY = {
     pageScale: 1.25,
     pageAnisotropy: 2,
     foliageDensity: 0.6,
+    beamSteps: 16,
+    dust: 800,
   },
   medium: {
     label: 'Medium',
@@ -88,6 +95,8 @@ export const QUALITY = {
     pageScale: 1.5,
     pageAnisotropy: 4,
     foliageDensity: 0.8,
+    beamSteps: 24,
+    dust: 1500,
   },
   high: {
     label: 'High',
@@ -105,6 +114,8 @@ export const QUALITY = {
     pageScale: 1.5,
     pageAnisotropy: 8,
     foliageDensity: 1,
+    beamSteps: 32,
+    dust: 2500,
   },
   highest: {
     label: 'Highest',
@@ -122,6 +133,8 @@ export const QUALITY = {
     pageScale: 2,
     pageAnisotropy: 16,
     foliageDensity: 1,
+    beamSteps: 48,
+    dust: 4000,
   },
 };
 
