@@ -64,7 +64,7 @@ const FOG = {
   startDistance: 40, // metres of clear air in front of the camera
   maxOpacity: 1,
   color: 0xffffff, // a tint on the sky's own colour
-  brightness: 1, // times the sky's brightness
+  brightness: 0.4, // times the sky's brightness
   skyBlur: 3, // mip level of the sky cubemap read: 3 is 16 px a face, soft
   // Toward the sun: its colour, how strongly, and how tight a glow.
   inscatteringColor: 0xffe2b8,
@@ -205,6 +205,7 @@ class HeightFogPass extends Pass {
     this.clouds = clouds;
     this.brightness = FOG.brightness;
     this.inscatteringBrightness = FOG.inscatteringBrightness;
+    this.overcast = 0;
   }
 
   /** The fog colour's brightness, in scene light units. */
@@ -220,10 +221,20 @@ class HeightFogPass extends Pass {
   get fogEnabled() { return this.material.uniforms.fogOn.value > 0.5; }
   set fogEnabled(on) { this.material.uniforms.fogOn.value = on ? 1 : 0; }
 
-  /** How bright the glow toward the sun is. */
+  /** How bright the glow toward the sun is -- under a clear sky. */
   setInscatteringBrightness(value) {
     this.inscatteringBrightness = value;
-    this.material.uniforms.inscatterColor.value.set(FOG.inscatteringColor).multiplyScalar(value);
+    this.material.uniforms.inscatterColor.value.set(FOG.inscatteringColor)
+      .multiplyScalar(value * (1 - this.overcast));
+  }
+
+  /**
+   * How overcast it is, 0..1: the glow toward the sun goes with the sun,
+   * since under a grey lid the light comes from everywhere at once.
+   */
+  setOvercast(amount) {
+    this.overcast = amount;
+    this.setInscatteringBrightness(this.inscatteringBrightness);
   }
 
   render(renderer, writeBuffer, readBuffer) {

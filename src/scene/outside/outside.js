@@ -177,6 +177,29 @@ export function createOutside({
   }
   watch(() => settings.outside.timeOfDay, () => applyTimeOfDay());
 
+  // --- overcast ---------------------------------------------------------------
+  // The light under a sky that is mostly cloud: past OVERCAST_FROM coverage
+  // the sky greys, the sun dims and the glow toward it goes, reaching a full
+  // grey lid by OVERCAST_FULL (outdoorLight.js's setOvercast). Below that,
+  // however many clouds there are, it is a sunny day with clouds in it. Read
+  // off the clouds' own coverage every frame and applied when it moves -- the
+  // sky light recaptured as the time of day's is, a few times a second at most.
+  const OVERCAST_FROM = 0.6;
+  const OVERCAST_FULL = 0.95;
+  let overcastApplied = -1;
+  function applyOvercast({ recapture = true } = {}) {
+    if (!daylight || !post) return;
+    const clouds = post.clouds;
+    const amount = clouds.enabled
+      ? THREE.MathUtils.smoothstep(clouds.material.uniforms.coverage.value, OVERCAST_FROM, OVERCAST_FULL)
+      : 0;
+    if (Math.abs(amount - overcastApplied) < 0.002) return;
+    overcastApplied = amount;
+    daylight.setOvercast(amount);
+    post.fog.setOvercast(amount);
+    if (recapture) recaptureSky();
+  }
+
   // The room's scene-wide settings, taken as you leave and restored as you
   // come back.
   let insideLook = null;
@@ -557,6 +580,10 @@ export function createOutside({
         distant: { ...range, sky: daylight.sky },
       });
       post.applyQuality(qualityPreset());
+      // As overcast as the clouds say, before anything is compiled or drawn.
+      overcastApplied = -1;
+      applyOvercast({ recapture: false });
+      daylight.captureSkyLight();
 
       // Everything sunlit takes the clouds' shadows (cloudShadows.js):
       // before the compile below, so it is compiled with them.
@@ -617,6 +644,7 @@ export function createOutside({
     render(dt) {
       if (state !== 'outside' || !post) return false;
       followBook(dt);
+      applyOvercast();
       // Anything that has come into the scene since, into the cloud shadows
       // too. Materials already done are skipped, so this is a walk and
       // nothing more.

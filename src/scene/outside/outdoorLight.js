@@ -53,6 +53,23 @@ const ATMOSPHERE = {
   mieDirectionalG: 0.8,
 };
 
+// UNDER AN OVERCAST the sky is one grey lid: no blue left in it, bright all
+// over rather than round the sun, and the sun itself only a paler patch of it.
+// setOvercast(0..1) blends the atmosphere above toward this -- haze
+// everywhere, the blue scattered out -- and takes the sun down with it. Every
+// consumer of the sky's light follows from the recapture that comes after:
+// the sky light, the fog's colour, the clouds' own ambient, the mountains'
+// haze. How overcast it is comes from the clouds (outside.js).
+const OVERCAST_ATMOSPHERE = {
+  turbidity: 18,
+  rayleigh: 0.2,
+  mieCoefficient: 0.03,
+  mieDirectionalG: 0.35,
+};
+// The share of the sun's direct light an overcast takes away: not all of it,
+// or a total overcast would lose all sense of where the sun is.
+const OVERCAST_SUN_CUT = 0.9;
+
 // How strongly the captured sky lights the scene.
 const SKY_LIGHT_INTENSITY = 0.5;
 
@@ -85,10 +102,16 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   // there); the scale only has to keep the camera inside the box.
   sky.scale.setScalar(10000);
   const uniforms = sky.material.uniforms;
-  uniforms.turbidity.value = ATMOSPHERE.turbidity;
-  uniforms.rayleigh.value = ATMOSPHERE.rayleigh;
-  uniforms.mieCoefficient.value = ATMOSPHERE.mieCoefficient;
-  uniforms.mieDirectionalG.value = ATMOSPHERE.mieDirectionalG;
+  // The clear sky's atmosphere, as set -- by default or from the debug panel
+  // -- before any overcast is blended over it (applyAtmosphere).
+  const atmosphere = { ...ATMOSPHERE };
+  let overcast = 0;
+  function applyAtmosphere() {
+    for (const name of Object.keys(ATMOSPHERE)) {
+      uniforms[name].value = THREE.MathUtils.lerp(atmosphere[name], OVERCAST_ATMOSPHERE[name], overcast);
+    }
+  }
+  applyAtmosphere();
   // The Sky has flat painted clouds of its own; those are left for the
   // cloud step.
   uniforms.cloudCoverage.value = 0;
@@ -183,7 +206,8 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
     const { elevation } = sunAngles;
     const warm = 1 - THREE.MathUtils.smoothstep(elevation, SUN_WARM_BELOW[0], SUN_WARM_BELOW[1]);
     sun.color.copy(fullColour).lerp(lowColour, warm);
-    sun.intensity = sunIntensity * THREE.MathUtils.smoothstep(elevation, SUN_FADE_BELOW[0], SUN_FADE_BELOW[1]);
+    sun.intensity = sunIntensity * THREE.MathUtils.smoothstep(elevation, SUN_FADE_BELOW[0], SUN_FADE_BELOW[1])
+      * (1 - OVERCAST_SUN_CUT * overcast);
   }
 
   /** Move the sun: the sky's disc, the light, and sunDirection all follow. */
@@ -212,6 +236,26 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
      * The sun's full brightness. Set this rather than sun.intensity, which
      * is this taken down near the horizon and set again whenever the sun moves.
      */
+    /**
+     * The clear sky's atmosphere: turbidity, rayleigh, mieCoefficient,
+     * mieDirectionalG. Change one, then applyAtmosphere() and recapture --
+     * the sky drawn is this with the overcast blended over it.
+     */
+    atmosphere,
+    applyAtmosphere,
+
+    /** How overcast it is, 0 clear .. 1 a grey lid. */
+    get overcast() { return overcast; },
+    /**
+     * Grey the sky and dim the sun by `amount` (0..1). The sky light is a
+     * capture, so it is left for the caller to take again.
+     */
+    setOvercast(amount) {
+      overcast = THREE.MathUtils.clamp(amount, 0, 1);
+      applyAtmosphere();
+      shadeSun();
+    },
+
     get sunIntensity() { return sunIntensity; },
     set sunIntensity(value) {
       sunIntensity = value;

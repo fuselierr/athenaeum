@@ -342,26 +342,30 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     });
     slider('Turbidity', {
       min: 0, max: 20, step: 0.1,
-      get: () => skyUniforms.turbidity.value,
-      set: (v) => { skyUniforms.turbidity.value = v; },
+      // The clear sky's; any overcast is blended over it (outdoorLight.js).
+      get: () => daylight.atmosphere.turbidity,
+      set: (v) => { daylight.atmosphere.turbidity = v; daylight.applyAtmosphere(); },
       settle: recapture,
     });
     slider('Rayleigh', {
       min: 0, max: 4, step: 0.01,
-      get: () => skyUniforms.rayleigh.value,
-      set: (v) => { skyUniforms.rayleigh.value = v; },
+      // The clear sky's; any overcast is blended over it (outdoorLight.js).
+      get: () => daylight.atmosphere.rayleigh,
+      set: (v) => { daylight.atmosphere.rayleigh = v; daylight.applyAtmosphere(); },
       settle: recapture,
     });
     slider('Mie coefficient', {
       min: 0, max: 0.1, step: 0.001,
-      get: () => skyUniforms.mieCoefficient.value,
-      set: (v) => { skyUniforms.mieCoefficient.value = v; },
+      // The clear sky's; any overcast is blended over it (outdoorLight.js).
+      get: () => daylight.atmosphere.mieCoefficient,
+      set: (v) => { daylight.atmosphere.mieCoefficient = v; daylight.applyAtmosphere(); },
       settle: recapture,
     });
     slider('Mie directional G', {
       min: 0, max: 0.999, step: 0.001,
-      get: () => skyUniforms.mieDirectionalG.value,
-      set: (v) => { skyUniforms.mieDirectionalG.value = v; },
+      // The clear sky's; any overcast is blended over it (outdoorLight.js).
+      get: () => daylight.atmosphere.mieDirectionalG,
+      set: (v) => { daylight.atmosphere.mieDirectionalG = v; daylight.applyAtmosphere(); },
       settle: recapture,
     });
 
