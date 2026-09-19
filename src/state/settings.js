@@ -42,6 +42,12 @@ export const settings = reactive({
   scene: {
     background: null, // a background id; null means the one built in
   },
+  // Out of doors.
+  outside: {
+    // Hours, local solar time: where the sun is (scene/outside/sunPath.js).
+    // 13.4 is the light the meadow was tuned in -- sunPath's DEFAULT_TIME.
+    timeOfDay: 13.4,
+  },
   // The shelf in the room. Not a look but an ORDER: how the books stand on it
   // (scene/inside/shelfBooks.js's arrange).
   shelf: {

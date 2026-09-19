@@ -34,6 +34,15 @@ const SUN_ELEVATION = 55;
 const SUN_AZIMUTH = 255;
 const SUN_COLOR = 0xfff8f0;
 const SUN_INTENSITY = 12;
+// Low in the sky the sun's light has come through far more air, which takes
+// the blue out of it and much of its strength: the colour it warms toward,
+// and the elevations (degrees) over which it does -- fully warm at the first,
+// its own colour from the second up.
+const SUN_LOW_COLOR = 0xff9a50;
+const SUN_WARM_BELOW = [2, 20];
+// And it fades out as it reaches the horizon, rather than lighting the land
+// at full strength from below the hills.
+const SUN_FADE_BELOW = [-1, 6];
 
 // The atmosphere. Turbidity is haze (2 very clear, 10 hazy); rayleigh is
 // the blue of clean air; the Mie terms are the glow around the sun.
@@ -165,6 +174,18 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
   sun.shadow.needsUpdate = true;
   scene.add(sun);
 
+  // The sun's brightness as set -- by default, or by the debug panel -- before
+  // the horizon takes its share (setSunAngles).
+  let sunIntensity = SUN_INTENSITY;
+  const fullColour = new THREE.Color(SUN_COLOR);
+  const lowColour = new THREE.Color(SUN_LOW_COLOR);
+  function shadeSun() {
+    const { elevation } = sunAngles;
+    const warm = 1 - THREE.MathUtils.smoothstep(elevation, SUN_WARM_BELOW[0], SUN_WARM_BELOW[1]);
+    sun.color.copy(fullColour).lerp(lowColour, warm);
+    sun.intensity = sunIntensity * THREE.MathUtils.smoothstep(elevation, SUN_FADE_BELOW[0], SUN_FADE_BELOW[1]);
+  }
+
   /** Move the sun: the sky's disc, the light, and sunDirection all follow. */
   function setSunAngles(elevation, azimuth) {
     sunAngles.elevation = elevation;
@@ -177,7 +198,9 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
     uniforms.sunPosition.value.copy(sunDirection);
     sun.position.copy(centre).addScaledVector(sunDirection, reach * 2);
     sun.shadow.needsUpdate = true;
+    shadeSun();
   }
+  shadeSun();
 
   // --- tone mapping ------------------------------------------------------------
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -185,6 +208,15 @@ export function addOutdoorLight({ scene, renderer, centre, reach }) {
 
   return {
     sky, sun, sunDirection, sunAngles, setSunAngles, captureSkyLight,
+    /**
+     * The sun's full brightness. Set this rather than sun.intensity, which
+     * is this taken down near the horizon and set again whenever the sun moves.
+     */
+    get sunIntensity() { return sunIntensity; },
+    set sunIntensity(value) {
+      sunIntensity = value;
+      shadeSun();
+    },
     skyTexture: skyTarget.texture,
     /** The sky light's current capture -- what scene.environment is, outside. */
     get skyLight() { return skyLight; },

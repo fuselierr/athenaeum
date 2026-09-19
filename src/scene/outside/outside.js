@@ -15,6 +15,7 @@ import { loadTree } from './tree.js';
 import { loadEggChair } from './eggChair.js';
 import { createFallingLeaves } from './fallingLeaves.js';
 import { shadeSceneWithClouds } from './cloudShadows.js';
+import { sunAt, TIME_RANGE } from './sunPath.js';
 import { world } from '../../state/world.js';
 import { watch } from 'vue';
 import { settings } from '../../state/settings.js';
@@ -148,6 +149,34 @@ export function createOutside({
   }
   watch(() => settings.graphics.quality, applyQuality);
 
+  // --- the time of day --------------------------------------------------------
+  // The sun put where the hour says (sunPath.js). Moving it is cheap -- the
+  // light, the sky's disc, one shadow-map redraw -- but the sky light is a
+  // capture of the whole sky, so while the slider is being dragged that is
+  // taken again at most a few times a second, and once more at the end.
+  const RECAPTURE_EVERY = 150; // ms
+  let recaptureTimer = null;
+  let lastRecapture = 0;
+  function recaptureSky() {
+    clearTimeout(recaptureTimer);
+    const wait = RECAPTURE_EVERY - (performance.now() - lastRecapture);
+    const take = () => {
+      recaptureTimer = null;
+      lastRecapture = performance.now();
+      daylight?.captureSkyLight();
+    };
+    if (wait <= 0) take();
+    else recaptureTimer = setTimeout(take, wait);
+  }
+  function applyTimeOfDay({ recapture = true } = {}) {
+    if (!daylight) return;
+    const hours = THREE.MathUtils.clamp(settings.outside.timeOfDay, TIME_RANGE[0], TIME_RANGE[1]);
+    const { elevation, azimuth } = sunAt(hours);
+    daylight.setSunAngles(elevation, azimuth);
+    if (recapture) recaptureSky();
+  }
+  watch(() => settings.outside.timeOfDay, () => applyTimeOfDay());
+
   // The room's scene-wide settings, taken as you leave and restored as you
   // come back.
   let insideLook = null;
@@ -260,6 +289,8 @@ export function createOutside({
    * back first -- the scene's environment is the sky light until then.
    */
   function unloadOutside() {
+    clearTimeout(recaptureTimer);
+    recaptureTimer = null;
     post?.dispose();
     daylight?.dispose();
     if (grass) {
@@ -494,6 +525,9 @@ export function createOutside({
       // is told where the sun is -- the light's own vector, which follows the
       // sun if it moves (scene/outside/tree.js).
       tree?.setSunDirection(daylight.sunDirection);
+      // At the hour the reader chose, and the sky light captured for it.
+      applyTimeOfDay({ recapture: false });
+      daylight.captureSkyLight();
       // The cloud noise is generated here, which takes a moment.
       loadingScreen.status('Gathering clouds…', 0.8, 0.88);
       await nextFrame();

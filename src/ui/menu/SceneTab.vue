@@ -4,6 +4,7 @@ import { settings } from '../../state/settings.js';
 import { ui } from '../../state/ui.js';
 import { world } from '../../state/world.js';
 import { BACKGROUNDS, DEFAULT_BACKGROUND } from '../../scene/inside/backgrounds.js';
+import { TIME_RANGE, clockTime } from '../../scene/outside/sunPath.js';
 
 /**
  * Where the reading happens: in the room or outside, and the room's
@@ -11,7 +12,10 @@ import { BACKGROUNDS, DEFAULT_BACKGROUND } from '../../scene/inside/backgrounds.
  *
  * Going somewhere closes the menu -- the point is to look at where you went.
  * The backdrops are only offered in the room: each one is the room's light as
- * well as its view, and outside the sky is both.
+ * well as its view, and outside the sky is both. Outside has its own light
+ * instead: the time of day, which puts the sun where the hour says
+ * (scene/outside/sunPath.js). It can be set from the room too, for the next
+ * time you go out.
  *
  * Loading is shown per card rather than as a global spinner: these are 4K
  * EXRs and the big ones take a moment, and the useful thing to know is
@@ -98,6 +102,25 @@ function go(place) {
         </button>
       </li>
     </ul>
+  </section>
+
+  <section class="menu-section">
+    <h3>Outside</h3>
+    <p class="menu-hint" style="margin-bottom: 12px;">
+      Where the sun is over the meadow, from just after sunrise to sunset<template
+        v-if="world.place !== 'outside'"> — for the next time you go out</template>.
+    </p>
+    <div class="menu-row">
+      <span class="label">Time of day</span>
+      <input
+        type="range"
+        :min="TIME_RANGE[0]"
+        :max="TIME_RANGE[1]"
+        step="0.05"
+        v-model.number="settings.outside.timeOfDay"
+      >
+      <span class="value">{{ clockTime(settings.outside.timeOfDay) }}</span>
+    </div>
   </section>
 
   <section class="menu-section">

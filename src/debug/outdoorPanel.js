@@ -193,6 +193,11 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
       get: () => grass.group.visible,
       set: (on) => { grass.group.visible = on; },
     });
+    slider('Shine (specular kept)', {
+      min: 0, max: 1, step: 0.01,
+      get: () => blades.grassSheen.value,
+      set: (v) => { blades.grassSheen.value = v; },
+    });
     // --- the wind -----------------------------------------------------------------
     // The noise field the meadow AND the tree lean in (scene/outside/wind.js):
     // one set of uniforms between them, so every slider here moves both.
@@ -367,8 +372,8 @@ export function createOutdoorPanel({ getOutside, renderer, scene }) {
     });
     slider('Intensity', {
       min: 0, max: 10, step: 0.05,
-      get: () => daylight.sun.intensity,
-      set: (v) => { daylight.sun.intensity = v; },
+      get: () => daylight.sunIntensity,
+      set: (v) => { daylight.sunIntensity = v; },
     });
     section('Sun shadows', {
       get: () => daylight.sun.castShadow,

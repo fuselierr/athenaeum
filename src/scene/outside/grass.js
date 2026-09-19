@@ -123,6 +123,13 @@ const GRASS = {
   tipColourShade: 0x508a1d,
   colourPatch: 550, // metres across one patch of colour
   groundInfluence: 0.05, // how much of the ground texture shows in a blade, 0..1
+  // How much of its specular light -- the sun's highlight and the sky's
+  // reflection -- a blade keeps, 0..1. Very little: the blades are lit with
+  // the ground's upward normal, so looking across the field toward the sun
+  // every one of them sat at a grazing angle to the light, and at grazing
+  // angles the Fresnel term turns even a rough surface into a sheen. A
+  // meadow of matte leaves in a thousand directions has almost none.
+  sheen: 0.12,
   windStrength: 0.6, // how far a tip leans, as a fraction of its height
   // The wind itself is the meadow's, not the grass's: the tree standing in
   // the field leans in the same gust (scene/outside/wind.js).
@@ -287,6 +294,19 @@ function cellTurn(cx, cz) {
  *   chunkCount: number, drawnChunks: number, maxFadeEnd: number, showFlowers: boolean,
  *   update(dt: number): void, dispose(): void }}
  */
+/**
+ * Take a blade's shine down to GRASS.sheen: the specular it gathered, from the
+ * sun and from the sky, scaled once three has added up every light -- after
+ * lights_fragment_end, so the cloud shadows' patch to the lights before it
+ * (cloudShadows.js) is untouched.
+ */
+function dullSheen(fragmentShader) {
+  return `uniform float grassSheen;\n${fragmentShader}`
+    .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+      reflectedLight.directSpecular *= grassSheen;
+      reflectedLight.indirectSpecular *= grassSheen;`);
+}
+
 export function createGrass({
   terrain, terrainWidth, segments, camera, parting = () => 0, clumps, wind,
 }) {
@@ -446,6 +466,7 @@ export function createGrass({
     grassRootColour: { value: new THREE.Color(GRASS.rootColour) },
     grassTipColour: { value: new THREE.Color(GRASS.tipColour) },
     grassGroundInfluence: { value: GRASS.groundInfluence },
+    grassSheen: { value: GRASS.sheen },
     grassSurface: { value: surfaceTexture },
     grassTerrainOffset: { value: new THREE.Vector2(terrain.position.x, terrain.position.z) },
     grassTerrainY: { value: terrain.position.y },
@@ -545,7 +566,7 @@ export function createGrass({
         // over tens of metres.
         vGrassPatch = textureLod(windNoise, root.xz / grassColourPatch, 0.0).r;`);
 
-    shader.fragmentShader = shader.fragmentShader
+    shader.fragmentShader = dullSheen(shader.fragmentShader)
       .replace('#include <common>', `#include <common>
         uniform sampler2D grassMap;
         uniform sampler2D grassBlades;
@@ -779,7 +800,7 @@ export function createGrass({
         vFlowerSpin = flowerData.z;
         vFlowerTint = mix(0.85, 1.0, fract(flowerData.z * 3.71));`);
 
-    shader.fragmentShader = shader.fragmentShader
+    shader.fragmentShader = dullSheen(shader.fragmentShader)
       .replace('#include <common>', `#include <common>
         uniform vec3 grassRootColour;
         uniform float flowerVibrance;
