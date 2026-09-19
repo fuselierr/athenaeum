@@ -1,7 +1,14 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /**
  * The room the desk is standing in: four walls, a ceiling, and its windows.
+ *
+ * THE WINDOWS ARE ARCHED, AND COME IN ROWS. Where the room asks for a window,
+ * it gets a row of round-arched ones -- tall, with a semicircle for a head --
+ * spanning the width a single window would have had, with plain wall
+ * between them. Each is its own hole in the wall, with its own casing,
+ * glazing bars and a fanlight in the arch.
  *
  * BUILT ON THE FLOOR, literally. scene/inside/floor.js already sizes a slab from
  * whatever has to stand on it, and cameraModes walks you around inside that
@@ -49,6 +56,9 @@ const FRAME_DEPTH = 0.11; // how far the casing stands proud of the wall
 const FRAME_WIDTH = 0.075;
 const MULLION_WIDTH = 0.045;
 
+/** The casing's size, for anything that grows on it (scene/inside/foliage.js). */
+export const WINDOW_FRAME = { width: FRAME_WIDTH, depth: FRAME_DEPTH };
+
 /**
  * How far the sill stands out into the room. The deepest thing on the
  * window wall, and therefore the clearance anything standing against that
@@ -56,8 +66,20 @@ const MULLION_WIDTH = 0.045;
  * and a desk pushed right up to the plaster would have the sill over it.
  */
 export const WINDOW_SILL_PROJECTION = FRAME_DEPTH * 1.9;
-const PANE_COLUMNS = 3;
+// Each window in a row: panes across it, and up its straight part below the
+// arch. The arch itself is always one fanlight, split by bars fanning out
+// from its centre.
+const PANE_COLUMNS = 2;
 const PANE_ROWS = 2;
+
+// Arched windows in a row, where one wide window would otherwise be, and the
+// plain wall between two of them.
+const WINDOW_COUNT = 4;
+const PIER_WIDTH = 0.26; // metres
+// How far apart the bars fanning out across the arch are.
+const FAN_ANGLES = [Math.PI / 4, (3 * Math.PI) / 4];
+// Enough segments that an arch reads as a curve, not a polygon.
+const ARCH_SEGMENTS = 28;
 
 // A window with no light through it reads as a picture of a window. This
 // is a soft, warm key aimed in from outside; set it to 0 for geometry only.
@@ -80,10 +102,12 @@ const WINDOW_LIGHT_COLOR = 0xfff1d8;
  *   '+z' or '-z'. The scene puts it at '+x': the bookshelf stands at -X, so
  *   that is the wall opposite it, and the one the desk is pushed against.
  * @param {Array<{ side: string, sill?: number, focus?: THREE.Vector3,
- *   width?: number, maxWidth?: number, columns?: number, rows?: number,
- *   light?: number, shadows?: boolean }>|null} [opts.windows]  more than one
- *   window: one entry a wall, the first being the one `window` in the result
- *   refers to. `width` is the fraction of its wall the opening takes, `light`
+ *   width?: number, maxWidth?: number, count?: number, columns?: number,
+ *   rows?: number, light?: number, shadows?: boolean }>|null} [opts.windows]
+ *   more than one window: one entry a wall, the first being the one `window`
+ *   in the result refers to. `width` is the fraction of its wall the row of
+ *   arched windows takes, `count` how many there are in it, `columns` and
+ *   `rows` the panes in each one's straight part, `light`
  *   the brightness of the daylight through it (0 for none), and `shadows`
  *   whether that daylight casts -- worth turning off on a second one, which
  *   would double the shadow map otherwise. Without this, the single window
@@ -166,6 +190,19 @@ export function addRoom(scene, floor, {
     );
     const opening = { left: offset - width / 2, right: offset + width / 2, sill: bottom, head };
 
+    // The row of arched windows filling that opening: equal widths, a pier
+    // of wall between each two, every one springing its arch at the same
+    // height so the tops of the semicircles meet the opening's head.
+    const count = Math.max(1, Math.round(want.count ?? WINDOW_COUNT));
+    const pier = count > 1 ? Math.min(PIER_WIDTH, width * 0.08) : 0;
+    const each = (width - pier * (count - 1)) / count;
+    const radius = each / 2;
+    const spring = Math.max(bottom + 0.2, head - radius);
+    const arches = Array.from({ length: count }, (_, i) => {
+      const left = opening.left + i * (each + pier);
+      return { left, right: left + each, sill: bottom, spring, radius };
+    });
+
     // The middle of the glass, in WORLD space, for anything outside this file
     // that wants to look out of it. `opening` is in the wall's own
     // coordinates; undoing the offset's sign gives back the world position
@@ -177,17 +214,18 @@ export function addRoom(scene, floor, {
       plan.axis === 'z' ? along : plan.at[1],
     );
 
-    openings[id] = opening;
+    openings[id] = arches;
     built.push({
       id,
       plan,
       opening,
+      arches,
       focus: towards,
       columns: want.columns ?? PANE_COLUMNS,
       rows: want.rows ?? PANE_ROWS,
       intensity: want.light ?? WINDOW_LIGHT_INTENSITY,
       shadows: want.shadows ?? true,
-      described: { side: id, ...opening, width, centre },
+      described: { side: id, ...opening, width, centre, arches },
     });
   }
 
@@ -253,7 +291,7 @@ export function addRoom(scene, floor, {
   // local frame -- x along the wall, y up, +z into the room -- and none of
   // it has to know which way that wall ended up facing.
   for (const pane of built) {
-    walls[pane.id].add(buildWindowFrame(pane.opening, pane.columns, pane.rows));
+    walls[pane.id].add(buildWindowRow(pane.arches, pane.columns, pane.rows));
   }
 
   // The door, likewise a child of its wall -- so it goes with the wall when
@@ -307,14 +345,31 @@ export function addRoom(scene, floor, {
 }
 
 /**
- * A wall as a flat shape, with the window cut out of it as a hole rather
- * than assembled from four pieces around a gap -- one surface means one
- * plane, and no seam to catch the light along the head of the opening.
+ * The outline of one arched window, in wall-local space: up one side, over
+ * the semicircle, and down the other. The hole in the wall and the pane of
+ * glass in it are both this.
+ */
+function archPath(arch, path = new THREE.Path()) {
+  const centreX = (arch.left + arch.right) / 2;
+  path.moveTo(arch.left, arch.sill);
+  path.lineTo(arch.left, arch.spring);
+  // From the left springing point over the top to the right one: clockwise,
+  // through the apex at a quarter turn.
+  path.absarc(centreX, arch.spring, arch.radius, Math.PI, 0, true);
+  path.lineTo(arch.right, arch.sill);
+  path.closePath();
+  return path;
+}
+
+/**
+ * A wall as a flat shape, with its windows cut out of it as holes rather
+ * than assembled from pieces around the gaps -- one surface means one
+ * plane, and no seam to catch the light along the head of an opening.
  *
  * A door is not a hole: it reaches the floor, and a hole touching the
  * outline does not triangulate. It is a notch in the outline instead.
  */
-function wallGeometry(span, height, opening, door = null) {
+function wallGeometry(span, height, arches, door = null) {
   const half = span / 2;
   const shape = new THREE.Shape();
   shape.moveTo(-half, 0);
@@ -329,70 +384,44 @@ function wallGeometry(span, height, opening, door = null) {
   shape.lineTo(-half, height);
   shape.closePath();
 
-  if (opening) {
-    const hole = new THREE.Path();
-    hole.moveTo(opening.left, opening.sill);
-    hole.lineTo(opening.left, opening.head);
-    hole.lineTo(opening.right, opening.head);
-    hole.lineTo(opening.right, opening.sill);
-    hole.closePath();
-    shape.holes.push(hole);
-  }
+  for (const arch of arches ?? []) shape.holes.push(archPath(arch));
 
-  return new THREE.ShapeGeometry(shape);
+  return new THREE.ShapeGeometry(shape, ARCH_SEGMENTS);
 }
 
-/** Casing, sill, glazing bars and a pane of glass, in wall-local space. */
-function buildWindowFrame(opening, columns = PANE_COLUMNS, rows = PANE_ROWS) {
+/**
+ * A row of arched windows -- casings, sills, glazing bars and glass -- in
+ * wall-local space.
+ *
+ * ONE MESH OF FRAME, ONE OF GLASS, for the whole row. Four windows of a dozen
+ * pieces each would be fifty draw calls for a wall; every piece is painted
+ * the same, so they are merged into one, and the panes likewise.
+ */
+function buildWindowRow(arches, columns = PANE_COLUMNS, rows = PANE_ROWS) {
   const group = new THREE.Group();
   group.name = 'window';
 
-  const width = opening.right - opening.left;
-  const height = opening.head - opening.sill;
-  const centreX = (opening.left + opening.right) / 2;
-  const centreY = (opening.sill + opening.head) / 2;
+  const frame = [];
+  const panes = [];
+  for (const arch of arches) buildArch(arch, columns, rows, frame, panes);
 
-  const painted = new THREE.MeshStandardMaterial({
-    color: FRAME_COLOR, roughness: 0.55, metalness: 0.02,
-  });
-
-  function piece(w, h, d, x, y, z, name) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), painted);
-    mesh.name = name;
-    mesh.position.set(x, y, z);
-    // The casing is the one thing in the room that should cast: bars
-    // throwing their shadow across the desk is the whole point of a window.
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-    return mesh;
-  }
-
-  const outerHalf = width / 2 + FRAME_WIDTH / 2;
-  piece(width + FRAME_WIDTH * 2, FRAME_WIDTH, FRAME_DEPTH,
-    centreX, opening.head + FRAME_WIDTH / 2, FRAME_DEPTH / 2, 'head');
-  piece(FRAME_WIDTH, height + FRAME_WIDTH * 2, FRAME_DEPTH,
-    centreX - outerHalf, centreY, FRAME_DEPTH / 2, 'jambLeft');
-  piece(FRAME_WIDTH, height + FRAME_WIDTH * 2, FRAME_DEPTH,
-    centreX + outerHalf, centreY, FRAME_DEPTH / 2, 'jambRight');
-  // The sill is deeper than the rest of the casing, the way a real one is.
-  piece(width + FRAME_WIDTH * 2, FRAME_WIDTH, WINDOW_SILL_PROJECTION,
-    centreX, opening.sill - FRAME_WIDTH / 2, WINDOW_SILL_PROJECTION / 2, 'sill');
-
-  for (let i = 1; i < columns; i++) {
-    piece(MULLION_WIDTH, height, MULLION_WIDTH,
-      opening.left + (width * i) / columns, centreY, MULLION_WIDTH / 2, `mullion${i}`);
-  }
-  for (let j = 1; j < rows; j++) {
-    piece(width, MULLION_WIDTH, MULLION_WIDTH,
-      centreX, opening.sill + (height * j) / rows, MULLION_WIDTH / 2, `transom${j}`);
-  }
+  const painted = new THREE.Mesh(
+    mergeGeometries(frame),
+    new THREE.MeshStandardMaterial({ color: FRAME_COLOR, roughness: 0.55, metalness: 0.02 }),
+  );
+  painted.name = 'frames';
+  // The casing is the one thing in the room that should cast: bars throwing
+  // their shadow across the desk is the whole point of a window.
+  painted.castShadow = true;
+  painted.receiveShadow = true;
+  group.add(painted);
+  for (const geometry of frame) geometry.dispose();
 
   // Glass, as a suggestion rather than a simulation: barely opaque, smooth
   // enough to catch the environment. Transmission would be truer and costs
   // a render target per frame for something you look straight through.
   const glass = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, height),
+    mergeGeometries(panes),
     new THREE.MeshStandardMaterial({
       color: GLASS_COLOR,
       roughness: 0.06,
@@ -404,12 +433,75 @@ function buildWindowFrame(opening, columns = PANE_COLUMNS, rows = PANE_ROWS) {
     }),
   );
   glass.name = 'glass';
-  glass.position.set(centreX, centreY, 0.004);
+  glass.position.z = 0.004;
   glass.castShadow = false;
   glass.receiveShadow = false;
   group.add(glass);
+  for (const geometry of panes) geometry.dispose();
 
   return group;
+}
+
+/**
+ * One arched window's pieces, as geometry already in place, onto `frame`
+ * (painted) and `panes` (glass). Unindexed, all of them, so they merge.
+ */
+function buildArch(arch, columns, rows, frame, panes) {
+  const width = arch.right - arch.left;
+  const centreX = (arch.left + arch.right) / 2;
+  const straight = arch.spring - arch.sill;
+
+  function box(w, h, d, x, y, z, turn = 0) {
+    const geometry = new THREE.BoxGeometry(w, h, d);
+    if (turn) geometry.rotateZ(turn);
+    geometry.translate(x, y, z);
+    frame.push(geometry.toNonIndexed());
+    geometry.dispose();
+  }
+
+  // Up the sides as far as the arch springs.
+  box(FRAME_WIDTH, straight, FRAME_DEPTH,
+    arch.left - FRAME_WIDTH / 2, arch.sill + straight / 2, FRAME_DEPTH / 2);
+  box(FRAME_WIDTH, straight, FRAME_DEPTH,
+    arch.right + FRAME_WIDTH / 2, arch.sill + straight / 2, FRAME_DEPTH / 2);
+  // The sill, deeper than the rest of the casing, the way a real one is.
+  box(width + FRAME_WIDTH * 2, FRAME_WIDTH, WINDOW_SILL_PROJECTION,
+    centreX, arch.sill - FRAME_WIDTH / 2, WINDOW_SILL_PROJECTION / 2);
+
+  // The casing round the arch: a half ring, standing out as far as the sides.
+  const band = new THREE.Shape();
+  band.absarc(0, 0, arch.radius + FRAME_WIDTH, 0, Math.PI, false);
+  band.absarc(0, 0, arch.radius, Math.PI, 0, true);
+  band.closePath();
+  const casing = new THREE.ExtrudeGeometry(band, {
+    depth: FRAME_DEPTH, bevelEnabled: false, curveSegments: ARCH_SEGMENTS,
+  });
+  casing.translate(centreX, arch.spring, 0);
+  frame.push(casing.index ? casing.toNonIndexed() : casing);
+
+  // Upright bars, each running on up into the arch as far as it reaches.
+  for (let i = 1; i < columns; i++) {
+    const x = arch.left + (width * i) / columns;
+    const rise = Math.sqrt(Math.max(0, arch.radius ** 2 - (x - centreX) ** 2));
+    const tall = straight + rise;
+    box(MULLION_WIDTH, tall, MULLION_WIDTH, x, arch.sill + tall / 2, MULLION_WIDTH / 2);
+  }
+  // Cross bars in the straight part, the last of them where the arch springs:
+  // the line the fanlight sits on.
+  for (let j = 1; j <= rows; j++) {
+    box(width, MULLION_WIDTH, MULLION_WIDTH,
+      centreX, arch.sill + (straight * j) / rows, MULLION_WIDTH / 2);
+  }
+  // And bars fanning out across the arch from the middle of its springing line.
+  for (const angle of FAN_ANGLES) {
+    box(arch.radius, MULLION_WIDTH, MULLION_WIDTH,
+      centreX + Math.cos(angle) * (arch.radius / 2),
+      arch.spring + Math.sin(angle) * (arch.radius / 2),
+      MULLION_WIDTH / 2, angle);
+  }
+
+  const pane = new THREE.ShapeGeometry(new THREE.Shape(archPath(arch).getPoints(ARCH_SEGMENTS)));
+  panes.push(pane.index ? pane.toNonIndexed() : pane);
 }
 
 /** A plain door, its casing and a knob, in wall-local space. */

@@ -238,27 +238,36 @@ export function addMezzanine(scene, {
 
   // Posts holding up the open edges.
   const postHeight = (deckY - DECK_THICKNESS) - floorY;
+  const postSpots = [];
   for (const [ax, az, bx, bz] of openEdges) {
     const length = Math.hypot(bx - ax, bz - az);
     const count = Math.max(1, Math.round(length / POST_SPACING));
     for (let i = 0; i <= count; i++) {
       const t = i / count;
-      pieces.push(box(
-        POST_SIZE, postHeight, POST_SIZE,
-        ax + (bx - ax) * t, floorY + postHeight / 2, az + (bz - az) * t,
-      ));
+      const at = { x: ax + (bx - ax) * t, z: az + (bz - az) * t };
+      // Where two runs meet there is one post, not two in the same place.
+      if (postSpots.some((p) => Math.hypot(p.x - at.x, p.z - at.z) < POST_SIZE)) continue;
+      postSpots.push(at);
+      pieces.push(box(POST_SIZE, postHeight, POST_SIZE, at.x, floorY + postHeight / 2, at.z));
     }
   }
 
-  // The flight's two handrails, curving up with it.
+  // The flight's two handrails, curving up with it -- kept, with which way is
+  // out over each (off the inside of the turn, or toward the wall it hugs),
+  // for anything that grows along them.
+  const stairRails = [];
   for (const r of [inner + RAIL_INSET, outer - RAIL_INSET]) {
     const points = [];
+    const outward = [];
+    const away = r < radius ? -1 : 1; // the inner rail's outside is toward the turn's centre
     for (let i = 0; i <= 24; i++) {
       const theta = (i / 24) * QUARTER;
       const at = alongArc(theta, r);
       points.push(new THREE.Vector3(at.x, climbAt(theta) + RAIL_HEIGHT, at.y));
+      outward.push(new THREE.Vector3(at.x - centreX, 0, at.y - centreZ).normalize().multiplyScalar(away));
     }
     pieces.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 48, RAIL_RADIUS, 6, false));
+    stairRails.push({ points, outward, inner: r < radius });
   }
 
   const structure = new THREE.Mesh(mergeGeometries(pieces, false), wood);
@@ -338,6 +347,30 @@ export function addMezzanine(scene, {
     /** The underside of the deck: the head room anything beneath it has. */
     underY: deckY - DECK_THICKNESS,
     edgeX,
+
+    // --- its shape, for anything dressing it (scene/inside/foliage.js) --------------
+    /** The two arms of the deck, as { minX, maxX, minZ, maxZ } in world space. */
+    arms: { long: longArm, door: doorArm },
+    /**
+     * The edges you could walk off, along the line of the rail, each with the
+     * way out over it: { ax, az, bx, bz, outward: [x, z] }.
+     */
+    edges: openEdges.map(([ax, az, bx, bz], i) => ({
+      ax, az, bx, bz, outward: i === 0 ? [1, 0] : [0, -1],
+    })),
+    /** How far out past the rail line the deck's own edge is. */
+    railInset: RAIL_INSET,
+    railHeight: RAIL_HEIGHT,
+    /** Where the posts under those edges stand, and how thick they are. */
+    posts: postSpots,
+    postSize: POST_SIZE,
+    /**
+     * The stair's two handrails, foot to head: the rail's top at each point,
+     * the way out over it there, and whether it is the rail on the inside of
+     * the turn -- the one open to the room.
+     */
+    stairRails,
+    floorY,
 
     /**
      * The ground to walk on indoors, for input/cameraModes.js's setGround: the

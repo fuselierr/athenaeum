@@ -25,6 +25,9 @@ import { settings } from './settings.js';
  *   pageScale         pixels per PDF point a book's pages are drawn at
  *                     (loader/bookLoader.js) -- for the NEXT book opened; one
  *                     already drawn keeps its pages
+ *   foliageDensity    the share of the room's leaves drawn
+ *                     (scene/inside/foliage.js) -- thinned evenly, never a
+ *                     corner stripped bare
  *   pageAnisotropy    how sharp a page stays seen at a slant
  *                     (book/reader/bookContent.js) -- for pages as they are
  *                     next put on the book
@@ -50,6 +53,7 @@ export const QUALITY = {
     grassLod: [6, 14],
     pageScale: 1,
     pageAnisotropy: 1,
+    foliageDensity: 0.4,
   },
   low: {
     label: 'Low',
@@ -66,6 +70,7 @@ export const QUALITY = {
     grassLod: [9, 20],
     pageScale: 1.25,
     pageAnisotropy: 2,
+    foliageDensity: 0.6,
   },
   medium: {
     label: 'Medium',
@@ -82,6 +87,7 @@ export const QUALITY = {
     grassLod: [12, 24],
     pageScale: 1.5,
     pageAnisotropy: 4,
+    foliageDensity: 0.8,
   },
   high: {
     label: 'High',
@@ -98,6 +104,7 @@ export const QUALITY = {
     grassLod: [14, 28],
     pageScale: 1.5,
     pageAnisotropy: 8,
+    foliageDensity: 1,
   },
   highest: {
     label: 'Highest',
@@ -114,6 +121,7 @@ export const QUALITY = {
     grassLod: [22, 36],
     pageScale: 2,
     pageAnisotropy: 16,
+    foliageDensity: 1,
   },
 };
 

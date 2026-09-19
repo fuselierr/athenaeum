@@ -7,7 +7,10 @@ import { addFloor } from './scene/inside/floor.js';
 import { addRoom, WINDOW_SILL_PROJECTION } from './scene/inside/room.js';
 import { loadRoomSurfaces } from './scene/inside/surfaces.js';
 import { loadSofa } from './scene/inside/sofa.js';
+import { loadRug } from './scene/inside/rug.js';
+import { addCoffeeTable } from './scene/inside/coffeeTable.js';
 import { addMezzanine } from './scene/inside/mezzanine.js';
+import { addFoliage } from './scene/inside/foliage.js';
 import { addWallShelf } from './scene/inside/wallShelf.js';
 import { numberSections } from './scene/inside/callNumbers.js';
 import { createShelfRows } from './scene/inside/shelfRows.js';
@@ -54,6 +57,7 @@ import { bindSettings } from './ui/bindSettings.js';
 import { book as bookState } from './state/book.js';
 import { matches } from './state/keybindings.js';
 import { settings } from './state/settings.js';
+import { qualityPreset } from './state/quality.js';
 import { watch } from 'vue';
 import { account } from './state/account.js';
 import { ui } from './state/ui.js';
@@ -244,7 +248,7 @@ let bookCarry = null;
 // Loaded alongside the page simulation since none of the three waits on
 // the others.
 loadingScreen.status('Arranging the furniture…', 0.2, 0.45);
-const [desk, lamp, bookshelf, surfaces, sofa] = await Promise.all([
+const [desk, lamp, bookshelf, surfaces, sofa, rug] = await Promise.all([
   loadDesk(scene),
   // Lamp at its authored size, on the back corner of the desk.
   loadLamp(scene, { position: new THREE.Vector3(0.22, 0, -0.42) }),
@@ -253,6 +257,8 @@ const [desk, lamp, bookshelf, surfaces, sofa] = await Promise.all([
   loadRoomSurfaces(),
   // Placed in the middle of the room once the room is measured, below.
   loadSofa(scene),
+  // The carpet under the sofa and the coffee table, likewise.
+  loadRug(scene),
 ]);
 
 // --- arrange the room -----------------------------------------------------
@@ -286,6 +292,15 @@ const BACK_WINDOW_SILL = 0.5;
 const WALL_SHELF_RUN = 0.76; // of that wall
 const WALL_SHELF_END_GAP = 0; // off the corner it starts from
 const WALL_SHELF_HEIGHT = 2.4; // unless the balcony above it is lower than that
+// The sofa stands this far back from the middle of the room, toward the
+// bookshelf (-X), leaving room in front of it for the coffee table.
+const SOFA_BACK = 0.9;
+// Clear floor between the front of the sofa and the edge of the coffee table:
+// room for your knees, near enough to reach a cup.
+const SOFA_TO_TABLE = 0.42;
+// Where the carpet's middle is, back from the table's toward the sofa -- so the
+// sofa's front legs stand on it and the table sits in its middle.
+const RUG_BACK_FROM_TABLE = 0.2;
 // The door is in the bookshelf wall (-X), up in its +Z corner: this is how far
 // the middle of it stands off that corner.
 const DOOR_FROM_CORNER = 0.9;
@@ -313,6 +328,11 @@ let indoorGround = null;
 // the floor, and the same run again on the balcony above it.
 let wallShelf = null;
 let deckShelf = null;
+// Vines on the windows and the balcony, and the potted plants
+// (scene/inside/foliage.js).
+let foliage = null;
+// The coffee table in front of the sofa (scene/inside/coffeeTable.js).
+let coffeeTable = null;
 {
   const deskBox = new THREE.Box3().setFromObject(desk.object);
 
@@ -374,14 +394,21 @@ let deckShelf = null;
   const walkable = new THREE.Box3().setFromObject(floor);
   cameraModes.setRoom(walkable);
 
-  // The sofa, in the middle of the floor, facing the window and the desk (+X).
+  // The sofa, a little back from the middle of the floor, facing the window
+  // and the desk (+X); the coffee table in front of it; and the carpet under
+  // the two -- the sofa's front legs on it, the table in its middle.
   const roomMiddle = walkable.getCenter(new THREE.Vector3());
   sofa.place({
-    x: roomMiddle.x,
+    x: roomMiddle.x - SOFA_BACK,
     y: walkable.min.y,
     z: roomMiddle.z,
     facing: new THREE.Vector3(1, 0, 0),
   });
+  const sofaFront = new THREE.Box3().setFromObject(sofa.object).max.x;
+  coffeeTable = addCoffeeTable(scene);
+  const tableX = sofaFront + SOFA_TO_TABLE + coffeeTable.radius;
+  coffeeTable.place({ x: tableX, y: walkable.min.y, z: roomMiddle.z });
+  rug.place({ x: tableX - RUG_BACK_FROM_TABLE, y: walkable.min.y, z: roomMiddle.z });
 
   // Walls and ceiling on that same footprint. The window goes in the wall
   // opposite the bookshelf -- the shelf stands at -X (see above), so the
@@ -396,16 +423,16 @@ let deckShelf = null;
       // furniture is scaled, so the drop to the floor is whatever the model
       // says it is rather than a number written down.
       { side: '+x', sill: (deskBox.max.y - room.min.y) + SILL_ABOVE_DESK },
-      // And a tall one filling the back wall, which the stair climbs across
-      // and the balcony looks along. Its daylight does not cast: a second
-      // shadow map, for a light raking the back of the room, is not worth the
-      // frame it costs.
+      // And a tall row filling the back wall, which the stair climbs across
+      // and the balcony looks along -- taller windows, so more panes up each
+      // one. Its daylight does not cast: a second shadow map, for a light
+      // raking the back of the room, is not worth the frame it costs.
       {
         side: '-z',
         sill: BACK_WINDOW_SILL,
         width: 0.78,
         maxWidth: 5.6,
-        columns: 4,
+        columns: 2,
         rows: 4,
         focus: new THREE.Vector3(roomMiddle.x, walkable.min.y + 1.2, roomMiddle.z),
         light: 0.8,
@@ -459,6 +486,22 @@ let deckShelf = null;
     material: wallShelf.object.material,
   });
 
+  // Green things: vines up the windows and over the balcony, and potted
+  // plants where they look at home -- grown to fit the room as it was just
+  // measured, so after everything they grow on or stand beside.
+  foliage = addFoliage(scene, {
+    room: shell,
+    floorBox: walkable,
+    deskBox,
+    sofaBox: new THREE.Box3().setFromObject(sofa.object),
+    shelfBox: placedShelf,
+    mezzanine,
+  });
+  // As many leaves as the graphics quality affords (state/quality.js).
+  watch(() => settings.graphics.quality, () => {
+    foliage.setDensity(qualityPreset().foliageDensity);
+  }, { immediate: true });
+
   outside = createOutside({
     scene,
     camera,
@@ -474,9 +517,12 @@ let deckShelf = null;
       lamp,
       bookshelf,
       sofa.object,
+      coffeeTable.object,
+      rug.object,
       mezzanine.group,
       wallShelf.object,
       deckShelf.object,
+      foliage.group,
       instructionCard.group,
       // The books filed on the wall shelves stand in a group of their own,
       // not on the shelving -- without this they stayed standing in the
@@ -512,13 +558,13 @@ let deckShelf = null;
   // room from here on.
   scenery.bindRoom(shell);
 
-  // Start on your feet between the sofa and the desk, facing the window. Walk
-  // is the default mode, and this is the first moment it can begin: there is a
-  // floor to stand on and a window to face. Aim slightly below eye level so
-  // the desk remains present in the opening view.
-  const sofaBox = new THREE.Box3().setFromObject(sofa.object);
+  // Start on your feet between the coffee table and the desk, facing the
+  // window. Walk is the default mode, and this is the first moment it can
+  // begin: there is a floor to stand on and a window to face. Aim slightly
+  // below eye level so the desk remains present in the opening view.
+  const tableFarEdge = tableX + coffeeTable.radius;
   cameraModes.setMode(CAMERA_MODE.WALK);
-  cameraModes.standAt((sofaBox.max.x + deskBox.min.x) / 2, roomMiddle.z);
+  cameraModes.standAt((tableFarEdge + deskBox.min.x) / 2, roomMiddle.z);
   cameraModes.lookAt(new THREE.Vector3(
     shell.window.centre.x,
     camera.position.y - 0.4,
@@ -670,6 +716,7 @@ watch(() => account.user?.id ?? null, () => {
 // What a book has to land on and stay inside, now that the room is measured.
 const FURNITURE = [
   ...sofa.collision,
+  ...(coffeeTable?.collision ?? []),
   ...(mezzanine?.collision ?? []),
   ...(wallShelf?.collision ?? []),
   ...(deckShelf?.collision ?? []),
