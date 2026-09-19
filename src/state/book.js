@@ -27,6 +27,15 @@ export const book = reactive({
   /** What the loader is doing, or '' when there is nothing to say. */
   status: '',
   loading: false,
+
+  /**
+   * The book in focus's pages drawn so far, of how many -- they fill in while
+   * the book is already in hand (loader/bookLoader.js's openPdfPages). Kept
+   * in step by main.js every frame. For the progress bar
+   * (ui/RenderProgress.vue).
+   */
+  pagesRendered: 0,
+  pagesTotal: 0,
 });
 
 /**

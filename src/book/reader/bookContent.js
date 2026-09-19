@@ -37,18 +37,27 @@ const KEEP_AHEAD = 5;
  * The book's content model: which page each panel currently shows, where a
  * turn from a given panel would land, and how far through the book we are.
  *
- * Owns the page canvases and their lazily-built textures, the current
- * spread (`leafStart`), and the eased hinge position that makes the two
- * page stacks reflect reading position. Knows nothing about pointers,
- * cameras or the render loop -- callers drive it through showLeaf/turn*
- * and tick it with update(dt).
+ * Owns the book's pages (a PageSource from loader/bookLoader.js) and their
+ * lazily-built textures, the current spread (`leafStart`), and the eased
+ * hinge position that makes the two page stacks reflect reading position.
+ *
+ * PAGES ARRIVE WHILE YOU READ. The source hands over every page at once as a
+ * blank canvas and renders into those same canvases in the background, so a
+ * page's texture is made from its canvas whenever it is first needed --
+ * blank paper or finished, it does not matter -- and told to upload again
+ * the moment that page is done. Where the reader is goes back to the source
+ * (focus) so the pages around the open spread are the ones rendered next.
+ *
+ * Knows nothing about pointers, cameras or the render loop -- callers drive
+ * it through showLeaf/turn* and tick it with update(dt).
  *
  * @param {() => import('../pageSim/PageSimulation.js').PageSimulation} getPages
  *   a closure, not a captured reference: the simulation is disposed and
  *   rebuilt whenever a loaded book's page dimensions change.
  */
 export function createBookContent(getPages) {
-  let pageCanvases = [];
+  let source = null; // the book's pages -- see loader/bookLoader.js's openPdfPages
+  let stopListening = null;
   const pageTextures = []; // one THREE.CanvasTexture per page index, built lazily, reused across turns
   // Page indices whose textures have been handed out since they were last
   // freed -- the ones that may be holding GPU memory.
@@ -81,9 +90,12 @@ export function createBookContent(getPages) {
   // over its repeat values, leaving one cover mirrored.
   const coverTextures = { A: null, D: null };
 
+  const pageCount = () => source?.count ?? 0;
+  const canvasFor = (index) => source?.canvasFor(index) ?? null;
+
   function paintCovers() {
     const pages = getPages();
-    const covers = { A: pageCanvases[0], D: pageCanvases[pageCanvases.length - 1] };
+    const covers = { A: canvasFor(0), D: canvasFor(pageCount() - 1) };
     for (const slot of ['A', 'D']) {
       coverTextures[slot]?.dispose();
       coverTextures[slot] = null;
@@ -95,9 +107,10 @@ export function createBookContent(getPages) {
   }
 
   function textureForPage(index) {
-    if (!pageCanvases[index]) return null;
+    const canvas = canvasFor(index);
+    if (!canvas) return null;
     if (!pageTextures[index]) {
-      pageTextures[index] = new THREE.CanvasTexture(pageCanvases[index]);
+      pageTextures[index] = new THREE.CanvasTexture(canvas);
     }
     liveTextures.add(index);
     return pageTextures[index];
@@ -121,12 +134,13 @@ export function createBookContent(getPages) {
   // Highest leafStart the book can be opened to -- the last spread. Also
   // the denominator for how far through the book we are.
   function maxLeafStart() {
-    if (pageCanvases.length < 2) return 0;
-    return pageCanvases.length - (pageCanvases.length % 2 === 0 ? 2 : 1);
+    const count = pageCount();
+    if (count < 2) return 0;
+    return count - (count % 2 === 0 ? 2 : 1);
   }
 
   function clampLeafStart(start) {
-    if (pageCanvases.length === 0) return 0;
+    if (pageCount() === 0) return 0;
     return Math.max(0, Math.min(start, maxLeafStart()));
   }
 
@@ -152,9 +166,40 @@ export function createBookContent(getPages) {
     readingProgress = max > 0 ? leafStart / max : 0;
   }
 
+  /**
+   * A page has finished rendering onto its canvas: whatever texture was made
+   * of it uploads again. One that came out a different size from its blank
+   * is freed first -- an upload is allocated at the size it was made.
+   */
+  function pageRendered(index, resized) {
+    const last = pageCount() - 1;
+    const textures = [pageTextures[index]];
+    if (index === 0) textures.push(coverTextures.A);
+    if (index === last) textures.push(coverTextures.D);
+    for (const texture of textures) {
+      if (!texture) continue;
+      if (resized) texture.dispose();
+      texture.needsUpdate = true;
+    }
+  }
+
+  /** Let go of the book's pages: stop their rendering, free their uploads. */
+  function dropPages() {
+    stopListening?.();
+    stopListening = null;
+    source?.cancel();
+    source = null;
+    // The last book's pages, off the GPU. Emptying the list alone drops the
+    // textures but not their uploads, which would stay until the tab closed.
+    for (const texture of pageTextures) texture?.dispose();
+    pageTextures.length = 0;
+    liveTextures.clear();
+  }
+
   function showLeaf(start) {
-    if (pageCanvases.length === 0) return;
+    if (pageCount() === 0) return;
     leafStart = clampLeafStart(start);
+    source.focus(leafStart);
     for (const panel of [LEFT_HAND_PANEL, RIGHT_HAND_PANEL]) {
       const tex = textureForPage(pageIndexForPanel(panel, leafStart));
       if (tex) getPages().setPageTexture(panel, tex);
@@ -164,14 +209,14 @@ export function createBookContent(getPages) {
   }
 
   return {
-    /** Adopt a freshly rendered book and open it at the first spread. */
-    setCanvases(canvases) {
-      // The last book's pages, off the GPU. Emptying the list alone drops the
-      // textures but not their uploads, which would stay until the tab closed.
-      for (const texture of pageTextures) texture?.dispose();
-      liveTextures.clear();
-      pageCanvases = canvases;
-      pageTextures.length = 0;
+    /**
+     * Adopt a book's pages -- rendered or not yet, see PAGES ARRIVE WHILE YOU
+     * READ -- and open it at the first spread. The last book's stop rendering.
+     */
+    setPages(pages) {
+      if (pages !== source) dropPages();
+      source = pages;
+      stopListening = source?.onRendered(pageRendered) ?? null;
       leafStart = 0;
       showLeaf(0);
       paintCovers();
@@ -186,7 +231,9 @@ export function createBookContent(getPages) {
     // --- where the reader is, for the menu -------------------------------
     /** 1-based, the left-hand page of the open spread. */
     get page() { return leafStart + 1; },
-    get pageCount() { return pageCanvases.length; },
+    get pageCount() { return pageCount(); },
+    /** How many of them are drawn so far -- they fill in after the book arrives. */
+    get pagesRendered() { return source?.rendered ?? 0; },
 
     /**
      * Open the spread containing `page` (1-based). Spreads start on even
@@ -195,7 +242,7 @@ export function createBookContent(getPages) {
      * by going to a page.
      */
     goToPage(page) {
-      if (pageCanvases.length === 0) return;
+      if (pageCount() === 0) return;
       const index = Math.max(0, Math.round(page) - 1);
       showLeaf(index - (index % 2));
     },
@@ -204,7 +251,7 @@ export function createBookContent(getPages) {
      * Re-apply the first/last page to covers A and D. Only needed after
      * the simulation has been rebuilt underneath us (new page dimensions
      * throw away the old meshes and their materials) -- the normal load
-     * path goes through setCanvases, which already does this.
+     * path goes through setPages, which already does this.
      */
     paintCovers,
 
@@ -266,9 +313,19 @@ export function createBookContent(getPages) {
       const landing = textureForPage(pageIndexForPanel(oppositePanel(panel), target));
       const underneath = textureForPage(pageIndexForPanel(panel, target));
       leafStart = target;
+      source?.focus(leafStart);
       refreshReadingProgress();
       releaseDistantTextures();
       return { landing, underneath, landingPanel: oppositePanel(panel) };
+    },
+
+    /** For a copy of the book being thrown away: its pages stop rendering, and go. */
+    dispose() {
+      dropPages();
+      for (const slot of ['A', 'D']) {
+        coverTextures[slot]?.dispose();
+        coverTextures[slot] = null;
+      }
     },
   };
 }

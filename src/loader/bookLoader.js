@@ -16,15 +16,15 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
  *      OR, on startup, for quick local testing, checks whether a .pdf has
  *      just been dropped straight into src/books/ and loads that instead,
  *      no server/upload round-trip needed.
- *   2. Fetches the resulting PDF and rasterizes each page to a canvas via
- *      PDF.js.
- *   3. Hands the rendered page canvases back through `onPagesReady` so the
- *      caller can turn them into THREE.CanvasTexture page textures.
+ *   2. Opens the resulting PDF with PDF.js and hands the book over the moment
+ *      its page size and count are known -- a PageSource (openPdfPages),
+ *      through `onPagesReady` -- then rasterizes the pages into it in the
+ *      background, nearest the reader first, while the book is already in
+ *      hand.
  *
- * Mapping those canvases onto the curl/flat page meshes (index-based UVs,
- * a sliding window of which pages are rasterized, mipmapping/anisotropy)
- * is the next piece of work and is intentionally NOT done here -- this
- * module's job stops at "here are rendered page canvases for this book."
+ * Turning those canvases into page textures, and keeping them up to date as
+ * they fill in, is book/reader/bookContent.js's job -- this module's stops at
+ * "here are this book's pages, and here is each one as it is finished."
  *
  * NOTE: if the Vite dev server and the Express upload server run on
  * different ports, add a proxy for /api in vite.config.js, e.g.:
@@ -98,7 +98,7 @@ async function uploadEpub(file) {
  *
  * WHY THE VIEWPORT DOES THE POSITIONING. The canvas is not the page the
  * right way up -- `rotation: 270` below turns it a quarter turn so it lands
- * on the mesh's UVs (see the long note in renderPdfToCanvases), which means
+ * on the mesh's UVs (see WHY 270 DEGREES at openPdfPages), which means
  * the foot of the PAGE is one of the canvas's SIDES, and which side depends
  * on the rotation. So the placement is worked out in PDF user space, where
  * "bottom centre" is unambiguous, and handed to the viewport to convert:
@@ -135,82 +135,186 @@ function stampPageNumber(ctx, viewport, pageNumber) {
   ctx.restore();
 }
 
-async function renderPdfToCanvases(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onPage, onDimensions } = {}) {
+// What an unrendered page looks like: blank paper, the same white a rendered
+// page's own background is painted in, so a page filling in does not flash.
+const BLANK_PAPER = '#ffffff';
+
+/**
+ * Open a PDF as a book's pages -- straight away, and render them afterwards.
+ *
+ * THE BOOK DOES NOT WAIT FOR ITS PAGES. All a book needs to be built is its
+ * page size and its page count (onDimensions), and both are known once page 1
+ * has been laid out -- long before a four-hundred-page book has been
+ * rasterized. So that is when the book is handed over: every page exists at
+ * once as a canvas of blank paper, and the pages are rendered INTO those same
+ * canvases in the background, one at a time, each announcing itself when it
+ * is done (onRendered) so whatever made a texture of it re-uploads it. You
+ * can pick the book up, open it and turn through it while that happens; a
+ * page not reached yet is blank paper until it is.
+ *
+ * NEAREST FIRST. The order is not front to back but outward from wherever the
+ * reader is (focus()): the open spread, then the pages ahead of it, then
+ * those behind -- so jumping to a chapter halfway through fills in there
+ * next. The last page goes early too, since it is on show from the start as
+ * the inside of the back cover.
+ *
+ * WHY 270 DEGREES. The page meshes' UVs put u along the spine (a page's
+ * HEIGHT) and v from spine to fore-edge (its WIDTH), a quarter turn from a
+ * PDF page the right way up -- and PageSimulation.root's permanent 180°
+ * render flip adds a half turn on top. pdf.js's own `rotation: 270` does
+ * both at once, sizing the viewport and its pixel transform together, which
+ * is the fix for the unpainted band a hand-rolled context rotation left
+ * along one edge of every page.
+ *
+ * @param {string} pdfUrl
+ * @param {object} [opts]
+ * @param {number} [opts.scale]  px per PDF unit
+ * @param {(widthPts: number, heightPts: number, pageCount: number) => void|Promise<void>} [opts.onDimensions]
+ *   the first page's unrotated size in PDF points, and the page count --
+ *   awaited before anything else happens, since the caller rebuilds the
+ *   book at that size
+ * @param {(done: number, total: number) => void} [opts.onProgress]
+ * @returns {Promise<PageSource>}
+ *
+ * @typedef {object} PageSource
+ * @property {number} count
+ * @property {(index: number) => HTMLCanvasElement|null} canvasFor  a page's
+ *   canvas, blank until it is rendered and the same object afterwards
+ * @property {(index: number) => boolean} isRendered
+ * @property {number} rendered  how many pages are drawn so far
+ * @property {(index: number) => void} focus  where the reader is, 0-based
+ * @property {(listener: (index: number, resized: boolean) => void) => () => void} onRendered
+ *   `resized` when the page turned out a different size from the blank --
+ *   an upload of the old size cannot take the new one
+ * @property {() => void} cancel  stop rendering, for a book given up on
+ */
+async function openPdfPages(pdfUrl, { scale = DEFAULT_RENDER_SCALE, onDimensions, onProgress } = {}) {
   // Pass the config object explicitly rather than a bare string -- relying
   // on pdf.js to auto-wrap a string into { url } has proven flaky across
   // pdfjs-dist versions/bundlers, and throws exactly the
   // "expected either data, range, or url parameter" error when it doesn't.
   const loadingTask = pdfjsLib.getDocument({ url: pdfUrl });
   const pdf = await loadingTask.promise;
-  const canvases = [];
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-    const page = await pdf.getPage(pageNum);
+  const count = pdf.numPages;
+  const first = await pdf.getPage(1);
 
-    // The page meshes' UVs (the flat pages' default PlaneGeometry UVs, and
-    // CURL_UV in curlGeometry.js) both put u along HINGE_LEN -- the X axis,
-    // which is physically the page's HEIGHT, since it runs the length of
-    // the spine -- and v along PANEL_REACH -- physically the page's WIDTH,
-    // spine to outer edge. A PDF page renders reading-normal: an unrotated
-    // viewport's width is its (short) reading-horizontal axis, its height
-    // the (long) top-to-bottom axis -- a 90° mismatch against the mesh UVs
-    // (the short axis would land on the mesh's long axis and vice versa,
-    // which is what showed up as text running horizontally instead of
-    // vertically). `rotation: 270` (270° clockwise, == 90° counter-
-    // clockwise) bakes in both that axis swap AND the extra 180° needed to
-    // counter PageSimulation.root's permanent 180° render flip (see the
-    // PageSimulation constructor) -- same net rotation the old hand-rolled
-    // ctx.translate()+ctx.rotate(-Math.PI/2) pre-transform was going for.
-    //
-    // Doing it via pdf.js's OWN rotation support instead of that manual
-    // context transform is the actual fix here, not just a rewrite: the
-    // pre-transform left an unpainted band along one edge of every
-    // canvas -- confirmed by rendering a raw page canvas directly, with no
-    // 3D mesh involved at all -- almost certainly because page.render()'s
-    // own internal bounds/clipping math doesn't expect the context handed
-    // to it to already carry a rotation. Letting pdf.js compute the
-    // rotated viewport itself (swapped width/height AND the matching pixel
-    // transform, both baked in together) means page.render() always paints
-    // into a plain, un-pre-transformed context sized to exactly match --
-    // nothing left for a transform-composition edge case to leave blank.
-    const viewport = page.getViewport({ scale, rotation: 270 });
+  // Unscaled and UNrotated: the page's real reading-normal proportions, which
+  // is what the book's geometry is sized from (see config.js). The page count
+  // comes with it because the book's thickness is worked out from it, and
+  // thickness, like page size, is baked in when the simulation is built.
+  const raw = first.getViewport({ scale: 1 });
+  if (onDimensions) await onDimensions(raw.width, raw.height, count);
 
-    if (pageNum === 1 && onDimensions) {
-      // Unscaled, UN-rotated page size, in PDF points -- the actual page
-      // aspect ratio, independent of DEFAULT_RENDER_SCALE. Rotation only
-      // ever swaps width/height at some multiple of 90°, it never changes
-      // the page's own real proportions, so this must stay unrotated
-      // (rotation defaults to 0) for onDimensions's meaning -- the PDF's
-      // real reading-normal aspect ratio -- to stay correct. Reported once,
-      // from the first page, before rendering proceeds any further, so the
-      // caller can resize the book's geometry (HINGE_LEN/PANEL_REACH, see
-      // config.js) to match before any page mesh or physics body gets
-      // built from the old default dimensions. Awaited: if the caller's
-      // handler resizes/recreates the whole simulation, rendering the rest
-      // of the pages (and firing onPage/the eventual onPagesReady) needs to
-      // wait for that to actually finish first.
-      // pdf.numPages goes out with the dimensions rather than waiting for
-      // onPagesReady, because the book's THICKNESS is derived from it
-      // (config.js's spineGapForPageCount) and thickness, like page size,
-      // is baked into physics bodies at construction. Both are known here,
-      // before the first canvas exists, so the caller can rebuild the
-      // simulation once with its final size AND final thickness instead of
-      // rebuilding a second time once the pages finish rendering.
-      const rawViewport = page.getViewport({ scale: 1 });
-      await onDimensions(rawViewport.width, rawViewport.height, pdf.numPages);
+  // The size of a blank page: page 1's, which is every page's in the PDFs the
+  // converter writes. One that differs is resized when it is rendered.
+  const blank = first.getViewport({ scale, rotation: 270 });
+
+  const canvases = new Array(count).fill(null);
+  const rendered = new Array(count).fill(false);
+  const listeners = new Set();
+  let done = 0;
+  let focus = 0;
+  let cancelled = false;
+
+  function canvasFor(index) {
+    if (index < 0 || index >= count) return null;
+    if (!canvases[index]) {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(blank.width);
+      canvas.height = Math.floor(blank.height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = BLANK_PAPER;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      canvases[index] = canvas;
     }
+    return canvases[index];
+  }
 
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+  // The next page to render: the unrendered one cheapest to be missing, by
+  // how far it is from the reader -- ahead counts for less than behind, and
+  // the last page (the inside of the back cover) costs as if a spread away.
+  function next() {
+    let best = -1;
+    let bestCost = Infinity;
+    for (let index = 0; index < count; index++) {
+      if (rendered[index]) continue;
+      const along = index - focus;
+      const cost = index === count - 1 ? 3 : (along >= 0 ? along : -along * 2);
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = index;
+      }
+    }
+    return best;
+  }
+
+  async function render(index) {
+    const page = index === 0 ? first : await pdf.getPage(index + 1);
+    if (cancelled) return;
+    const viewport = page.getViewport({ scale, rotation: 270 });
+    const canvas = canvasFor(index);
+    const width = Math.floor(viewport.width);
+    const height = Math.floor(viewport.height);
+    const resized = canvas.width !== width || canvas.height !== height;
+    if (resized) {
+      canvas.width = width;
+      canvas.height = height;
+    }
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
+    if (cancelled) return;
     // After the render, not before: page.render() paints the page's own
     // background over anything already on the canvas.
-    stampPageNumber(ctx, viewport, pageNum);
-    canvases.push(canvas);
-    onPage?.(canvases.length, pdf.numPages);
+    stampPageNumber(ctx, viewport, index + 1);
+    page.cleanup();
+    rendered[index] = true;
+    done += 1;
+    for (const listener of listeners) listener(index, resized);
+    onProgress?.(done, count);
   }
-  return canvases;
+
+  // In the background: the caller has its book as soon as this returns.
+  (async () => {
+    try {
+      while (!cancelled && done < count) {
+        const index = next();
+        if (index < 0) break;
+        await render(index);
+      }
+    } catch (err) {
+      if (!cancelled) console.error('Rendering the book\'s pages failed:', err);
+    } finally {
+      // Every page is on its canvas now, or the book was given up on: either
+      // way the document itself is no longer needed.
+      loadingTask.destroy();
+    }
+  })();
+
+  return {
+    count,
+    canvasFor,
+    isRendered: (index) => Boolean(rendered[index]),
+    /** How many pages are drawn so far. */
+    get rendered() { return done; },
+    focus(index) {
+      focus = Math.max(0, Math.min(count - 1, Math.round(index)));
+    },
+    onRendered(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      listeners.clear();
+      loadingTask.destroy();
+    },
+  };
+}
+
+/** Progress as a status line: the count while pages are rendering, then nothing. */
+function progress(say) {
+  return (done, total) => say(done < total ? `Rendering pages… ${done}/${total}` : '');
 }
 
 /**
@@ -270,14 +374,10 @@ export async function openLibraryBook(id, {
   // existed, in which case the estimate simply stays.
   if (Array.isArray(body.chapters) && body.chapters.length > 0) onChapters?.(body.chapters);
 
-  say('Rendering pages…');
-  const canvases = await renderPdfToCanvases(api(body.pdfUrl), {
-    onDimensions,
-    onPage: (done, total) => say(`Rendering pages… ${done}/${total}`),
-  });
-  say('');
-  onPagesReady?.(canvases);
-  return canvases;
+  say('Opening…');
+  const source = await openPdfPages(api(body.pdfUrl), { onDimensions, onProgress: progress(say) });
+  onPagesReady?.(source);
+  return source;
 }
 
 /**
@@ -328,14 +428,10 @@ export async function uploadBook(file, {
   // shelf is handed is exactly the shape the shelf lists.
   if (onShelved) onShelved(await libraryEntry(book.id));
 
-  say('Rendering pages…');
-  const canvases = await renderPdfToCanvases(api(book.pdfUrl), {
-    onDimensions,
-    onPage: (done, total) => say(`Rendering pages… ${done}/${total}`),
-  });
-  say('');
-  onPagesReady?.(canvases);
-  return canvases;
+  say('Opening…');
+  const source = await openPdfPages(api(book.pdfUrl), { onDimensions, onProgress: progress(say) });
+  onPagesReady?.(source);
+  return source;
 }
 
 /**
@@ -356,8 +452,10 @@ export async function uploadBook(file, {
  *   rendering waits for it before continuing (so a caller that disposes
  *   and recreates the whole page simulation here won't race with
  *   onPagesReady firing on the old one).
- * @param {(canvases: HTMLCanvasElement[]) => void} [opts.onPagesReady]
- *   Called once every page has been rendered to canvas.
+ * @param {(source: PageSource) => void} [opts.onPagesReady]
+ *   Called with the book's pages as soon as onDimensions has finished --
+ *   before they are rendered, which carries on in the background (see
+ *   openPdfPages).
  * @param {(text: string) => void} [opts.onStatus]  progress, as text
  */
 export function initBookLoader({ onDimensions, onPagesReady, onStatus } = {}) {
@@ -366,14 +464,8 @@ export function initBookLoader({ onDimensions, onPagesReady, onStatus } = {}) {
 
   const say = (text) => onStatus?.(text);
   say('Loading local test book…');
-  renderPdfToCanvases(localUrl, {
-    onDimensions,
-    onPage: (done, total) => say(`Rendering pages… ${done}/${total}`),
-  })
-    .then((canvases) => {
-      say('');
-      onPagesReady?.(canvases);
-    })
+  openPdfPages(localUrl, { onDimensions, onProgress: progress(say) })
+    .then((source) => onPagesReady?.(source))
     .catch((err) => {
       console.error('Failed to load local test book:', err);
       say(`Error: ${err.message}`);

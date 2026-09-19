@@ -9,6 +9,7 @@ import { bookControls } from '../state/bookControls.js';
 import { landing } from '../state/landing.js';
 import LibraryButton from './LibraryButton.vue';
 import BookControls from './BookControls.vue';
+import RenderProgress from './RenderProgress.vue';
 
 /**
  * The controls in the top right corner: the menu button, and the account --
@@ -169,6 +170,8 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
 
   <!-- Over the book, wherever the book is; see BookControls.vue. -->
   <BookControls v-if="!landing.showing" />
+  <!-- How far the book in hand has got drawing its pages; see RenderProgress.vue. -->
+  <RenderProgress v-if="!landing.showing" />
 </template>
 
 <style scoped>

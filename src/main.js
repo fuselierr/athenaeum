@@ -1003,7 +1003,7 @@ async function applyPdfDimensions(pageWidthPts, pageHeightPts, pageCount) {
 // books and uploads have their own entry points below.
 initBookLoader({
   onDimensions: applyPdfDimensions,
-  onPagesReady: (canvases) => content.setCanvases(canvases),
+  onPagesReady: (source) => content.setPages(source),
   onStatus: setBookStatus,
 });
 
@@ -1018,6 +1018,8 @@ let openSequence = 0; // bumped by anything that abandons a book mid-load
 function setBookStatus(text) {
   bookState.status = text;
 }
+
+
 
 /**
  * @param {object} record  the library record to open
@@ -1044,7 +1046,9 @@ async function openFromShelf(record, slot = null) {
   bookState.loading = true;
   try {
     await openLibraryBook(record.id, {
-      onStatus: setBookStatus,
+      // Only while this is the book being opened: its pages go on rendering
+      // after the open returns, and a book opened since has its own to report.
+      onStatus: (text) => { if (token === openSequence) setBookStatus(text); },
       onJacket: (j) => {
         if (token !== openSequence) return;
         jacket = j;
@@ -1073,12 +1077,18 @@ async function openFromShelf(record, slot = null) {
         await applyPdfDimensions(widthPts, heightPts, pageCount);
         if (token !== openSequence) discardLoading(token);
       },
-      onPagesReady: (canvases) => {
-        if (token !== openSequence) return; // put back while it was rendering
+      // As soon as the book's shape is known, not once its pages are drawn:
+      // they fill in while it is already in your hand (loader/bookLoader.js's
+      // openPdfPages).
+      onPagesReady: (source) => {
+        if (token !== openSequence) {
+          source.cancel(); // put back while it was opening: no pages wanted
+          return;
+        }
         // It has arrived: from here it is one of the room's books, and giving
         // up on it later is no longer this open's business.
         loading = null;
-        content.setCanvases(canvases);
+        content.setPages(source);
         if (slot) {
           slotTaken = true;
           // Standing in its slot, and into your hand from there -- and back to
@@ -1180,8 +1190,9 @@ async function openUploadedFile(file) {
         if (!current()) return;
         await applyPdfDimensions(widthPts, heightPts, pageCount);
       },
-      onPagesReady: (canvases) => {
-        if (current()) content.setCanvases(canvases);
+      onPagesReady: (source) => {
+        if (current()) content.setPages(source);
+        else source.cancel();
       },
     });
     return current();
@@ -1542,6 +1553,11 @@ renderer.setAnimationLoop(() => {
   // sixty times a second for nothing.
   if (bookState.page !== content.page) bookState.page = content.page;
   if (bookState.pageCount !== content.pageCount) bookState.pageCount = content.pageCount;
+  // How far the book in focus has got drawing its pages, for the progress
+  // bar (ui/RenderProgress.vue) -- read off the book itself, so it is always
+  // the one in your hands whatever was opened, put back or swapped since.
+  if (bookState.pagesRendered !== content.pagesRendered) bookState.pagesRendered = content.pagesRendered;
+  if (bookState.pagesTotal !== content.pageCount) bookState.pagesTotal = content.pageCount;
   if (!simulationPaused) {
     content.update(dt);
     // Before the step: the holds it sets are applied inside step().
