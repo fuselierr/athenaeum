@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import { ui } from '../../state/ui.js';
+import { landing } from '../../state/landing.js';
 import BookTab from './BookTab.vue';
 import SceneTab from './SceneTab.vue';
 import SettingsTab from './SettingsTab.vue';
@@ -42,7 +43,7 @@ const subtitle = computed(() => {
 
 <template>
   <transition name="menu-fade">
-    <div v-if="ui.menuOpen" class="menu-scrim" @pointerdown.self="ui.menuOpen = false">
+    <div v-if="ui.menuOpen && !landing.showing" class="menu-scrim" @pointerdown.self="ui.menuOpen = false">
       <section class="menu" role="dialog" aria-label="Athenaeum menu">
         <header class="menu-head">
           <nav class="menu-tabs">

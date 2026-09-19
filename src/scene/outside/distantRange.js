@@ -199,16 +199,16 @@ const RELIEF_SHADING = 0.42;
 
 // --- what it is made of -------------------------------------------------------------
 const ROCK_LOW = new THREE.Color(0x4a4f45); // wooded slopes, seen from far off
-const ROCK_HIGH = new THREE.Color(0x6b6a66); // bare rock above them
+const ROCK_HIGH = new THREE.Color(0x8a8781); // bare rock above them
 const SNOW = new THREE.Color(0xffffff);
-const SNOW_LINE = 750; // metres above the terrain's edge
-const SNOW_FADE = 320; // wide, so the line is a zone the noise can break up
+const SNOW_LINE = 370; // metres above the terrain's edge
+const SNOW_FADE = 450; // wide, so the line is a zone the noise can break up
 // How far the snow line wanders with the rock -- snow lies in the gullies and
 // leaves the ribs bare well below it, and the straight horizontal band you get
 // without this is the single most artificial thing about a drawn mountain.
 const SNOW_SCATTER = 0.55;
-const TREE_LINE = 320;
-const TREE_FADE = 100;
+const TREE_LINE = 200;
+const TREE_FADE = 150;
 // Lit by the same sun, but this is scenery: one lambert term and a sky
 // ambient, not the scene's full lighting.
 const AMBIENT = 0.42;

@@ -947,7 +947,17 @@ const vr = createVRControls({
   getShelfBooks: () => shelfBooks,
   getOutside: () => outside,
 });
-mountVRButton(vr);
+// Out of the way while the welcome page is up (ui/LandingScreen.vue). The
+// button arrives once the browser has said whether it can do VR at all.
+let vrButton = null;
+const placeVRButton = () => {
+  if (vrButton) vrButton.style.display = landing.showing ? 'none' : '';
+};
+mountVRButton(vr).then((button) => {
+  vrButton = button;
+  placeVRButton();
+});
+watch(() => landing.showing, placeVRButton);
 // The card on the desk tells you the headset's controls while you are wearing
 // one, and the keyboard's again once you take it off.
 vr.onChange((presenting) => instructionCard?.setVR(presenting));
@@ -1503,8 +1513,11 @@ renderer.setAnimationLoop(() => {
   // it. Outside, none of it shows, whatever the key was left at -- only the
   // outdoor panel, which is the outdoors' own, and the frame rate, which
   // belongs to wherever you are.
+  // And none of it, anywhere, while the welcome page is up: that page is the
+  // only thing on screen until a visitor has chosen a way in.
+  const debugShown = !landing.showing;
   const indoors = world.place === 'room';
-  const roomDebug = anglePanel.visible && indoors;
+  const roomDebug = anglePanel.visible && indoors && debugShown;
   if (spineRotationPanel) spineRotationPanel.style.display = roomDebug ? 'block' : 'none';
   // The pages drive the tilt, so the readout has to follow it rather than
   // only updating when the slider is dragged -- while it can be seen, that is;
@@ -1573,10 +1586,10 @@ renderer.setAnimationLoop(() => {
   // After the render, with every matrix for this frame settled: the card over
   // the book is placed from the same pose that was just drawn.
   bookAnchor.update();
-  debugLabels.update(indoors);
-  anglePanel.update(indoors);
-  outdoorPanel.update(anglePanel.visible);
-  fpsCounter.update(anglePanel.visible);
+  debugLabels.update(indoors && debugShown);
+  anglePanel.update(indoors && debugShown);
+  outdoorPanel.update(anglePanel.visible && debugShown);
+  fpsCounter.update(anglePanel.visible && debugShown);
   facingPanel.update(roomDebug);
 });
 

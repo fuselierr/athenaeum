@@ -6,6 +6,7 @@ import { ui } from '../state/ui.js';
 import { keys, label } from '../state/keybindings.js';
 import { world } from '../state/world.js';
 import { bookControls } from '../state/bookControls.js';
+import { landing } from '../state/landing.js';
 import LibraryButton from './LibraryButton.vue';
 import BookControls from './BookControls.vue';
 
@@ -14,7 +15,8 @@ import BookControls from './BookControls.vue';
  * and, while you are outside, a way to your books under them
  * (LibraryButton.vue).
  *
- * Always on screen, menu open or not, so they are mounted on their own (see
+ * On screen whether the menu is open or not -- everywhere but behind the
+ * welcome page, which has its own way in -- so they are mounted on their own (see
  * ui/mountAccount.js) rather than inside the menu's overlay -- which is also
  * what lets the menu button close the menu it opened.
  *
@@ -66,7 +68,9 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
 </script>
 
 <template>
-  <div class="corner">
+  <!-- None of this while the welcome page is up: it has its own way to sign
+       in, and nothing else here means anything until you are in the room. -->
+  <div v-if="!landing.showing" class="corner">
   <div class="corner-row">
   <button
     class="menu-trigger"
@@ -164,7 +168,7 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, {
   </div>
 
   <!-- Over the book, wherever the book is; see BookControls.vue. -->
-  <BookControls />
+  <BookControls v-if="!landing.showing" />
 </template>
 
 <style scoped>

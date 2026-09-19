@@ -3,6 +3,8 @@ import { computed, ref } from 'vue';
 import { landing } from '../state/landing.js';
 import { book } from '../state/book.js';
 import { community } from '../state/community.js';
+import { account } from '../state/account.js';
+import { signInWith } from '../auth/session.js';
 
 /**
  * The welcome page: what someone who is not signed in sees when they arrive.
@@ -18,12 +20,16 @@ import { community } from '../state/community.js';
  * shelf's own books are offered beside the upload -- the same books, opened
  * the same way the shelf opens them. They come from the listing the room has
  * already fetched, so the offer costs nothing and simply is not there when
- * the library could not be reached.
+ * the library could not be reached. WHICH three is a fresh draw every visit,
+ * from all the shelf's books, so the page is not the same three covers
+ * forever -- drawn once, though, and kept for the visit: a row that
+ * reshuffled whenever the listing updated would move under the pointer.
  *
- * THE CORNER STAYS ABOVE THIS on purpose. Signing in is how a returning
- * reader gets their own shelf back, and the control that does it is already
- * in the top right (ui/AccountButton.vue) -- so this page sits UNDER it
- * rather than covering it and reinventing the same two buttons.
+ * NOTHING ELSE IS ON SCREEN while this is up: the corner's controls, the
+ * menu, the VR button and the debug overlays all stand aside
+ * (ui/AccountButton.vue, ui/menu/MenuRoot.vue, main.js). So signing in -- how
+ * a returning reader gets their own shelf back -- is here, as its own button:
+ * the same providers the corner offers, through the same call.
  */
 
 const props = defineProps({ bridge: { type: Object, required: true } });
@@ -32,12 +38,32 @@ const input = ref(null);
 // While a book is opening, the loader's own progress is the status line.
 const busy = computed(() => book.loading);
 
+// Each book's place in this visit's draw, given the first time it is seen and
+// kept -- so the three stay put as the listing fills in or refreshes.
+const draw = new Map();
+const drawn = (id) => {
+  if (!draw.has(id)) draw.set(id, Math.random());
+  return draw.get(id);
+};
+
 // A few off the shelf, with whatever cover each is wearing. Three: enough to
 // look like a choice, few enough to stay one line and not become a library.
-const examples = computed(() => community.books.slice(0, 3).map((entry) => ({
-  ...entry,
-  cover: community.attachments[entry.id]?.front ?? entry.coverUrl ?? null,
-})));
+const examples = computed(() => [...community.books]
+  .sort((a, b) => drawn(a.id) - drawn(b.id))
+  .slice(0, 3)
+  .map((entry) => ({
+    ...entry,
+    cover: community.attachments[entry.id]?.front ?? entry.coverUrl ?? null,
+  })));
+
+// Signing in: the providers, shown when asked for.
+const signingIn = ref(false);
+const canSignIn = computed(() => account.ready && account.available);
+
+/** Is a redirect to this provider the one in flight? */
+function opening(provider) {
+  return account.busy && account.provider === provider;
+}
 
 function choose() {
   if (busy.value) return;
@@ -97,14 +123,41 @@ function openExample(entry) {
         {{ book.status }}
       </p>
       <p v-else-if="landing.error" class="error" role="alert">{{ landing.error }}</p>
-      <p v-else class="hint">Signed in, your own shelf is waiting instead.</p>
+
+      <div class="account">
+        <p class="hint">Have an account? Your own shelf is waiting.</p>
+        <button
+          v-if="!signingIn"
+          class="login"
+          type="button"
+          :disabled="!canSignIn || busy"
+          :title="account.ready && !account.available ? account.error : ''"
+          @click="signingIn = true"
+        >Log in / Sign up</button>
+
+        <div v-else class="providers" role="group" aria-label="Log in or sign up">
+          <button class="provider google" type="button" :disabled="account.busy"
+                  @click="signInWith('google')">
+            {{ opening('google') ? 'Opening Google…' : 'Continue with Google' }}
+          </button>
+          <button class="provider discord" type="button" :disabled="account.busy"
+                  @click="signInWith('discord')">
+            {{ opening('discord') ? 'Opening Discord…' : 'Continue with Discord' }}
+          </button>
+          <p class="note">First time here? Either one creates your account.</p>
+          <button class="back" type="button" :disabled="account.busy" @click="signingIn = false">
+            Back
+          </button>
+        </div>
+        <p v-if="account.error && signingIn" class="error" role="alert">{{ account.error }}</p>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Over the room and the small labels (2), under the menu's scrim (10) and
-   the corner (11) -- so the account control stays reachable above it. */
+/* Over the room and the small labels (2). The menu and the corner stand
+   aside entirely while this is up, so nothing needs to be above it. */
 .landing {
   position: fixed;
   inset: 0;
@@ -240,6 +293,63 @@ h1 {
 .status, .hint, .error {
   margin: 0;
   min-height: 1.5em;
+  font-size: 12px;
+}
+
+/* Signing in: under a hairline, after the ways to start reading -- the
+   other way in, for someone who has been here before. */
+.account {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: 100%;
+  padding-top: 14px;
+  border-top: 1px solid var(--ath-line);
+}
+
+.login, .back {
+  padding: 8px 20px;
+  color: var(--ath-text);
+  font: 500 13px/1 var(--ath-serif);
+  background: var(--ath-control);
+  border: 1px solid var(--ath-line-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.login:hover:not(:disabled), .back:hover:not(:disabled) {
+  background: var(--ath-control-hover);
+  border-color: var(--ath-orange);
+}
+.login:focus-visible, .back:focus-visible, .provider:focus-visible { outline: none; box-shadow: var(--ath-focus); }
+.login:disabled, .back:disabled { cursor: default; opacity: 0.5; }
+.back { padding: 6px 16px; font-size: 12px; }
+
+.providers {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: min(260px, 100%);
+}
+
+.provider {
+  width: 100%;
+  height: 38px;
+  border-radius: 6px;
+  font: 500 13px/1 var(--ath-serif);
+  cursor: pointer;
+}
+.provider:disabled { opacity: 0.6; cursor: default; }
+
+/* Each in its own brand's colours, as the corner's are (AccountButton.vue). */
+.google { background: #fff; color: #1f1f1f; border: 1px solid #dadce0; }
+.google:hover:not(:disabled) { background: #f3f5f8; }
+.discord { background: #5865f2; color: #fff; border: 1px solid #5865f2; }
+.discord:hover:not(:disabled) { background: #4752c4; border-color: #4752c4; }
+
+.note {
+  margin: 0;
+  color: var(--ath-text-dim);
   font-size: 12px;
 }
 

@@ -2,6 +2,7 @@ import { createApp } from 'vue';
 import MenuRoot from './menu/MenuRoot.vue';
 import { ui } from '../state/ui.js';
 import { matches } from '../state/keybindings.js';
+import { landing } from '../state/landing.js';
 
 /**
  * Put the menu on screen and give Escape its meaning.
@@ -35,6 +36,8 @@ export function mountMenu(bridge) {
 
   function onKeyDown(event) {
     if (ui.capturingKey) return; // the Settings tab is listening for a key
+    // Nothing behind the welcome page to have a menu for yet.
+    if (landing.showing) return;
     if (!matches('menu.toggle', event)) return;
     event.preventDefault();
     if (ui.menuOpen) {
